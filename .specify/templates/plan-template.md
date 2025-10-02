@@ -47,7 +47,30 @@
 ## Constitution Check
 *GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
 
-[Gates determined based on constitution file]
+**Modular Architecture Gate**: 
+- [ ] Each feature designed as standalone module with clear interface
+- [ ] No module dependencies on implementation details of other modules
+- [ ] Single, clear purpose defined for each component
+
+**Code Quality Gate**:
+- [ ] Linting and formatting standards defined
+- [ ] Static analysis checks configured
+- [ ] Code complexity justified in documentation
+
+**Consistency Gate**:
+- [ ] Standardized patterns for error handling, logging, configuration
+- [ ] Uniform naming conventions followed
+- [ ] Similar functionalities use consistent implementations
+
+**Testing Excellence Gate**:
+- [ ] TDD approach confirmed (tests before implementation)
+- [ ] Unit, integration, and contract tests planned
+- [ ] 90%+ test coverage target established
+
+**Documentation & Observability Gate**:
+- [ ] Comprehensive documentation planned for all modules
+- [ ] Structured logging strategy defined
+- [ ] Performance metrics and monitoring planned
 
 ## Project Structure
 
@@ -216,4 +239,4 @@ directories captured above]
 - [ ] Complexity deviations documented
 
 ---
-*Based on Constitution v2.1.1 - See `/memory/constitution.md`*
+*Based on Constitution v1.0.0 - See `.specify/memory/constitution.md`*

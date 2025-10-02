@@ -1,0 +1,1149 @@
+openapi: 3.0.3
+info:
+  title: RoboMop API
+  description: REST API for RoboMop autonomous cleaning robot system
+  version: 1.0.0
+  contact:
+    name: RoboMop Development Team
+
+servers:
+  - url: http://localhost:3000/api/v1
+    description: Development server
+  - url: https://api.robomop.example.com/v1
+    description: Production server
+
+tags:
+  - name: robots
+    description: Robot management
+  - name: maps
+    description: Map operations
+  - name: sessions
+    description: Session management
+  - name: zones
+    description: Restricted zone management
+  - name: logs
+    description: Log retrieval
+
+paths:
+  /robots:
+    get:
+      summary: List all robots
+      tags: [robots]
+      responses:
+        '200':
+          description: List of robots
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Robot'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    
+    post:
+      summary: Register a new robot
+      tags: [robots]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RobotCreate'
+      responses:
+        '201':
+          description: Robot registered successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Robot'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /robots/{robotId}:
+    parameters:
+      - $ref: '#/components/parameters/RobotId'
+    
+    get:
+      summary: Get robot details
+      tags: [robots]
+      responses:
+        '200':
+          description: Robot details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Robot'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    
+    patch:
+      summary: Update robot metadata
+      tags: [robots]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RobotUpdate'
+      responses:
+        '200':
+          description: Robot updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Robot'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /robots/{robotId}/state:
+    parameters:
+      - $ref: '#/components/parameters/RobotId'
+    
+    get:
+      summary: Get current robot state
+      tags: [robots]
+      responses:
+        '200':
+          description: Current robot state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RobotState'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    
+    post:
+      summary: Update robot state
+      tags: [robots]
+      description: Called by robot to report current state
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RobotStateUpdate'
+      responses:
+        '200':
+          description: State updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RobotState'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /robots/{robotId}/command:
+    parameters:
+      - $ref: '#/components/parameters/RobotId'
+    
+    post:
+      summary: Send command to robot
+      tags: [robots]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Command'
+      responses:
+        '200':
+          description: Command sent successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  commandId:
+                    type: string
+                    format: uuid
+                  status:
+                    type: string
+                    enum: [queued, sent, acknowledged]
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /maps:
+    get:
+      summary: List all maps
+      tags: [maps]
+      parameters:
+        - name: robotId
+          in: query
+          description: Filter by robot ID
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: List of maps
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/MapMetadata'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    
+    post:
+      summary: Create a new map
+      tags: [maps]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MapCreate'
+      responses:
+        '201':
+          description: Map created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MapMetadata'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /maps/{mapId}:
+    parameters:
+      - $ref: '#/components/parameters/MapId'
+    
+    get:
+      summary: Get map metadata
+      tags: [maps]
+      responses:
+        '200':
+          description: Map metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MapMetadata'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    
+    patch:
+      summary: Update map metadata
+      tags: [maps]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MapUpdate'
+      responses:
+        '200':
+          description: Map updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MapMetadata'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    
+    delete:
+      summary: Delete a map
+      tags: [maps]
+      responses:
+        '204':
+          description: Map deleted successfully
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /maps/{mapId}/data:
+    parameters:
+      - $ref: '#/components/parameters/MapId'
+    
+    get:
+      summary: Get map grid data
+      tags: [maps]
+      responses:
+        '200':
+          description: Map grid data (binary or base64)
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: string
+                    format: byte
+                    description: Base64-encoded grid data
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    
+    put:
+      summary: Update map grid data
+      tags: [maps]
+      description: Replace entire grid (used for initial upload)
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+          application/json:
+            schema:
+              type: object
+              properties:
+                data:
+                  type: string
+                  format: byte
+      responses:
+        '200':
+          description: Map data updated successfully
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    
+    patch:
+      summary: Update map grid cells (delta update)
+      tags: [maps]
+      description: Update specific cells for efficiency
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                cells:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      row:
+                        type: integer
+                      col:
+                        type: integer
+                      value:
+                        type: integer
+                        minimum: 0
+                        maximum: 255
+      responses:
+        '200':
+          description: Map cells updated successfully
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /maps/{mapId}/zones:
+    parameters:
+      - $ref: '#/components/parameters/MapId'
+    
+    get:
+      summary: List restricted zones for a map
+      tags: [zones]
+      responses:
+        '200':
+          description: List of restricted zones
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/RestrictedZone'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    
+    post:
+      summary: Create a restricted zone
+      tags: [zones]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RestrictedZoneCreate'
+      responses:
+        '201':
+          description: Zone created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RestrictedZone'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /zones/{zoneId}:
+    parameters:
+      - $ref: '#/components/parameters/ZoneId'
+    
+    get:
+      summary: Get zone details
+      tags: [zones]
+      responses:
+        '200':
+          description: Zone details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RestrictedZone'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    
+    patch:
+      summary: Update a restricted zone
+      tags: [zones]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RestrictedZoneUpdate'
+      responses:
+        '200':
+          description: Zone updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RestrictedZone'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    
+    delete:
+      summary: Delete a restricted zone
+      tags: [zones]
+      responses:
+        '204':
+          description: Zone deleted successfully
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /sessions:
+    get:
+      summary: List sessions
+      tags: [sessions]
+      parameters:
+        - name: robotId
+          in: query
+          description: Filter by robot ID
+          schema:
+            type: string
+            format: uuid
+        - name: type
+          in: query
+          description: Filter by session type
+          schema:
+            type: string
+            enum: [EXPLORATION, CLEANING]
+        - name: status
+          in: query
+          description: Filter by session status
+          schema:
+            type: string
+            enum: [IN_PROGRESS, COMPLETED, INTERRUPTED, FAILED]
+      responses:
+        '200':
+          description: List of sessions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Session'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    
+    post:
+      summary: Create a new session
+      tags: [sessions]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SessionCreate'
+      responses:
+        '201':
+          description: Session created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Session'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /sessions/{sessionId}:
+    parameters:
+      - $ref: '#/components/parameters/SessionId'
+    
+    get:
+      summary: Get session details
+      tags: [sessions]
+      responses:
+        '200':
+          description: Session details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Session'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    
+    patch:
+      summary: Update session (e.g., mark complete)
+      tags: [sessions]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SessionUpdate'
+      responses:
+        '200':
+          description: Session updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Session'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /logs:
+    get:
+      summary: Query logs
+      tags: [logs]
+      parameters:
+        - name: robotId
+          in: query
+          description: Filter by robot ID
+          schema:
+            type: string
+            format: uuid
+        - name: sessionId
+          in: query
+          description: Filter by session ID
+          schema:
+            type: string
+            format: uuid
+        - name: level
+          in: query
+          description: Filter by log level
+          schema:
+            type: string
+            enum: [DEBUG, INFO, WARN, ERROR, CRITICAL]
+        - name: since
+          in: query
+          description: Filter logs after this timestamp
+          schema:
+            type: string
+            format: date-time
+        - name: limit
+          in: query
+          description: Max number of logs to return
+          schema:
+            type: integer
+            default: 100
+            maximum: 1000
+      responses:
+        '200':
+          description: List of logs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Log'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    
+    delete:
+      summary: Clear logs
+      tags: [logs]
+      description: Clear all logs or filtered subset
+      parameters:
+        - name: robotId
+          in: query
+          description: Clear logs for specific robot
+          schema:
+            type: string
+            format: uuid
+        - name: before
+          in: query
+          description: Clear logs before this timestamp
+          schema:
+            type: string
+            format: date-time
+      responses:
+        '204':
+          description: Logs cleared successfully
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+components:
+  parameters:
+    RobotId:
+      name: robotId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Unique robot identifier
+    
+    MapId:
+      name: mapId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Unique map identifier
+    
+    ZoneId:
+      name: zoneId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Unique zone identifier
+    
+    SessionId:
+      name: sessionId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Unique session identifier
+
+  schemas:
+    Robot:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          maxLength: 100
+        serialNumber:
+          type: string
+          pattern: '^[A-Z0-9-]+$'
+        modelVersion:
+          type: string
+        firmwareVersion:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        lastSeenAt:
+          type: string
+          format: date-time
+        status:
+          type: string
+          enum: [ONLINE, OFFLINE, ERROR, MAINTENANCE]
+      required: [id, name, serialNumber, modelVersion, firmwareVersion, status]
+    
+    RobotCreate:
+      type: object
+      properties:
+        name:
+          type: string
+          maxLength: 100
+        serialNumber:
+          type: string
+          pattern: '^[A-Z0-9-]+$'
+        modelVersion:
+          type: string
+        firmwareVersion:
+          type: string
+      required: [name, serialNumber, modelVersion, firmwareVersion]
+    
+    RobotUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+          maxLength: 100
+        status:
+          type: string
+          enum: [ONLINE, OFFLINE, ERROR, MAINTENANCE]
+    
+    RobotState:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        robotId:
+          type: string
+          format: uuid
+        timestamp:
+          type: string
+          format: date-time
+        mode:
+          type: string
+          enum: [IDLE, EXPLORATION, CLEANING, MANUAL, RETURNING, ERROR]
+        position:
+          $ref: '#/components/schemas/Position'
+        velocity:
+          $ref: '#/components/schemas/Velocity'
+        batteryLevel:
+          type: number
+          minimum: 0
+          maximum: 100
+        waterLevel:
+          type: number
+          minimum: 0
+          maximum: 100
+        motorCurrents:
+          $ref: '#/components/schemas/MotorCurrents'
+        errors:
+          type: array
+          items:
+            type: string
+            maxLength: 50
+          maxItems: 10
+      required: [robotId, timestamp, mode, position, velocity, batteryLevel, waterLevel, motorCurrents]
+    
+    RobotStateUpdate:
+      type: object
+      properties:
+        mode:
+          type: string
+          enum: [IDLE, EXPLORATION, CLEANING, MANUAL, RETURNING, ERROR]
+        position:
+          $ref: '#/components/schemas/Position'
+        velocity:
+          $ref: '#/components/schemas/Velocity'
+        batteryLevel:
+          type: number
+          minimum: 0
+          maximum: 100
+        waterLevel:
+          type: number
+          minimum: 0
+          maximum: 100
+        motorCurrents:
+          $ref: '#/components/schemas/MotorCurrents'
+        errors:
+          type: array
+          items:
+            type: string
+      required: [mode, position, velocity, batteryLevel, waterLevel, motorCurrents]
+    
+    Position:
+      type: object
+      properties:
+        x:
+          type: number
+          description: X coordinate in meters
+        y:
+          type: number
+          description: Y coordinate in meters
+        theta:
+          type: number
+          description: Orientation in radians
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: Position confidence
+      required: [x, y, theta, confidence]
+    
+    Velocity:
+      type: object
+      properties:
+        linear:
+          type: number
+          description: Linear velocity in m/s
+        angular:
+          type: number
+          description: Angular velocity in rad/s
+      required: [linear, angular]
+    
+    MotorCurrents:
+      type: object
+      properties:
+        left:
+          type: number
+          minimum: 0
+          maximum: 5
+          description: Left motor current in amperes
+        right:
+          type: number
+          minimum: 0
+          maximum: 5
+          description: Right motor current in amperes
+      required: [left, right]
+    
+    Command:
+      type: object
+      properties:
+        type:
+          type: string
+          enum: [MOVE, SET_MODE, E_STOP, SET_SPEED, CONFIG_UPDATE]
+        payload:
+          type: object
+          description: Command-specific data
+      required: [type, payload]
+    
+    MapMetadata:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        robotId:
+          type: string
+          format: uuid
+        name:
+          type: string
+          maxLength: 100
+        resolution:
+          type: number
+          minimum: 0.01
+          maximum: 0.1
+        width:
+          type: integer
+          minimum: 100
+          maximum: 10000
+        height:
+          type: integer
+          minimum: 100
+          maximum: 10000
+        origin:
+          $ref: '#/components/schemas/Origin'
+        metadata:
+          type: object
+          additionalProperties: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        completionPercentage:
+          type: number
+          minimum: 0
+          maximum: 100
+      required: [id, robotId, resolution, width, height, origin, completionPercentage]
+    
+    MapCreate:
+      type: object
+      properties:
+        robotId:
+          type: string
+          format: uuid
+        name:
+          type: string
+          maxLength: 100
+        resolution:
+          type: number
+          minimum: 0.01
+          maximum: 0.1
+        width:
+          type: integer
+          minimum: 100
+          maximum: 10000
+        height:
+          type: integer
+          minimum: 100
+          maximum: 10000
+        origin:
+          $ref: '#/components/schemas/Origin'
+      required: [robotId, resolution, width, height, origin]
+    
+    MapUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+          maxLength: 100
+        metadata:
+          type: object
+          additionalProperties: true
+        completionPercentage:
+          type: number
+          minimum: 0
+          maximum: 100
+    
+    Origin:
+      type: object
+      properties:
+        x:
+          type: number
+        y:
+          type: number
+        theta:
+          type: number
+      required: [x, y, theta]
+    
+    RestrictedZone:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        mapId:
+          type: string
+          format: uuid
+        name:
+          type: string
+          maxLength: 100
+        geometry:
+          $ref: '#/components/schemas/Polygon'
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      required: [id, mapId, geometry]
+    
+    RestrictedZoneCreate:
+      type: object
+      properties:
+        name:
+          type: string
+          maxLength: 100
+        geometry:
+          $ref: '#/components/schemas/Polygon'
+      required: [geometry]
+    
+    RestrictedZoneUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+          maxLength: 100
+        geometry:
+          $ref: '#/components/schemas/Polygon'
+    
+    Polygon:
+      type: object
+      properties:
+        type:
+          type: string
+          enum: [Polygon]
+        coordinates:
+          type: array
+          items:
+            type: array
+            items:
+              $ref: '#/components/schemas/Point'
+            minItems: 4
+          minItems: 1
+      required: [type, coordinates]
+    
+    Point:
+      type: object
+      properties:
+        x:
+          type: number
+        y:
+          type: number
+      required: [x, y]
+    
+    Session:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        robotId:
+          type: string
+          format: uuid
+        mapId:
+          type: string
+          format: uuid
+        type:
+          type: string
+          enum: [EXPLORATION, CLEANING]
+        status:
+          type: string
+          enum: [IN_PROGRESS, COMPLETED, INTERRUPTED, FAILED]
+        startedAt:
+          type: string
+          format: date-time
+        completedAt:
+          type: string
+          format: date-time
+          nullable: true
+        statistics:
+          type: object
+          additionalProperties: true
+      required: [id, robotId, mapId, type, status, startedAt, statistics]
+    
+    SessionCreate:
+      type: object
+      properties:
+        robotId:
+          type: string
+          format: uuid
+        mapId:
+          type: string
+          format: uuid
+        type:
+          type: string
+          enum: [EXPLORATION, CLEANING]
+      required: [robotId, mapId, type]
+    
+    SessionUpdate:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [IN_PROGRESS, COMPLETED, INTERRUPTED, FAILED]
+        completedAt:
+          type: string
+          format: date-time
+        statistics:
+          type: object
+          additionalProperties: true
+    
+    Log:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        sessionId:
+          type: string
+          format: uuid
+          nullable: true
+        robotId:
+          type: string
+          format: uuid
+        timestamp:
+          type: string
+          format: date-time
+        level:
+          type: string
+          enum: [DEBUG, INFO, WARN, ERROR, CRITICAL]
+        module:
+          type: string
+          maxLength: 50
+        message:
+          type: string
+          maxLength: 500
+        data:
+          type: object
+          additionalProperties: true
+          nullable: true
+      required: [id, robotId, timestamp, level, module, message]
+    
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+        statusCode:
+          type: integer
+      required: [error, message, statusCode]
+
+  responses:
+    BadRequest:
+      description: Invalid request parameters
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: Bad Request
+            message: Invalid robotId format
+            statusCode: 400
+    
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: Not Found
+            message: Robot with id '550e8400-e29b-41d4-a716-446655440000' not found
+            statusCode: 404
+    
+    InternalError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: Internal Server Error
+            message: An unexpected error occurred
+            statusCode: 500
+
+security:
+  - ApiKey: []
+
+components:
+  securitySchemes:
+    ApiKey:
+      type: apiKey
+      in: header
+      name: X-API-Key
