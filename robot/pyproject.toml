@@ -1,0 +1,32 @@
+[project]
+name = "robomop-robot"
+version = "0.1.0"
+description = "RoboMop robot control software"
+requires-python = ">=3.11"
+dependencies = []
+
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+include = "\.(py|pyi)$"
+
+[tool.mypy]
+python_version = "3.11"
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_any_unimported = true
+disallow_any_generics = false
+check_untyped_defs = true
+strict_optional = true
+no_implicit_optional = true
+warn_return_any = true
+warn_unused_ignores = true
+warn_unreachable = true
+show_error_codes = true
+pretty = true
+plugins = []
+mypy_path = "src"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
