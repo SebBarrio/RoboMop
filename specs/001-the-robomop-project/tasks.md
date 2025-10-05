@@ -33,15 +33,15 @@
 
 ## Phase 3.1: Setup
 
-- [ ] **T001** Create root project structure (robot/, backend/, frontend/, docs/)
-- [ ] **T002** [P] Initialize Python project in robot/ with requirements.txt (Python 3.11+, pytest, black, pylint, mypy, rplidar SDK, numpy, scipy, python-socketio, asyncio)
-- [ ] **T003** [P] Initialize Node.js project in backend/ with package.json (Node 20.x, TypeScript 5.x, Express 4.x, Socket.io, TypeORM, Jest, supertest)
-- [ ] **T004** [P] Initialize Vite+React project in frontend/ with package.json (TypeScript 5.x, React 18.x, Vite 5.x, socket.io-client, Vitest, React Testing Library, Playwright)
-- [ ] **T005** [P] Configure Python linting in robot/ (black, pylint, mypy configs, pre-commit hook)
-- [ ] **T006** [P] Configure TypeScript linting in backend/ and frontend/ (ESLint, Prettier, tsconfig.json strict mode)
-- [ ] **T007** [P] Setup PostgreSQL and SQLite TypeORM configurations in backend/src/config/database.ts
-- [ ] **T008** [P] Create TypeORM migration scripts in backend/src/migrations/
-- [ ] **T009** [P] Setup CI/CD pipeline config (.github/workflows/ or equivalent: lint, test, coverage)
+- [x] **T001** Create root project structure (robot/, backend/, frontend/, docs/)
+- [x] **T002** [P] Initialize Python project in robot/ with requirements.txt (Python 3.11+, pytest, black, pylint, mypy, rplidar SDK, numpy, scipy, python-socketio, asyncio)
+- [x] **T003** [P] Initialize Node.js project in backend/ with package.json (Node 20.x, TypeScript 5.x, Express 4.x, Socket.io, TypeORM, Jest, supertest)
+- [x] **T004** [P] Initialize Vite+React project in frontend/ with package.json (TypeScript 5.x, React 18.x, Vite 5.x, socket.io-client, Vitest, React Testing Library, Playwright)
+- [x] **T005** [P] Configure Python linting in robot/ (black, pylint, mypy configs, pre-commit hook)
+- [x] **T006** [P] Configure TypeScript linting in backend/ and frontend/ (ESLint, Prettier, tsconfig.json strict mode)
+- [x] **T007** [P] Setup PostgreSQL and SQLite TypeORM configurations in backend/src/config/database.ts
+- [x] **T008** [P] Create TypeORM migration scripts in backend/src/migrations/
+- [x] **T009** [P] Setup CI/CD pipeline config (.github/workflows/ or equivalent: lint, test, coverage)
 
 ---
 

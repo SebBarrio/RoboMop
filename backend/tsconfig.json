@@ -10,7 +10,6 @@
     "skipLibCheck": false,
     "resolveJsonModule": true,
     "outDir": "dist",
-    "rootDir": "src",
     "sourceMap": true,
     "types": ["node", "jest"]
   },

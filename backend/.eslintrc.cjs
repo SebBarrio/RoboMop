@@ -1,5 +1,6 @@
 module.exports = {
   root: true,
+  ignorePatterns: ["jest.config.ts"],
   env: {
     node: true,
     es2021: true,
