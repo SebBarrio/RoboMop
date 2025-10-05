@@ -50,32 +50,32 @@
 
 ### Contract Tests - Backend API
 
-- [ ] **T010** [P] Contract test GET /api/v1/robots in backend/tests/contract/test_robots_get.test.ts
-- [ ] **T011** [P] Contract test POST /api/v1/robots in backend/tests/contract/test_robots_post.test.ts
-- [ ] **T012** [P] Contract test GET /api/v1/robots/{robotId} in backend/tests/contract/test_robot_get.test.ts
-- [ ] **T013** [P] Contract test PATCH /api/v1/robots/{robotId} in backend/tests/contract/test_robot_patch.test.ts
-- [ ] **T014** [P] Contract test GET /api/v1/robots/{robotId}/state in backend/tests/contract/test_robot_state_get.test.ts
-- [ ] **T015** [P] Contract test POST /api/v1/robots/{robotId}/state in backend/tests/contract/test_robot_state_post.test.ts
-- [ ] **T016** [P] Contract test POST /api/v1/robots/{robotId}/command in backend/tests/contract/test_robot_command.test.ts
-- [ ] **T017** [P] Contract test GET /api/v1/maps in backend/tests/contract/test_maps_get.test.ts
-- [ ] **T018** [P] Contract test POST /api/v1/maps in backend/tests/contract/test_maps_post.test.ts
-- [ ] **T019** [P] Contract test GET /api/v1/maps/{mapId} in backend/tests/contract/test_map_get.test.ts
-- [ ] **T020** [P] Contract test PATCH /api/v1/maps/{mapId} in backend/tests/contract/test_map_patch.test.ts
-- [ ] **T021** [P] Contract test DELETE /api/v1/maps/{mapId} in backend/tests/contract/test_map_delete.test.ts
-- [ ] **T022** [P] Contract test GET /api/v1/maps/{mapId}/data in backend/tests/contract/test_map_data_get.test.ts
-- [ ] **T023** [P] Contract test PUT /api/v1/maps/{mapId}/data in backend/tests/contract/test_map_data_put.test.ts
-- [ ] **T024** [P] Contract test PATCH /api/v1/maps/{mapId}/data in backend/tests/contract/test_map_data_patch.test.ts
-- [ ] **T025** [P] Contract test GET /api/v1/maps/{mapId}/zones in backend/tests/contract/test_zones_get.test.ts
-- [ ] **T026** [P] Contract test POST /api/v1/maps/{mapId}/zones in backend/tests/contract/test_zones_post.test.ts
-- [ ] **T027** [P] Contract test GET /api/v1/zones/{zoneId} in backend/tests/contract/test_zone_get.test.ts
-- [ ] **T028** [P] Contract test PATCH /api/v1/zones/{zoneId} in backend/tests/contract/test_zone_patch.test.ts
-- [ ] **T029** [P] Contract test DELETE /api/v1/zones/{zoneId} in backend/tests/contract/test_zone_delete.test.ts
-- [ ] **T030** [P] Contract test GET /api/v1/sessions in backend/tests/contract/test_sessions_get.test.ts
-- [ ] **T031** [P] Contract test POST /api/v1/sessions in backend/tests/contract/test_sessions_post.test.ts
-- [ ] **T032** [P] Contract test GET /api/v1/sessions/{sessionId} in backend/tests/contract/test_session_get.test.ts
-- [ ] **T033** [P] Contract test PATCH /api/v1/sessions/{sessionId} in backend/tests/contract/test_session_patch.test.ts
-- [ ] **T034** [P] Contract test GET /api/v1/logs in backend/tests/contract/test_logs_get.test.ts
-- [ ] **T035** [P] Contract test DELETE /api/v1/logs in backend/tests/contract/test_logs_delete.test.ts
+- [X] **T010** [P] Contract test GET /api/v1/robots in backend/tests/contract/test_robots_get.test.ts
+- [X] **T011** [P] Contract test POST /api/v1/robots in backend/tests/contract/test_robots_post.test.ts
+- [X] **T012** [P] Contract test GET /api/v1/robots/{robotId} in backend/tests/contract/test_robot_get.test.ts
+- [X] **T013** [P] Contract test PATCH /api/v1/robots/{robotId} in backend/tests/contract/test_robot_patch.test.ts
+- [X] **T014** [P] Contract test GET /api/v1/robots/{robotId}/state in backend/tests/contract/test_robot_state_get.test.ts
+- [X] **T015** [P] Contract test POST /api/v1/robots/{robotId}/state in backend/tests/contract/test_robot_state_post.test.ts
+- [X] **T016** [P] Contract test POST /api/v1/robots/{robotId}/command in backend/tests/contract/test_robot_command.test.ts
+- [X] **T017** [P] Contract test GET /api/v1/maps in backend/tests/contract/test_maps_get.test.ts
+- [X] **T018** [P] Contract test POST /api/v1/maps in backend/tests/contract/test_maps_post.test.ts
+- [X] **T019** [P] Contract test GET /api/v1/maps/{mapId} in backend/tests/contract/test_map_get.test.ts
+- [X] **T020** [P] Contract test PATCH /api/v1/maps/{mapId} in backend/tests/contract/test_map_patch.test.ts
+- [X] **T021** [P] Contract test DELETE /api/v1/maps/{mapId} in backend/tests/contract/test_map_delete.test.ts
+- [X] **T022** [P] Contract test GET /api/v1/maps/{mapId}/data in backend/tests/contract/test_map_data_get.test.ts
+- [X] **T023** [P] Contract test PUT /api/v1/maps/{mapId}/data in backend/tests/contract/test_map_data_put.test.ts
+- [X] **T024** [P] Contract test PATCH /api/v1/maps/{mapId}/data in backend/tests/contract/test_map_data_patch.test.ts
+- [X] **T025** [P] Contract test GET /api/v1/maps/{mapId}/zones in backend/tests/contract/test_zones_get.test.ts
+- [X] **T026** [P] Contract test POST /api/v1/maps/{mapId}/zones in backend/tests/contract/test_zones_post.test.ts
+- [X] **T027** [P] Contract test GET /api/v1/zones/{zoneId} in backend/tests/contract/test_zone_get.test.ts
+- [X] **T028** [P] Contract test PATCH /api/v1/zones/{zoneId} in backend/tests/contract/test_zone_patch.test.ts
+- [X] **T029** [P] Contract test DELETE /api/v1/zones/{zoneId} in backend/tests/contract/test_zone_delete.test.ts
+- [X] **T030** [P] Contract test GET /api/v1/sessions in backend/tests/contract/test_sessions_get.test.ts
+- [X] **T031** [P] Contract test POST /api/v1/sessions in backend/tests/contract/test_sessions_post.test.ts
+- [X] **T032** [P] Contract test GET /api/v1/sessions/{sessionId} in backend/tests/contract/test_session_get.test.ts
+- [X] **T033** [P] Contract test PATCH /api/v1/sessions/{sessionId} in backend/tests/contract/test_session_patch.test.ts
+- [X] **T034** [P] Contract test GET /api/v1/logs in backend/tests/contract/test_logs_get.test.ts
+- [X] **T035** [P] Contract test DELETE /api/v1/logs in backend/tests/contract/test_logs_delete.test.ts
 
 ### Contract Tests - WebSocket Events
 
