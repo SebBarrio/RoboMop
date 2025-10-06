@@ -79,15 +79,15 @@
 
 ### Contract Tests - WebSocket Events
 
-- [ ] **T036** [P] WebSocket contract test robot:heartbeat event in backend/tests/contract/test_ws_heartbeat.test.ts
-- [ ] **T037** [P] WebSocket contract test robot:state event in backend/tests/contract/test_ws_robot_state.test.ts
-- [ ] **T038** [P] WebSocket contract test robot:map-update event in backend/tests/contract/test_ws_map_update.test.ts
-- [ ] **T039** [P] WebSocket contract test robot:sensor-data event in backend/tests/contract/test_ws_sensor_data.test.ts
-- [ ] **T040** [P] WebSocket contract test command:move event in backend/tests/contract/test_ws_command_move.test.ts
-- [ ] **T041** [P] WebSocket contract test command:set-mode event in backend/tests/contract/test_ws_command_mode.test.ts
-- [ ] **T042** [P] WebSocket contract test command:e-stop event in backend/tests/contract/test_ws_e_stop.test.ts
-- [ ] **T043** [P] WebSocket contract test ui:command event in backend/tests/contract/test_ws_ui_command.test.ts
-- [ ] **T044** [P] WebSocket contract test ui:create-zone event in backend/tests/contract/test_ws_create_zone.test.ts
+- [X] **T036** [P] WebSocket contract test robot:heartbeat event in backend/tests/contract/test_ws_heartbeat.test.ts
+- [X] **T037** [P] WebSocket contract test robot:state event in backend/tests/contract/test_ws_robot_state.test.ts
+- [X] **T038** [P] WebSocket contract test robot:map-update event in backend/tests/contract/test_ws_map_update.test.ts
+- [X] **T039** [P] WebSocket contract test robot:sensor-data event in backend/tests/contract/test_ws_sensor_data.test.ts
+- [X] **T040** [P] WebSocket contract test command:move event in backend/tests/contract/test_ws_command_move.test.ts
+- [X] **T041** [P] WebSocket contract test command:set-mode event in backend/tests/contract/test_ws_command_mode.test.ts
+- [X] **T042** [P] WebSocket contract test command:e-stop event in backend/tests/contract/test_ws_e_stop.test.ts
+- [X] **T043** [P] WebSocket contract test ui:command event in backend/tests/contract/test_ws_ui_command.test.ts
+- [X] **T044** [P] WebSocket contract test ui:create-zone event in backend/tests/contract/test_ws_create_zone.test.ts
 
 ### Integration Tests - Quickstart Scenarios
 

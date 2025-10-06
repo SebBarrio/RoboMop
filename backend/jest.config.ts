@@ -8,10 +8,14 @@ const config: Config = {
   collectCoverageFrom: ["src/**/*.ts"],
   coverageDirectory: "coverage",
   testMatch: ["**/?(*.)+(spec|test).ts"],
-  globals: {
-    "ts-jest": {
-      tsconfig: "tsconfig.json"
-    }
+  transform: {
+    "^.+\\.(ts)$": [
+      "ts-jest",
+      {
+        tsconfig: "tsconfig.json",
+        useESM: true
+      }
+    ]
   }
 };
 

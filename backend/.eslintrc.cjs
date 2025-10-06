@@ -29,5 +29,15 @@ module.exports = {
       }
     ],
     "@typescript-eslint/explicit-module-boundary-types": "off"
-  }
+  },
+  overrides: [
+    {
+      files: ["tests/**/*.ts"],
+      rules: {
+        "@typescript-eslint/no-unsafe-assignment": "off",
+        "@typescript-eslint/no-unsafe-member-access": "off",
+        "import/order": "off"
+      }
+    }
+  ]
 };

@@ -200,3 +200,284 @@ export const expectLogSchema = (value: unknown): void => {
     expect(typeof log.data).toBe("object");
   }
 };
+
+const expectNumber = (value: unknown): void => {
+  expect(typeof value).toBe("number");
+  if (typeof value === "number") {
+    expect(Number.isFinite(value)).toBe(true);
+  }
+};
+
+function assertRecord(value: unknown): asserts value is Record<string, unknown> {
+  if (typeof value !== "object" || value === null) {
+    throw new Error("Expected record payload");
+  }
+}
+
+export const expectRobotHeartbeatPayloadSchema = (value: unknown): void => {
+  expect(value).toBeDefined();
+  const heartbeat = value as Record<string, unknown>;
+
+  expect(typeof heartbeat.robotId).toBe("string");
+  expectIsoDateString(heartbeat.timestamp);
+  expectNumber(heartbeat.uptimeSeconds);
+  expectNumber(heartbeat.cpuUsagePercent);
+  expectNumber(heartbeat.memoryUsagePercent);
+  expectNumber(heartbeat.temperatureCelsius);
+};
+
+export const expectRobotHeartbeatAckSchema = (value: unknown): void => {
+  expect(value).toBeDefined();
+  const ack = value as Record<string, unknown>;
+
+  expect(typeof ack.status).toBe("string");
+  expect(ack.status).toBe("accepted");
+  expectIsoDateString(ack.receivedAt);
+};
+
+export const expectRobotStateEventSchema = (value: unknown): void => {
+  expect(value).toBeDefined();
+  const state = value as Record<string, unknown>;
+
+  expect(typeof state.robotId).toBe("string");
+  expectIsoDateString(state.timestamp);
+
+  expect(typeof state.mode).toBe("string");
+  if (typeof state.mode === "string") {
+    expect(ROBOT_MODE_VALUES).toContain(state.mode);
+  }
+
+  const position = state.position as Record<string, unknown>;
+  expect(position).toBeDefined();
+  expectNumber(position.x);
+  expectNumber(position.y);
+  expectNumber(position.theta);
+  expectNumber(position.confidence);
+
+  const velocity = state.velocity as Record<string, unknown>;
+  expect(velocity).toBeDefined();
+  expectNumber(velocity.linear);
+  expectNumber(velocity.angular);
+
+  expectNumber(state.batteryLevel);
+  expectNumber(state.waterLevel);
+
+  const motorCurrents = state.motorCurrents as Record<string, unknown>;
+  expect(motorCurrents).toBeDefined();
+  expectNumber(motorCurrents.left);
+  expectNumber(motorCurrents.right);
+
+  if (Array.isArray(state.errors)) {
+    state.errors.forEach((err) => expect(typeof err).toBe("string"));
+  }
+};
+
+export const expectRobotStateAckSchema = (value: unknown): void => {
+  expect(value).toBeDefined();
+  const ack = value as Record<string, unknown>;
+
+  expect(typeof ack.status).toBe("string");
+  expect(ack.status).toBe("accepted");
+  expect(typeof ack.stateId).toBe("string");
+  expectIsoDateString(ack.receivedAt);
+};
+
+export const expectRobotMapUpdatePayloadSchema = (value: unknown): void => {
+  expect(value).toBeDefined();
+  const update = value as Record<string, unknown>;
+
+  expect(typeof update.robotId).toBe("string");
+  expect(typeof update.mapId).toBe("string");
+  expectIsoDateString(update.timestamp);
+
+  expect(typeof update.updateType).toBe("string");
+  if (typeof update.updateType === "string") {
+    expect(["delta", "full"]).toContain(update.updateType);
+  }
+
+  if (update.updateType === "delta") {
+    expect(Array.isArray(update.cells)).toBe(true);
+    if (Array.isArray(update.cells)) {
+      update.cells.forEach((cell) => {
+        const record = cell as Record<string, unknown>;
+        expectNumber(record.row);
+        expectNumber(record.col);
+        expectNumber(record.value);
+      });
+    }
+  }
+
+  if (update.updateType === "full") {
+    expect(typeof update.metadata).toBe("object");
+    expect(typeof update.data).toBe("string");
+  }
+};
+
+export const expectRobotMapUpdateAckSchema = (value: unknown): void => {
+  expect(value).toBeDefined();
+  const ack = value as Record<string, unknown>;
+
+  expect(typeof ack.status).toBe("string");
+  expect(ack.status).toBe("accepted");
+  expectNumber(ack.updatedCells);
+  expectIsoDateString(ack.receivedAt);
+};
+
+export const expectRobotSensorDataPayloadSchema = (value: unknown): void => {
+  expect(value).toBeDefined();
+  const data = value as Record<string, unknown>;
+
+  expect(typeof data.robotId).toBe("string");
+  expectIsoDateString(data.timestamp);
+
+  const lidarScan = data.lidarScan as Record<string, unknown>;
+  expect(lidarScan).toBeDefined();
+  expectNumber(lidarScan.scanId);
+  expect(Array.isArray(lidarScan.points)).toBe(true);
+  if (Array.isArray(lidarScan.points)) {
+    lidarScan.points.forEach((point) => {
+      const record = point as Record<string, unknown>;
+      expectNumber(record.angle);
+      expectNumber(record.distance);
+    });
+  }
+
+  const imuData = data.imuData;
+  expect(imuData).toBeDefined();
+  assertRecord(imuData);
+  const imuKeys = ["acceleration", "gyroscope", "magnetometer"] as const;
+  imuKeys.forEach((key) => {
+    const axis = imuData[key];
+    expect(axis).toBeDefined();
+    assertRecord(axis);
+    expectNumber(axis.x);
+    expectNumber(axis.y);
+    expectNumber(axis.z);
+  });
+
+  const encoders = data.encoders;
+  expect(encoders).toBeDefined();
+  assertRecord(encoders);
+  const encoderKeys = ["left", "right"] as const;
+  encoderKeys.forEach((key) => {
+    const wheel = encoders[key];
+    expect(wheel).toBeDefined();
+    assertRecord(wheel);
+    expectNumber(wheel.ticks);
+    expectNumber(wheel.velocity);
+  });
+
+  expectNumber(data.ultrasonic);
+  expectNumber(data.waterLevel);
+  expectNumber(data.batteryVoltage);
+};
+
+export const expectRobotSensorDataAckSchema = (value: unknown): void => {
+  expect(value).toBeDefined();
+  const ack = value as Record<string, unknown>;
+
+  expect(typeof ack.status).toBe("string");
+  expect(ack.status).toBe("queued");
+  expectIsoDateString(ack.receivedAt);
+};
+
+export const expectCommandMovePayloadSchema = (value: unknown): void => {
+  expect(value).toBeDefined();
+  const command = value as Record<string, unknown>;
+
+  expect(typeof command.commandId).toBe("string");
+  expectIsoDateString(command.timestamp);
+  expect(typeof command.direction).toBe("string");
+  expectNumber(command.speed);
+  expectNumber(command.duration);
+};
+
+export const expectCommandSetModePayloadSchema = (value: unknown): void => {
+  expect(value).toBeDefined();
+  const command = value as Record<string, unknown>;
+
+  expect(typeof command.commandId).toBe("string");
+  expectIsoDateString(command.timestamp);
+  expect(typeof command.mode).toBe("string");
+  if (typeof command.parameters !== "undefined" && command.parameters !== null) {
+    expect(typeof command.parameters).toBe("object");
+  }
+};
+
+export const expectCommandEStopPayloadSchema = (value: unknown): void => {
+  expect(value).toBeDefined();
+  const command = value as Record<string, unknown>;
+
+  expect(typeof command.commandId).toBe("string");
+  expectIsoDateString(command.timestamp);
+  expect(typeof command.reason).toBe("string");
+};
+
+export const expectUiCommandPayloadSchema = (value: unknown): void => {
+  expect(value).toBeDefined();
+  const payload = value;
+  assertRecord(payload);
+
+  expect(typeof payload.robotId).toBe("string");
+
+  const command = payload.command;
+  expect(command).toBeDefined();
+  assertRecord(command);
+  expect(typeof command.type).toBe("string");
+  if (command.payload !== undefined && command.payload !== null) {
+    expect(typeof command.payload).toBe("object");
+  }
+};
+
+export const expectUiCommandAckPayloadSchema = (value: unknown): void => {
+  expect(value).toBeDefined();
+  const payload = value as Record<string, unknown>;
+
+  expect(typeof payload.commandId).toBe("string");
+  expect(typeof payload.status).toBe("string");
+  expectIsoDateString(payload.timestamp);
+};
+
+export const expectUiCreateZonePayloadSchema = (value: unknown): void => {
+  expect(value).toBeDefined();
+  const payload = value;
+  assertRecord(payload);
+
+  expect(typeof payload.mapId).toBe("string");
+
+  const zone = payload.zone;
+  expect(zone).toBeDefined();
+  if (zone) {
+    assertRecord(zone);
+    if (typeof zone.name !== "undefined") {
+      expect(typeof zone.name).toBe("string");
+    }
+
+    const geometry = zone.geometry;
+    expect(geometry).toBeDefined();
+    if (geometry) {
+      assertRecord(geometry);
+      expect(geometry.type).toBe("Polygon");
+      expect(Array.isArray(geometry.coordinates)).toBe(true);
+      if (Array.isArray(geometry.coordinates)) {
+        geometry.coordinates.forEach((ring) => {
+          expect(Array.isArray(ring)).toBe(true);
+          if (Array.isArray(ring)) {
+            ring.forEach((point) => expectPoint(point));
+          }
+        });
+      }
+    }
+  }
+};
+
+export const expectUiZoneCreatedPayloadSchema = (value: unknown): void => {
+  expect(value).toBeDefined();
+  const payload = value;
+  assertRecord(payload);
+
+  expect(typeof payload.zone).toBe("object");
+  if (payload.zone) {
+    expectRestrictedZoneSchema(payload.zone);
+  }
+};
