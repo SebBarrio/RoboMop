@@ -1,0 +1,19 @@
+[MASTER]
+init-hook='import sys; sys.path.append("src")'
+
+[MESSAGES CONTROL]
+disable=C0330, C0326, too-few-public-methods, fixme
+
+[FORMAT]
+max-line-length=120
+indent-string='    '
+
+[BASIC]
+good-names=i,j,k,x,y,z,dx,dy,dz,dt,id,kp,ki,kd,fd
+
+[DESIGN]
+max-args=7
+max-attributes=12
+max-locals=20
+
+

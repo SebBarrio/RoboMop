@@ -1,0 +1,38 @@
+# RoboMop Robot - Python Dependencies
+# Python 3.11+ required
+
+# Core Dependencies
+numpy>=1.24.0,<2.0.0
+scipy>=1.10.0,<2.0.0
+asyncio-mqtt>=0.16.0
+
+# RPLIDAR SDK
+rplidar-roboticia>=0.9.0
+
+# IMU and I2C
+smbus2>=0.4.0
+adafruit-circuitpython-pca9685>=3.4.0
+
+# WebSocket Communication
+python-socketio[client]>=5.9.0
+aiohttp>=3.8.0
+
+# Configuration
+PyYAML>=6.0
+
+# Testing
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+pytest-cov>=4.1.0
+pytest-mock>=3.11.0
+
+# Code Quality
+black>=23.7.0
+pylint>=2.17.0
+mypy>=1.4.0
+bandit>=1.7.0
+
+# Utilities
+python-dateutil>=2.8.0
+
+
