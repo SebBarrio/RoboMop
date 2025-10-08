@@ -241,16 +241,32 @@ class MotorTestRig:
         return 0.0
 
     def _voltage_feedforward(self, omega_out_des: float, alpha_out_des: float) -> float:
-        """Compute motor voltage feedforward using motor-side dynamics.
+        """Compute motor voltage feedforward with correct unit handling.
 
-        Motor-side desired states are related by omega_m = N * omega_out, alpha_m = N * alpha_out.
-        V_ff = R * (J * alpha_m + B * omega_m) / Kt + Ke * omega_m
+        Assumptions:
+        - J_KG_M2 and B_NM_S_PER_RAD represent the effective load at the OUTPUT shaft.
+        - Gear ratio N = GEAR_RATIO = omega_motor / omega_output.
+
+        Derivation:
+        - Required output torque: tau_out = J_out * alpha_out + B_out * omega_out
+        - Motor torque to produce this (ideal gearbox): tau_m = tau_out / N
+        - Motor electrical model: V = R * (tau_m / Kt) + Ke * omega_m
+        - Where omega_m = N * omega_out
         """
+        # Motor kinematics from output side
         omega_m_des = GEAR_RATIO * omega_out_des
-        alpha_m_des = GEAR_RATIO * alpha_out_des
-        return (R_OHMS * (J_KG_M2 * alpha_m_des + B_NM_S_PER_RAD * omega_m_des) / KT_NM_PER_A) + (
-            KE_VS_PER_RAD * omega_m_des
-        )
+
+        # Output-side torque demand (N*m)
+        torque_out = (J_KG_M2 * alpha_out_des) + (B_NM_S_PER_RAD * omega_out_des)
+
+        # Convert to motor-side torque through the gearbox (ideal, no losses)
+        torque_m = torque_out / GEAR_RATIO
+
+        # Current needed to generate motor torque (A)
+        current_a = torque_m / KT_NM_PER_A
+
+        # Feedforward voltage (V)
+        return (R_OHMS * current_a) + (KE_VS_PER_RAD * omega_m_des)
 
     def run(self, duration: float, interval: float) -> None:
         start = time.monotonic()
