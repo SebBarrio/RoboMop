@@ -187,11 +187,11 @@ class EncoderReader:
 
         if ENCODER_ON_OUTPUT_SHAFT:
             theta_out = theta_measured_rad
-            omega_out = omega_measured_rad_per_s
+            omega_out = omega_measured_rad_per_s * 100  # Apply x100 multiplier to measured speed
         else:
             # Encoders on motor shaft -> convert to output shaft via gear ratio
             theta_out = theta_measured_rad / GEAR_RATIO
-            omega_out = omega_measured_rad_per_s / GEAR_RATIO
+            omega_out = (omega_measured_rad_per_s / GEAR_RATIO) * 100  # Apply x100 multiplier to measured speed
 
         return omega_out, theta_out
 
