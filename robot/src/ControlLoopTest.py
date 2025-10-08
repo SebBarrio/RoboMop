@@ -25,6 +25,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import numpy as np
 
 # Pin assignments
 # MOTOR_CHANNELS: PCA9685 PWM channels for each motor (forward_channel, reverse_channel)
@@ -162,8 +163,11 @@ class EncoderReader:
 
     def read_state(self, motor_index: int, dt: float) -> tuple[float, float]:
         """Return (omega_out_rad_per_s, theta_out_rad)."""
-        if dt <= 0:
+        # Use minimum dt threshold to prevent division by very small values
+        MIN_DT = 0.001  # 1ms minimum
+        if dt < MIN_DT:
             return 0.0, 0.0
+        
         encoder_index = MOTOR_TO_ENCODER_MAP[motor_index]
         encoder = self._encoders[encoder_index]
         steps = encoder.steps
@@ -291,13 +295,34 @@ class MotorTestRig:
         os.makedirs("logs", exist_ok=True)
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
 
+        # Convert to numpy arrays and filter out inf/nan values
+        times_arr = np.array(self._times)
+        
+        # Create mask for valid time points (no inf/nan in any data)
+        valid_mask = np.ones(len(times_arr), dtype=bool)
+        for idx in self._omega_meas.keys():
+            omega_sp_arr = np.array(self._omega_sp[idx])
+            omega_meas_arr = np.array(self._omega_meas[idx])
+            theta_sp_arr = np.array(self._theta_sp[idx])
+            theta_meas_arr = np.array(self._theta_meas[idx])
+            valid_mask &= np.isfinite(omega_sp_arr) & np.isfinite(omega_meas_arr)
+            valid_mask &= np.isfinite(theta_sp_arr) & np.isfinite(theta_meas_arr)
+        
+        # Filter data
+        times_clean = times_arr[valid_mask]
+        if len(times_clean) == 0:
+            print("Warning: No valid data points to plot")
+            return
+
         # Figure 1: Speed tracking
         plt.figure(figsize=(10, 8))
         ax1 = plt.subplot(2, 1, 1)
         ax1.set_title("Speed Tracking (rad/s)")
-        ax1.plot(self._times, self._omega_sp[next(iter(self._omega_sp))], "k--", label="setpoint")
+        omega_sp_clean = np.array(self._omega_sp[next(iter(self._omega_sp))])[valid_mask]
+        ax1.plot(times_clean, omega_sp_clean, "k--", label="setpoint", linewidth=2)
         for idx in sorted(self._omega_meas.keys()):
-            ax1.plot(self._times, self._omega_meas[idx], label=f"motor {idx}")
+            omega_meas_clean = np.array(self._omega_meas[idx])[valid_mask]
+            ax1.plot(times_clean, omega_meas_clean, label=f"motor {idx}", alpha=0.8)
         ax1.set_xlabel("time (s)")
         ax1.set_ylabel("omega_out (rad/s)")
         ax1.grid(True)
@@ -306,9 +331,11 @@ class MotorTestRig:
         # Figure 1, bottom: Position tracking
         ax2 = plt.subplot(2, 1, 2)
         ax2.set_title("Position (rad)")
-        ax2.plot(self._times, self._theta_sp[next(iter(self._theta_sp))], "k--", label="setpoint")
+        theta_sp_clean = np.array(self._theta_sp[next(iter(self._theta_sp))])[valid_mask]
+        ax2.plot(times_clean, theta_sp_clean, "k--", label="setpoint", linewidth=2)
         for idx in sorted(self._theta_meas.keys()):
-            ax2.plot(self._times, self._theta_meas[idx], label=f"motor {idx}")
+            theta_meas_clean = np.array(self._theta_meas[idx])[valid_mask]
+            ax2.plot(times_clean, theta_meas_clean, label=f"motor {idx}", alpha=0.8)
         ax2.set_xlabel("time (s)")
         ax2.set_ylabel("theta_out (rad)")
         ax2.grid(True)
@@ -318,6 +345,7 @@ class MotorTestRig:
         plt.tight_layout()
         plt.savefig(out_path, dpi=150)
         plt.close()
+        print(f"Plot saved to {out_path}")
 
 
 def build_motor_configs() -> list[MotorConfig]:
