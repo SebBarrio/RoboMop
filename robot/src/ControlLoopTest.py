@@ -158,7 +158,8 @@ class EncoderReader:
             config.index: RotaryEncoder(config.pin_a, config.pin_b, max_steps=0)
             for config in encoder_configs
         }
-        self._last_counts = {idx: 0 for idx in self._encoders}
+        # Track last counts per motor (not per encoder) since motors share encoders
+        self._last_counts_per_motor = {motor_idx: 0 for motor_idx in MOTOR_TO_ENCODER_MAP.keys()}
         self._zero_counts = {idx: enc.steps for idx, enc in self._encoders.items()}
 
     def read_state(self, motor_index: int, dt: float) -> tuple[float, float]:
@@ -171,8 +172,10 @@ class EncoderReader:
         encoder_index = MOTOR_TO_ENCODER_MAP[motor_index]
         encoder = self._encoders[encoder_index]
         steps = encoder.steps
-        delta_steps = steps - self._last_counts[encoder_index]
-        self._last_counts[encoder_index] = steps
+        
+        # Use per-motor last counts to handle multiple motors sharing one encoder
+        delta_steps = steps - self._last_counts_per_motor[motor_index]
+        self._last_counts_per_motor[motor_index] = steps
 
         # Total angle from zero (radians)
         total_steps = steps - self._zero_counts[encoder_index]
