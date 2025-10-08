@@ -91,16 +91,16 @@
 
 ### Integration Tests - Quickstart Scenarios
 
-- [ ] **T045** [P] Integration test Scenario 1: Robot registration and connection in backend/tests/integration/test_robot_registration.test.ts
-- [ ] **T046** [P] Integration test Scenario 2: Exploration mode in robot/tests/integration/test_exploration_mode.py
-- [ ] **T047** [P] Integration test Scenario 3: Cleaning mode in robot/tests/integration/test_cleaning_mode.py
-- [ ] **T048** [P] Integration test Scenario 4: Manual control in frontend/tests/e2e/test_manual_control.spec.ts
-- [ ] **T049** [P] Integration test Scenario 5: Emergency stop in frontend/tests/e2e/test_emergency_stop.spec.ts
-- [ ] **T050** [P] Integration test Scenario 6: Restricted zones in frontend/tests/e2e/test_restricted_zones.spec.ts
-- [ ] **T051** [P] Integration test Scenario 7: Water level monitoring in robot/tests/integration/test_water_level.py
-- [ ] **T052** [P] Integration test Scenario 8: Low battery behavior in robot/tests/integration/test_low_battery.py
-- [ ] **T053** [P] Integration test Scenario 9: WiFi disconnection in robot/tests/integration/test_wifi_disconnect.py
-- [ ] **T054** [P] Integration test Scenario 10: Real-time map updates in frontend/tests/e2e/test_map_updates.spec.ts
+- [X] **T045** [P] Integration test Scenario 1: Robot registration and connection in backend/tests/integration/test_robot_registration.test.ts
+- [X] **T046** [P] Integration test Scenario 2: Exploration mode in robot/tests/integration/test_exploration_mode.py
+- [X] **T047** [P] Integration test Scenario 3: Cleaning mode in robot/tests/integration/test_cleaning_mode.py
+- [X] **T048** [P] Integration test Scenario 4: Manual control in frontend/tests/e2e/test_manual_control.spec.ts
+- [X] **T049** [P] Integration test Scenario 5: Emergency stop in frontend/tests/e2e/test_emergency_stop.spec.ts
+- [X] **T050** [P] Integration test Scenario 6: Restricted zones in frontend/tests/e2e/test_restricted_zones.spec.ts
+- [X] **T051** [P] Integration test Scenario 7: Water level monitoring in robot/tests/integration/test_water_level.py
+- [X] **T052** [P] Integration test Scenario 8: Low battery behavior in robot/tests/integration/test_low_battery.py
+- [X] **T053** [P] Integration test Scenario 9: WiFi disconnection in robot/tests/integration/test_wifi_disconnect.py
+- [X] **T054** [P] Integration test Scenario 10: Real-time map updates in frontend/tests/e2e/test_map_updates.spec.ts
 
 ---
 

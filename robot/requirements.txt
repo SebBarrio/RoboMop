@@ -7,3 +7,6 @@ pytest-asyncio>=0.23
 black>=24.3
 pylint>=3.1
 mypy>=1.9
+matplotlib>=3.8.0
+gpiozero>=2.0
+adafruit-circuitpython-pca9685>=3.4
