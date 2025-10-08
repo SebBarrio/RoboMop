@@ -336,7 +336,7 @@ def build_encoder_configs() -> list[EncoderConfig]:
 
 
 def main() -> None:
-    i2c = busio.I2C(board.SCL, board.SDA)
+    i2c = busio.I2C(3,2)
     pwm = PCA9685(i2c)
     pwm.frequency = PWM_FREQUENCY
     controller = MotorController(pwm, build_motor_configs())
