@@ -57,7 +57,7 @@ GEAR_RATIO: float = 8.45
 SUPPLY_VOLTAGE: float = 12.0
 
 # Encoder configuration
-ENCODER_PULSES_PER_REV: int = 4000
+ENCODER_PULSES_PER_REV: int = 400
 # True if encoders measure output shaft (post-gear). If False, encoders on motor shaft.
 ENCODER_ON_OUTPUT_SHAFT: bool = True
 
@@ -73,10 +73,13 @@ SETPOINT_MODE: str = "sine"  # "sine" or "steps"
 SETPOINT_AMPLITUDE_RAD_PER_S: float = 20.0
 SETPOINT_FREQ_HZ: float = 0.2  # Only used for sine
 
-# Speed control PID gains (output units: Volts). Start conservative and tune on-hardware.
-SPEED_KP: float = 3.65
-SPEED_KI: float = 14.7
+# Speed control PID gains (output units: Volts). Tuned for correct rad/s units.
+SPEED_KP: float = 0.0365
+SPEED_KI: float = 0.147
 SPEED_KD: float = 0.0
+
+# First-order low-pass filter time constant for measured speed (seconds)
+SPEED_LP_TAU_S: float = 0.05
 
 
 @dataclass(frozen=True)
@@ -161,6 +164,8 @@ class EncoderReader:
         # Track last counts per motor (not per encoder) since motors share encoders
         self._last_counts_per_motor = {motor_idx: 0 for motor_idx in MOTOR_TO_ENCODER_MAP.keys()}
         self._zero_counts = {idx: enc.steps for idx, enc in self._encoders.items()}
+        # Per-motor filtered speed storage (rad/s)
+        self._omega_filtered_per_motor = {motor_idx: 0.0 for motor_idx in MOTOR_TO_ENCODER_MAP.keys()}
 
     def read_state(self, motor_index: int, dt: float) -> tuple[float, float]:
         """Return (omega_out_rad_per_s, theta_out_rad)."""
@@ -187,11 +192,17 @@ class EncoderReader:
 
         if ENCODER_ON_OUTPUT_SHAFT:
             theta_out = theta_measured_rad
-            omega_out = omega_measured_rad_per_s * 100  # Apply x100 multiplier to measured speed
+            omega_raw_out = omega_measured_rad_per_s
         else:
             # Encoders on motor shaft -> convert to output shaft via gear ratio
             theta_out = theta_measured_rad / GEAR_RATIO
-            omega_out = (omega_measured_rad_per_s / GEAR_RATIO) * 100  # Apply x100 multiplier to measured speed
+            omega_raw_out = omega_measured_rad_per_s / GEAR_RATIO
+
+        # Low-pass filter the measured speed to reduce quantization noise
+        alpha = dt / (SPEED_LP_TAU_S + dt)
+        omega_prev = self._omega_filtered_per_motor[motor_index]
+        omega_out = omega_prev + alpha * (omega_raw_out - omega_prev)
+        self._omega_filtered_per_motor[motor_index] = omega_out
 
         return omega_out, theta_out
 
