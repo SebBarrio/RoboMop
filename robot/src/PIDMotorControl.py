@@ -164,8 +164,8 @@ class MotorController:
     def update_position_and_speed(self, current_time: float):
         """Update position and speed from both encoders"""
         # Read both encoder positions
-        encoder_0_pos = self.all_encoders[0].position
-        encoder_1_pos = self.all_encoders[1].position
+        encoder_0_pos = self.all_encoders[0].steps
+        encoder_1_pos = self.all_encoders[1].steps
         
         # Convert to radians
         if ENCODER_ON_OUTPUT_SHAFT:
