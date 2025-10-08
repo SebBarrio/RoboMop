@@ -26,6 +26,11 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
+from gpiozero import Device
+from gpiozero.pins.pigpio import PiGPIOFactory
+
+Device.pin_factory = PiGPIOFactory()
+
 
 # Pin assignments
 # MOTOR_CHANNELS: PCA9685 PWM channels for each motor (forward_channel, reverse_channel)
