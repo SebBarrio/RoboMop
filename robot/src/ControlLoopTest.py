@@ -28,8 +28,20 @@ import matplotlib.pyplot as plt
 
 
 # Pin assignments
+# MOTOR_CHANNELS: PCA9685 PWM channels for each motor (forward_channel, reverse_channel)
+# Motor 0: channels (0, 1) -> L_PWM=0, R_PWM=1
+# Motor 1: channels (2, 3) -> L_PWM=2, R_PWM=3  
+# Motor 2: channels (4, 5) -> L_PWM=4, R_PWM=5
+# Motor 3: channels (6, 7) -> L_PWM=6, R_PWM=7
 MOTOR_CHANNELS: Sequence[tuple[int, int]] = ((0, 1), (2, 3), (4, 5), (6, 7))
-ENCODER_CHANNELS: Sequence[tuple[int, int]] = ((17, 27), (22, 23), (24, 25), (5, 6))
+
+# ENCODER_CHANNELS: GPIO pins for quadrature encoders (pinA, pinB)
+# Encoder 0: pins (5, 6) -> encoderA=5, encoderB=6 (shared by motors 0,1)
+# Encoder 1: pins (13, 26) -> encoderA=13, encoderB=26 (shared by motors 2,3)
+ENCODER_CHANNELS: Sequence[tuple[int, int]] = ((13, 26), (5, 6))
+
+# Map motor index to encoder index. Motors 0,1 use encoder 0. Motors 2,3 use encoder 1.
+MOTOR_TO_ENCODER_MAP: dict[int, int] = {0: 0, 1: 0, 2: 1, 3: 1}
 
 # Motor and drive electrical/mechanical model constants
 # Units: R[Ohm], L[H], J[kg*m^2], B[N*m*s/rad], Kt[N*m/A], Ke[V*s/rad], N[ratio]
@@ -62,8 +74,8 @@ SETPOINT_AMPLITUDE_RAD_PER_S: float = 20.0
 SETPOINT_FREQ_HZ: float = 0.2  # Only used for sine
 
 # Speed control PID gains (output units: Volts). Start conservative and tune on-hardware.
-SPEED_KP: float = 0.4
-SPEED_KI: float = 0.2
+SPEED_KP: float = 3.65
+SPEED_KI: float = 14.7
 SPEED_KD: float = 0.0
 
 
@@ -153,13 +165,14 @@ class EncoderReader:
         """Return (omega_out_rad_per_s, theta_out_rad)."""
         if dt <= 0:
             return 0.0, 0.0
-        encoder = self._encoders[motor_index]
+        encoder_index = MOTOR_TO_ENCODER_MAP[motor_index]
+        encoder = self._encoders[encoder_index]
         steps = encoder.steps
-        delta_steps = steps - self._last_counts[motor_index]
-        self._last_counts[motor_index] = steps
+        delta_steps = steps - self._last_counts[encoder_index]
+        self._last_counts[encoder_index] = steps
 
         # Total angle from zero (radians)
-        total_steps = steps - self._zero_counts[motor_index]
+        total_steps = steps - self._zero_counts[encoder_index]
         rotations_total = total_steps / self._ppr
         theta_measured_rad = rotations_total * 2.0 * math.pi
         # Incremental speed (radians per second)
