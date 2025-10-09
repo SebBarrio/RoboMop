@@ -41,42 +41,59 @@ def encode_scan_payload(scan: SCAN_TYPE) -> bytes:
     return struct.pack("!I", len(message)) + message
 
 
-def initialize_lidar(lidar: RPLidar, max_retries: int = 3) -> None:
+def initialize_lidar(lidar: RPLidar) -> None:
     """Initialize and reset the lidar device."""
     
-    for attempt in range(max_retries):
+    logging.info("Initializing lidar...")
+    
+    # Stop any ongoing operations
+    try:
+        lidar.stop()
+    except Exception:
+        pass
+    
+    try:
+        lidar.stop_motor()
+    except Exception:
+        pass
+    
+    time.sleep(1.0)
+    
+    # Aggressively clear the serial buffer
+    logging.info("Clearing serial buffer...")
+    for i in range(5):
         try:
-            logging.info("Initializing lidar (attempt %d/%d)", attempt + 1, max_retries)
-            # Stop any ongoing operations and clear the buffer
-            lidar.stop()
-            lidar.stop_motor()
-            time.sleep(0.5)
-            
-            # Clear the serial buffer by reading any stale data
             lidar.clean_input()
-            time.sleep(0.1)
-            
-            # Get device info to verify connection
-            info = lidar.get_info()
-            logging.info("Lidar info: %s", info)
-            
-            # Get health status
-            health = lidar.get_health()
-            logging.info("Lidar health: %s", health)
-            
-            # Start the motor
-            lidar.start_motor()
-            time.sleep(1.0)  # Give motor time to spin up
-            
-            logging.info("Lidar initialized successfully")
-            return
-            
-        except (RPLidarException, RuntimeError) as exc:
-            logging.warning("Lidar initialization failed: %s", exc)
-            if attempt < max_retries - 1:
-                time.sleep(1.0)
-            else:
-                raise RuntimeError(f"Failed to initialize lidar after {max_retries} attempts") from exc
+            time.sleep(0.2)
+        except Exception as exc:
+            logging.debug("Buffer clear attempt %d: %s", i + 1, exc)
+    
+    # Perform health check
+    logging.info("Performing health check...")
+    try:
+        health = lidar.get_health()
+        print(f"LIDAR HEALTH CHECK: Status={health[0]}, Error Code={health[1]}")
+        logging.info("Lidar health: status=%s, error_code=%s", health[0], health[1])
+    except Exception as exc:
+        print(f"LIDAR HEALTH CHECK FAILED: {exc}")
+        logging.error("Health check failed: %s", exc)
+        raise
+    
+    # Get device info
+    logging.info("Getting device info...")
+    try:
+        info = lidar.get_info()
+        logging.info("Lidar info: %s", info)
+    except Exception as exc:
+        logging.error("Failed to get device info: %s", exc)
+        raise
+    
+    # Start the motor
+    logging.info("Starting motor...")
+    lidar.start_motor()
+    time.sleep(2.0)
+    
+    logging.info("Lidar initialized successfully")
 
 
 def iter_scans(lidar: RPLidar) -> Iterable[SCAN_TYPE]:
@@ -140,7 +157,7 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser.add_argument(
         "--baudrate",
         type=int,
-        default=256000,
+        default=115200,
         help="Serial baud rate for the lidar (default: %(default)s)",
     )
     parser.add_argument(
@@ -174,8 +191,33 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv or sys.argv[1:])
     logging.basicConfig(level=getattr(logging, args.log_level), format="%(asctime)s %(levelname)s: %(message)s")
 
-    logging.info("Connecting to lidar on %s", args.serial_port)
-    lidar = RPLidar(args.serial_port, baudrate=args.baudrate, timeout=1.0)
+    logging.info("Connecting to lidar on %s at %d baud", args.serial_port, args.baudrate)
+    lidar = RPLidar(args.serial_port, baudrate=args.baudrate, timeout=2.0)
+    
+    # Give serial port time to settle
+    time.sleep(1.0)
+    
+    # Print initial health check before any initialization
+    print("\n" + "="*60)
+    print("INITIAL LIDAR HEALTH CHECK (before initialization)")
+    print("="*60)
+    try:
+        health = lidar.get_health()
+        print(f"✓ SUCCESS: Status={health[0]}, Error Code={health[1]}")
+        logging.info("Initial health check successful: status=%s, error_code=%s", health[0], health[1])
+    except Exception as exc:
+        print(f"✗ FAILED: {type(exc).__name__}: {exc}")
+        logging.warning("Initial health check failed: %s", exc)
+        print("Attempting to clear buffer and retry...")
+        # Clear buffer and try once more
+        try:
+            lidar.clean_input()
+            time.sleep(0.5)
+            health = lidar.get_health()
+            print(f"✓ SUCCESS (after buffer clear): Status={health[0]}, Error Code={health[1]}")
+        except Exception as exc2:
+            print(f"✗ STILL FAILED: {type(exc2).__name__}: {exc2}")
+    print("="*60 + "\n")
 
     try:
         # Initialize the lidar device
