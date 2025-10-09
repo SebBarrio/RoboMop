@@ -13,7 +13,7 @@ from contextlib import closing
 from typing import Iterable, List, Sequence, Tuple
 
 try:
-    from rplidar import RPLidar  # type: ignore
+    from rplidar import RPLidar, RPLidarException  # type: ignore
 except ImportError as exc:  # pragma: no cover - hardware dependency
     raise SystemExit(
         "rplidar package is required. Install with 'pip install rplidar'."
@@ -41,6 +41,44 @@ def encode_scan_payload(scan: SCAN_TYPE) -> bytes:
     return struct.pack("!I", len(message)) + message
 
 
+def initialize_lidar(lidar: RPLidar, max_retries: int = 3) -> None:
+    """Initialize and reset the lidar device."""
+    
+    for attempt in range(max_retries):
+        try:
+            logging.info("Initializing lidar (attempt %d/%d)", attempt + 1, max_retries)
+            # Stop any ongoing operations and clear the buffer
+            lidar.stop()
+            lidar.stop_motor()
+            time.sleep(0.5)
+            
+            # Clear the serial buffer by reading any stale data
+            lidar.clean_input()
+            time.sleep(0.1)
+            
+            # Get device info to verify connection
+            info = lidar.get_info()
+            logging.info("Lidar info: %s", info)
+            
+            # Get health status
+            health = lidar.get_health()
+            logging.info("Lidar health: %s", health)
+            
+            # Start the motor
+            lidar.start_motor()
+            time.sleep(1.0)  # Give motor time to spin up
+            
+            logging.info("Lidar initialized successfully")
+            return
+            
+        except (RPLidarException, RuntimeError) as exc:
+            logging.warning("Lidar initialization failed: %s", exc)
+            if attempt < max_retries - 1:
+                time.sleep(1.0)
+            else:
+                raise RuntimeError(f"Failed to initialize lidar after {max_retries} attempts") from exc
+
+
 def iter_scans(lidar: RPLidar) -> Iterable[SCAN_TYPE]:
     """Yield consecutive scans from the lidar while handling transient errors."""
 
@@ -48,12 +86,15 @@ def iter_scans(lidar: RPLidar) -> Iterable[SCAN_TYPE]:
         try:
             for scan in lidar.iter_scans(max_buf_meas=500):
                 yield scan
-        except RuntimeError as exc:
+        except (RPLidarException, RuntimeError) as exc:
             logging.warning("Lidar read error: %s", exc)
             lidar.stop()
             lidar.stop_motor()
             time.sleep(0.5)
+            lidar.clean_input()
+            time.sleep(0.1)
             lidar.start_motor()
+            time.sleep(1.0)
 
 
 def stream_scans(
@@ -134,9 +175,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     logging.basicConfig(level=getattr(logging, args.log_level), format="%(asctime)s %(levelname)s: %(message)s")
 
     logging.info("Connecting to lidar on %s", args.serial_port)
-    lidar = RPLidar(args.serial_port, baudrate=args.baudrate)
+    lidar = RPLidar(args.serial_port, baudrate=args.baudrate, timeout=1.0)
 
     try:
+        # Initialize the lidar device
+        initialize_lidar(lidar)
+        
         logging.info("Connecting to map server %s:%d", args.host, args.port)
         sock = connect(args.host, args.port, args.timeout)
         logging.info("Connection established, streaming scans")
@@ -145,8 +189,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         logging.info("Interrupted by user, shutting down")
     finally:
         logging.info("Stopping lidar")
-        lidar.stop()
-        lidar.stop_motor()
+        try:
+            lidar.stop()
+            lidar.stop_motor()
+        except Exception as exc:
+            logging.warning("Error stopping lidar: %s", exc)
         lidar.disconnect()
 
     return 0
