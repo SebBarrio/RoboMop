@@ -10,6 +10,7 @@ def test_serial_communication(port: str):
     
     # Different parameter combinations to try
     configs = [
+        {"baudrate": 1000000, "bytesize": 8, "parity": 'N', "stopbits": 1, "timeout": 2},
         {"baudrate": 115200, "bytesize": 8, "parity": 'N', "stopbits": 1, "timeout": 2},
         {"baudrate": 115200, "bytesize": 8, "parity": 'N', "stopbits": 1, "timeout": 5},
         {"baudrate": 256000, "bytesize": 8, "parity": 'N', "stopbits": 1, "timeout": 2},
