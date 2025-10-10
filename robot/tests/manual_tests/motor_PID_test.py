@@ -37,15 +37,15 @@ import numpy as np
 MOTOR_CHANNELS: Sequence[tuple[int, int]] = ((0, 1), (2, 3), (4, 5), (6, 7))
 
 # ENCODER_CHANNELS: GPIO pins for quadrature encoders (pinA, pinB)
-# Encoder 0: pins (5, 6) -> encoderA=5, encoderB=6 (shared by motors 0,1)
-# Encoder 1: pins (13, 26) -> encoderA=13, encoderB=26 (shared by motors 2,3)
+# Encoder 0: pins (5, 6) -> encoderA=5, encoderB=6 (shared by motors 2,3)
+# Encoder 1: pins (13, 26) -> encoderA=13, encoderB=26 (shared by motors 0,1)
 ENCODER_CHANNELS: Sequence[tuple[int, int]] = ((13, 26), (5, 6))
 
-# Map motor index to encoder index. Motors 0,1 use encoder 0. Motors 2,3 use encoder 1.
+# Map motor index to encoder index. Motors 0,1 use encoder 1. Motors 2,3 use encoder 0.
 MOTOR_TO_ENCODER_MAP: dict[int, int] = {0: 1, 1: 1, 2: 0, 3: 0}
 
 # Motor and drive electrical/mechanical model constants
-# Units: R[Ohm], L[H], J[kg*m^2], B[N*m*s/rad], Kt[N*m/A], Ke[V*s/rad], N[ratio]
+# Units: R[Ohm], L[H], J[kg*m^2], B[N*m*s/rad], Kt[N*m/A], Ke[V*s/rad], N[ratio], WHEEL_DIAMETER_M[m]
 R_OHMS: float = 0.091
 L_HENRY: float = 0.0
 J_KG_M2: float = 0.001085
@@ -53,6 +53,7 @@ B_NM_S_PER_RAD: float = 0.000467
 KT_NM_PER_A: float = 0.018803
 KE_VS_PER_RAD: float = 0.018803
 GEAR_RATIO: float = 8.45
+WHEEL_DIAMETER_M: float = 0.1524 
 
 # Supply voltage (update to your battery/bus voltage)
 SUPPLY_VOLTAGE: float = 12.0
