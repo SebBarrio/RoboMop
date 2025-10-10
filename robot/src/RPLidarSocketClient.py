@@ -1,6 +1,4 @@
-"""Raspberry Pi client for streaming RPLidar S2L scans over TCP sockets."""
-
-from __future__ import annotations
+"""RPLidar socket client - streams scans over TCP using direct protocol."""
 
 import argparse
 import json
@@ -10,153 +8,89 @@ import struct
 import sys
 import time
 from contextlib import closing
-from typing import Iterable, List, Sequence, Tuple
+from typing import Dict, List, Sequence, Tuple
 
-try:
-    from rplidar import RPLidar, RPLidarException  # type: ignore
-except ImportError as exc:  # pragma: no cover - hardware dependency
-    raise SystemExit(
-        "rplidar package is required. Install with 'pip install rplidar'."
-    ) from exc
+from RPLidarProtocol import RPLidarProtocol
+
+ScanType = List[Tuple[int, float, float]]  # (quality, angle, distance)
 
 
-SCAN_TYPE = Sequence[Tuple[int, float, float]]  # (quality, angle, distance_mm)
-
-
-def encode_scan_payload(scan: SCAN_TYPE) -> bytes:
-    """Serialize a lidar scan to a length-prefixed JSON payload."""
-
+def encode_scan_payload(scan: ScanType, scan_number: int) -> bytes:
+    """Serialize scan to length-prefixed JSON."""
     payload = {
         "timestamp": time.time(),
-        "measurments": [
-            {
-                "quality": quality,
-                "angle": angle,
-                "distance_mm": distance,
-            }
-            for quality, angle, distance in scan
+        "scan_number": scan_number,
+        "measurements": [
+            {"quality": q, "angle": a, "distance_mm": d}
+            for q, a, d in scan
         ],
     }
     message = json.dumps(payload, separators=(",", ":")).encode("utf-8")
     return struct.pack("!I", len(message)) + message
 
 
-def initialize_lidar(lidar: RPLidar) -> None:
-    """Initialize and reset the lidar device."""
+def initialize_lidar(lidar: RPLidarProtocol) -> Dict:
+    """Initialize lidar and check health."""
+    lidar.reset_device()
+    info = lidar.get_device_info()
+    health = lidar.get_device_health()
     
-    logging.info("Initializing lidar...")
+    if health['status'] != 'Good':
+        logging.warning("Lidar health: %s", health)
     
-    # Stop any ongoing operations
-    try:
-        lidar.stop()
-    except Exception:
-        pass
-    
-    try:
-        lidar.stop_motor()
-    except Exception:
-        pass
-    
-    time.sleep(1.0)
-    
-    # Aggressively clear the serial buffer
-    logging.info("Clearing serial buffer...")
-    for i in range(5):
-        try:
-            lidar.clear_input()
-            time.sleep(0.2)
-        except Exception as exc:
-            logging.debug("Buffer clear attempt %d: %s", i + 1, exc)
-    
-    # Perform health check
-    logging.info("Performing health check...")
-    try:
-        health = lidar.get_health()
-        print(f"LIDAR HEALTH CHECK: Status={health[0]}, Error Code={health[1]}")
-        logging.info("Lidar health: status=%s, error_code=%s", health[0], health[1])
-    except Exception as exc:
-        print(f"LIDAR HEALTH CHECK FAILED: {exc}")
-        logging.error("Health check failed: %s", exc)
-        raise
-    
-    # Get device info
-    logging.info("Getting device info...")
-    try:
-        info = lidar.get_info()
-        logging.info("Lidar info: %s", info)
-    except Exception as exc:
-        logging.error("Failed to get device info: %s", exc)
-        raise
-    
-    # Start the motor
-    logging.info("Starting motor...")
-    lidar.start_motor()
-    time.sleep(2.0)
-    
-    logging.info("Lidar initialized successfully")
+    return info
 
 
-def iter_scans(lidar: RPLidar, scan_type: str = 'normal') -> Iterable[SCAN_TYPE]:
-    """Yield consecutive scans from the lidar while handling transient errors.
+def collect_scans(lidar: RPLidarProtocol):
+    """Yield complete scans from continuous measurement stream."""
+    current_scan: ScanType = []
     
-    Args:
-        lidar: RPLidar instance
-        scan_type: Scan mode - 'normal', 'express', or 'force' (default: 'normal')
-    """
-
     while True:
         try:
-            # Use iter_measures with scan_type instead of iter_scans
-            # to have control over the scan mode
-            scan_list = []
-            iterator = lidar.iter_measurments(scan_type, max_buf_meas=500)
-            for new_scan, quality, angle, distance in iterator:
-                if new_scan:
-                    if len(scan_list) > 0:
-                        yield scan_list
-                    scan_list = []
-                if distance > 0:
-                    scan_list.append((quality, angle, distance))
-        except (RPLidarException, RuntimeError) as exc:
-            logging.warning("Lidar read error: %s", exc)
-            lidar.stop()
-            lidar.stop_motor()
-            time.sleep(0.5)
-            lidar.clear_input()
+            if lidar.ser and lidar.ser.in_waiting >= 5:
+                raw = lidar.ser.read(5)
+                
+                start_flag = (raw[0] & 0x01) != 0
+                quality = (raw[0] >> 2) & 0x3F
+                angle = ((((raw[2] << 8) | raw[1]) >> 1) & 0x7FFF) / 64.0
+                distance = ((raw[4] << 8) | raw[3]) / 4.0
+                
+                if start_flag and current_scan:
+                    yield current_scan
+                    current_scan = []
+                
+                if distance > 0 and quality > 0:
+                    current_scan.append((quality, angle, distance))
+            else:
+                time.sleep(0.001)
+                
+        except Exception as exc:
+            logging.error("Measurement error: %s", exc)
+            if lidar.ser:
+                lidar.ser.reset_input_buffer()
             time.sleep(0.1)
-            lidar.start_motor()
-            time.sleep(1.0)
 
 
-def stream_scans(
-    lidar: RPLidar,
-    sock: socket.socket,
-    scan_limit: int | None,
-    log_every: int,
-    scan_type: str = 'normal',
-) -> None:
-    """Stream scans from the lidar to the socket."""
-
+def stream_scans(lidar: RPLidarProtocol, sock: socket.socket, 
+                  scan_limit: int | None, log_every: int) -> None:
+    """Stream scans from lidar to socket."""
     with closing(sock):
         sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-        for index, scan in enumerate(iter_scans(lidar, scan_type), start=1):
-            if not scan:
-                continue
-
-            payload = encode_scan_payload(scan)
-            sock.sendall(payload)
-
-            if index % log_every == 0:
-                logging.info("Sent %d scans (%d measurments)", index, len(scan))
-
-            if scan_limit is not None and index >= scan_limit:
-                logging.info("Reached scan limit (%d), stopping", scan_limit)
-                break
+        lidar.start_scan()
+        
+        for scan_number, scan in enumerate(collect_scans(lidar), start=1):
+            if scan:
+                sock.sendall(encode_scan_payload(scan, scan_number))
+                
+                if scan_number % log_every == 0:
+                    logging.info("Sent %d scans (%d measurements)", scan_number, len(scan))
+                
+                if scan_limit and scan_number >= scan_limit:
+                    break
 
 
-def connect(host: str, port: int, timeout: float) -> socket.socket:
-    """Create and connect a TCP socket."""
-
+def connect_socket(host: str, port: int, timeout: float) -> socket.socket:
+    """Connect TCP socket to map server."""
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.settimeout(timeout)
     sock.connect((host, port))
@@ -165,100 +99,54 @@ def connect(host: str, port: int, timeout: float) -> socket.socket:
 
 
 def parse_args(argv: Sequence[str]) -> argparse.Namespace:
+    """Parse command-line arguments."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("serial_port", help="Serial port exposed by the RPLidar")
-    parser.add_argument("host", help="Hostname or IP address of the map server")
-    parser.add_argument("port", type=int, help="TCP port of the map server")
-    parser.add_argument(
-        "--baudrate",
-        type=int,
-        default=1000000,
-        help="Serial baud rate for the lidar (default: %(default)s)",
-    )
-    parser.add_argument(
-        "--timeout",
-        type=float,
-        default=5.0,
-        help="Socket connection timeout in seconds (default: %(default)s)",
-    )
-    parser.add_argument(
-        "--scan-limit",
-        type=int,
-        default=None,
-        help="Number of scans to send before exiting (default: unlimited)",
-    )
-    parser.add_argument(
-        "--log-every",
-        type=int,
-        default=10,
-        help="Log progress every N scans (default: %(default)s)",
-    )
-    parser.add_argument(
-        "--scan-type",
-        default="normal",
-        choices=["normal", "express", "force"],
-        help="Scan mode type (default: %(default)s). Use 'express' if getting descriptor mismatch errors.",
-    )
-    parser.add_argument(
-        "--log-level",
-        default="INFO",
-        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
-        help="Python logging level (default: %(default)s)",
-    )
+    parser.add_argument("serial_port", help="Serial port (e.g., /dev/ttyUSB0)")
+    parser.add_argument("host", help="Map server hostname/IP")
+    parser.add_argument("port", type=int, help="Map server port")
+    parser.add_argument("--baudrate", type=int, default=1000000, help="Baud rate")
+    parser.add_argument("--timeout", type=float, default=5.0, help="Connection timeout")
+    parser.add_argument("--scan-limit", type=int, help="Max scans to send")
+    parser.add_argument("--log-every", type=int, default=10, help="Log frequency")
+    parser.add_argument("--log-level", default="INFO", 
+                        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+                        help="Logging level")
     return parser.parse_args(argv)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """Main entry point."""
     args = parse_args(argv or sys.argv[1:])
-    logging.basicConfig(level=getattr(logging, args.log_level), format="%(asctime)s %(levelname)s: %(message)s")
-
-    logging.info("Connecting to lidar on %s at %d baud", args.serial_port, args.baudrate)
-    lidar = RPLidar(args.serial_port, baudrate=args.baudrate, timeout=2.0)
+    logging.basicConfig(level=getattr(logging, args.log_level),
+                        format="%(asctime)s [%(levelname)s] %(message)s")
     
-    # Give serial port time to settle
-    time.sleep(1.0)
+    lidar = RPLidarProtocol(args.serial_port, args.baudrate)
     
-    # Print initial health check before any initialization
-    print("\n" + "="*60)
-    print("INITIAL LIDAR HEALTH CHECK (before initialization)")
-    print("="*60)
     try:
-        health = lidar.get_health()
-        print(f"✓ SUCCESS: Status={health[0]}, Error Code={health[1]}")
-        logging.info("Initial health check successful: status=%s, error_code=%s", health[0], health[1])
-    except Exception as exc:
-        print(f"✗ FAILED: {type(exc).__name__}: {exc}")
-        logging.warning("Initial health check failed: %s", exc)
-        print("Attempting to clear buffer and retry...")
-        # Clear buffer and try once more
-        try:
-            lidar.clear_input()
-            time.sleep(0.5)
-            health = lidar.get_health()
-            print(f"✓ SUCCESS (after buffer clear): Status={health[0]}, Error Code={health[1]}")
-        except Exception as exc2:
-            print(f"✗ STILL FAILED: {type(exc2).__name__}: {exc2}")
-    print("="*60 + "\n")
-
-    try:
-        # Initialize the lidar device
+        if not lidar.connect():
+            return 1
+        
+        time.sleep(1.0)
         initialize_lidar(lidar)
         
-        logging.info("Connecting to map server %s:%d", args.host, args.port)
-        sock = connect(args.host, args.port, args.timeout)
-        logging.info("Connection established, streaming scans with scan_type='%s'", args.scan_type)
-        stream_scans(lidar, sock, args.scan_limit, args.log_every, args.scan_type)
+        logging.info("Connecting to %s:%d", args.host, args.port)
+        sock = connect_socket(args.host, args.port, args.timeout)
+        
+        logging.info("Streaming scans (Ctrl+C to stop)")
+        stream_scans(lidar, sock, args.scan_limit, args.log_every)
+        
     except KeyboardInterrupt:
-        logging.info("Interrupted by user, shutting down")
+        logging.info("Interrupted")
+    except Exception as exc:
+        logging.error("Error: %s", exc)
+        return 1
     finally:
-        logging.info("Stopping lidar")
         try:
-            lidar.stop()
-            lidar.stop_motor()
-        except Exception as exc:
-            logging.warning("Error stopping lidar: %s", exc)
+            lidar.stop_scan()
+        except:
+            pass
         lidar.disconnect()
-
+    
     return 0
 
 

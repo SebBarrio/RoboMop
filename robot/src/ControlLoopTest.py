@@ -80,7 +80,7 @@ SPEED_KI: float = 0.147
 SPEED_KD: float = 0.0
 
 # First-order low-pass filter time constant for measured speed (seconds)
-SPEED_LP_TAU_S: float = 0.05
+SPEED_LP_TAU_S: float = 0.02
 
 
 @dataclass(frozen=True)
