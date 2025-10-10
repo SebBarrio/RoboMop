@@ -106,8 +106,17 @@ def iter_scans(lidar: RPLidar, scan_type: str = 'normal') -> Iterable[SCAN_TYPE]
 
     while True:
         try:
-            for scan in lidar.iter_scans(scan_type=scan_type, max_buf_meas=500):
-                yield scan
+            # Use iter_measures with scan_type instead of iter_scans
+            # to have control over the scan mode
+            scan_list = []
+            iterator = lidar.iter_measures(scan_type, max_buf_meas=500)
+            for new_scan, quality, angle, distance in iterator:
+                if new_scan:
+                    if len(scan_list) > 0:
+                        yield scan_list
+                    scan_list = []
+                if distance > 0:
+                    scan_list.append((quality, angle, distance))
         except (RPLidarException, RuntimeError) as exc:
             logging.warning("Lidar read error: %s", exc)
             lidar.stop()
