@@ -96,12 +96,17 @@ def initialize_lidar(lidar: RPLidar) -> None:
     logging.info("Lidar initialized successfully")
 
 
-def iter_scans(lidar: RPLidar) -> Iterable[SCAN_TYPE]:
-    """Yield consecutive scans from the lidar while handling transient errors."""
+def iter_scans(lidar: RPLidar, scan_type: str = 'normal') -> Iterable[SCAN_TYPE]:
+    """Yield consecutive scans from the lidar while handling transient errors.
+    
+    Args:
+        lidar: RPLidar instance
+        scan_type: Scan mode - 'normal', 'express', or 'force' (default: 'normal')
+    """
 
     while True:
         try:
-            for scan in lidar.iter_scans(max_buf_meas=500):
+            for scan in lidar.iter_scans(scan_type=scan_type, max_buf_meas=500):
                 yield scan
         except (RPLidarException, RuntimeError) as exc:
             logging.warning("Lidar read error: %s", exc)
@@ -119,12 +124,13 @@ def stream_scans(
     sock: socket.socket,
     scan_limit: int | None,
     log_every: int,
+    scan_type: str = 'normal',
 ) -> None:
     """Stream scans from the lidar to the socket."""
 
     with closing(sock):
         sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-        for index, scan in enumerate(iter_scans(lidar), start=1):
+        for index, scan in enumerate(iter_scans(lidar, scan_type), start=1):
             if not scan:
                 continue
 
@@ -157,7 +163,7 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser.add_argument(
         "--baudrate",
         type=int,
-        default=115200,
+        default=1000000,
         help="Serial baud rate for the lidar (default: %(default)s)",
     )
     parser.add_argument(
@@ -177,6 +183,12 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
         type=int,
         default=10,
         help="Log progress every N scans (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--scan-type",
+        default="normal",
+        choices=["normal", "express", "force"],
+        help="Scan mode type (default: %(default)s). Use 'express' if getting descriptor mismatch errors.",
     )
     parser.add_argument(
         "--log-level",
@@ -225,8 +237,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         
         logging.info("Connecting to map server %s:%d", args.host, args.port)
         sock = connect(args.host, args.port, args.timeout)
-        logging.info("Connection established, streaming scans")
-        stream_scans(lidar, sock, args.scan_limit, args.log_every)
+        logging.info("Connection established, streaming scans with scan_type='%s'", args.scan_type)
+        stream_scans(lidar, sock, args.scan_limit, args.log_every, args.scan_type)
     except KeyboardInterrupt:
         logging.info("Interrupted by user, shutting down")
     finally:
