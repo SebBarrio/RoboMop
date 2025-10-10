@@ -61,32 +61,41 @@ def test_rplidar_library(port: str):
         from rplidar import RPLidar
         
         # Try with shorter timeout and no motor start
-        lidar = RPLidar(port, baudrate=115200, timeout=1.0)
-        
-        # Just try to connect without getting info
+        lidar = RPLidar(port, baudrate=1000000, timeout=2.0)
         print("✓ RPLidar object created")
         
+        # Give serial port time to settle
+        time.sleep(1.0)
+        
         try:
-            # Clear input without using library methods
-            lidar._serial.reset_input_buffer()
-            lidar._serial.reset_output_buffer()
-            time.sleep(1.0)
-            print("✓ Buffers cleared manually")
+            # Clear input using library methods
+            try:
+                lidar.clear_input()
+                time.sleep(0.5)
+                print("✓ Buffers cleared")
+            except Exception as exc:
+                print(f"⚠ Buffer clear warning: {exc}")
             
-            # Try to get info with manual timeout
+            # Try to get device info
             info = lidar.get_info()
             print(f"✓ Device info: {info}")
+            
+            # Try to get health status
+            health = lidar.get_health()
+            print(f"✓ Device health: Status={health[0]}, Error Code={health[1]}")
+            
             return True
             
         except Exception as exc:
-            print(f"✗ get_info failed: {exc}")
+            print(f"✗ Communication failed: {exc}")
             return False
             
         finally:
             try:
                 lidar.disconnect()
-            except:
-                pass
+                print("✓ Disconnected")
+            except Exception as exc:
+                print(f"⚠ Disconnect warning: {exc}")
                 
     except Exception as exc:
         print(f"✗ RPLidar library failed: {exc}")
