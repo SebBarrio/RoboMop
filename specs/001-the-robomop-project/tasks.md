@@ -117,11 +117,11 @@
 
 ### Backend - Services
 
-- [ ] **T061** [P] RobotService CRUD operations in backend/src/services/RobotService.ts
-- [ ] **T062** [P] MapService CRUD and map data operations in backend/src/services/MapService.ts
-- [ ] **T063** [P] SessionService session lifecycle management in backend/src/services/SessionService.ts
-- [ ] **T064** [P] ZoneService restricted zone management in backend/src/services/ZoneService.ts
-- [ ] **T065** [P] LogService log querying and clearing in backend/src/services/LogService.ts
+- [X] **T061** [P] RobotService CRUD operations in backend/src/services/RobotService.ts
+- [X] **T062** [P] MapService CRUD and map data operations in backend/src/services/MapService.ts
+- [X] **T063** [P] SessionService session lifecycle management in backend/src/services/SessionService.ts
+- [X] **T064** [P] ZoneService restricted zone management in backend/src/services/ZoneService.ts
+- [X] **T065** [P] LogService log querying and clearing in backend/src/services/LogService.ts
 
 ### Backend - API Routes
 
