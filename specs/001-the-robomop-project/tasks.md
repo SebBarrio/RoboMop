@@ -108,12 +108,12 @@
 
 ### Backend - Data Models (TypeORM Entities)
 
-- [ ] **T055** [P] Robot entity model in backend/src/models/Robot.ts
-- [ ] **T056** [P] RobotState entity model in backend/src/models/RobotState.ts
-- [ ] **T057** [P] Map entity model in backend/src/models/Map.ts
-- [ ] **T058** [P] RestrictedZone entity model in backend/src/models/RestrictedZone.ts
-- [ ] **T059** [P] Session entity model in backend/src/models/Session.ts
-- [ ] **T060** [P] Log entity model in backend/src/models/Log.ts
+- [X] **T055** [P] Robot entity model in backend/src/models/Robot.ts
+- [X] **T056** [P] RobotState entity model in backend/src/models/RobotState.ts
+- [X] **T057** [P] Map entity model in backend/src/models/Map.ts
+- [X] **T058** [P] RestrictedZone entity model in backend/src/models/RestrictedZone.ts
+- [X] **T059** [P] Session entity model in backend/src/models/Session.ts
+- [X] **T060** [P] Log entity model in backend/src/models/Log.ts
 
 ### Backend - Services
 
