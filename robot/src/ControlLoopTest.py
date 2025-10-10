@@ -8,6 +8,7 @@ setpoint vs actual speed and position for verification.
 
 from __future__ import annotations
 
+import argparse
 import time
 from dataclasses import dataclass
 import math
@@ -74,7 +75,7 @@ SETPOINT_AMPLITUDE_RAD_PER_S: float = 20.0
 SETPOINT_FREQ_HZ: float = 0.2  # Only used for sine
 
 # Speed control PID gains (output units: Volts). Tuned for correct rad/s units.
-SPEED_KP: float = 0.0365
+SPEED_KP: float = .365
 SPEED_KI: float = 0.147
 SPEED_KD: float = 0.0
 
@@ -216,11 +217,19 @@ class MotorTestRig:
         self,
         controller: MotorController,
         feedback_provider: Callable[[int, float], tuple[float, float]],
+        setpoint_amplitude_rad_per_s: float = SETPOINT_AMPLITUDE_RAD_PER_S,
+        kp: float = SPEED_KP,
+        ki: float = SPEED_KI,
+        kd: float = SPEED_KD,
     ) -> None:
         self._controller = controller
         self._feedback_provider = feedback_provider
+        self._setpoint_amplitude = setpoint_amplitude_rad_per_s
+        self._kp = kp
+        self._ki = ki
+        self._kd = kd
         self._pids = {
-            config.index: PIDController(SPEED_KP, SPEED_KI, SPEED_KD, integrator_limit=SUPPLY_VOLTAGE)
+            config.index: PIDController(kp, ki, kd, integrator_limit=SUPPLY_VOLTAGE)
             for config in controller.motor_configs
         }
         # Logging buffers
@@ -234,20 +243,20 @@ class MotorTestRig:
     def _evaluate_setpoint(self, t: float) -> float:
         """Output shaft setpoint speed (rad/s) as a function of time."""
         if SETPOINT_MODE == "sine":
-            return SETPOINT_AMPLITUDE_RAD_PER_S * math.sin(2.0 * math.pi * SETPOINT_FREQ_HZ * t)
+            return self._setpoint_amplitude * math.sin(2.0 * math.pi * SETPOINT_FREQ_HZ * t)
         # steps profile: 0 -> +A -> -A/2 -> 0
         if t < 2.0:
             return 0.0
         if t < 5.0:
-            return SETPOINT_AMPLITUDE_RAD_PER_S
+            return self._setpoint_amplitude
         if t < 7.0:
-            return -0.5 * SETPOINT_AMPLITUDE_RAD_PER_S
+            return -0.5 * self._setpoint_amplitude
         return 0.0
 
     def _evaluate_setpoint_derivative(self, t: float) -> float:
         if SETPOINT_MODE == "sine":
             return (
-                SETPOINT_AMPLITUDE_RAD_PER_S * 2.0 * math.pi * SETPOINT_FREQ_HZ * math.cos(2.0 * math.pi * SETPOINT_FREQ_HZ * t)
+                self._setpoint_amplitude * 2.0 * math.pi * SETPOINT_FREQ_HZ * math.cos(2.0 * math.pi * SETPOINT_FREQ_HZ * t)
             )
         return 0.0
 
@@ -319,6 +328,10 @@ class MotorTestRig:
         # After stopping, save plots
         self._save_plots()
 
+    def _calculate_rmse(self, setpoint: np.ndarray, measured: np.ndarray) -> float:
+        """Calculate Root Mean Squared Error between setpoint and measured values."""
+        return np.sqrt(np.mean((setpoint - measured) ** 2))
+
     def _save_plots(self) -> None:
         if not self._times:
             return
@@ -343,16 +356,36 @@ class MotorTestRig:
         if len(times_clean) == 0:
             print("Warning: No valid data points to plot")
             return
+        
+        # Calculate RMSE for each motor
+        print("\n" + "="*60)
+        print("Speed Tracking Performance Metrics (RMSE)")
+        print("="*60)
 
         # Figure 1: Speed tracking
         plt.figure(figsize=(10, 8))
         ax1 = plt.subplot(2, 1, 1)
-        ax1.set_title("Speed Tracking (rad/s)")
         omega_sp_clean = np.array(self._omega_sp[next(iter(self._omega_sp))])[valid_mask]
+        
+        # Calculate and print RMSE for each motor
+        rmse_values = []
+        for idx in sorted(self._omega_meas.keys()):
+            omega_meas_clean = np.array(self._omega_meas[idx])[valid_mask]
+            rmse = self._calculate_rmse(omega_sp_clean, omega_meas_clean)
+            rmse_values.append(rmse)
+            print(f"Motor {idx}: RMSE = {rmse:.4f} rad/s")
+        
+        avg_rmse = np.mean(rmse_values)
+        print(f"\nAverage RMSE across all motors: {avg_rmse:.4f} rad/s")
+        print("="*60 + "\n")
+        
+        # Plot speed tracking
+        ax1.set_title(f"Speed Tracking (rad/s) - Avg RMSE: {avg_rmse:.4f}")
         ax1.plot(times_clean, omega_sp_clean, "k--", label="setpoint", linewidth=2)
         for idx in sorted(self._omega_meas.keys()):
             omega_meas_clean = np.array(self._omega_meas[idx])[valid_mask]
-            ax1.plot(times_clean, omega_meas_clean, label=f"motor {idx}", alpha=0.8)
+            rmse = rmse_values[idx]
+            ax1.plot(times_clean, omega_meas_clean, label=f"motor {idx} (RMSE={rmse:.3f})", alpha=0.8)
         ax1.set_xlabel("time (s)")
         ax1.set_ylabel("omega_out (rad/s)")
         ax1.grid(True)
@@ -371,7 +404,9 @@ class MotorTestRig:
         ax2.grid(True)
         ax2.legend()
 
-        out_path = os.path.join("logs", f"speed_position_tracking_{ts}.png")
+        # Create filename with setpoint and PID gains
+        filename = f"tracking_{ts}_sp{self._setpoint_amplitude:.1f}_kp{self._kp:.4f}_ki{self._ki:.4f}_kd{self._kd:.4f}.png"
+        out_path = os.path.join("logs", filename)
         plt.tight_layout()
         plt.savefig(out_path, dpi=150)
         plt.close()
@@ -393,12 +428,59 @@ def build_encoder_configs() -> list[EncoderConfig]:
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Motor control test with configurable step setpoint and PID gains"
+    )
+    parser.add_argument(
+        "--setpoint",
+        type=float,
+        default=SETPOINT_AMPLITUDE_RAD_PER_S,
+        help=f"Step setpoint amplitude in rad/s (default: {SETPOINT_AMPLITUDE_RAD_PER_S})",
+    )
+    parser.add_argument(
+        "--kp",
+        type=float,
+        default=SPEED_KP,
+        help=f"Proportional gain (default: {SPEED_KP})",
+    )
+    parser.add_argument(
+        "--ki",
+        type=float,
+        default=SPEED_KI,
+        help=f"Integral gain (default: {SPEED_KI})",
+    )
+    parser.add_argument(
+        "--kd",
+        type=float,
+        default=SPEED_KD,
+        help=f"Derivative gain (default: {SPEED_KD})",
+    )
+    args = parser.parse_args()
+    
     i2c = busio.I2C(board.SCL, board.SDA)
     pwm = PCA9685(i2c)
     pwm.frequency = PWM_FREQUENCY
     controller = MotorController(pwm, build_motor_configs())
     encoders = EncoderReader(build_encoder_configs(), ENCODER_PULSES_PER_REV)
-    rig = MotorTestRig(controller, encoders.read_state)
+    rig = MotorTestRig(
+        controller,
+        encoders.read_state,
+        setpoint_amplitude_rad_per_s=args.setpoint,
+        kp=args.kp,
+        ki=args.ki,
+        kd=args.kd,
+    )
+    
+    print("="*60)
+    print("Control Loop Test Configuration")
+    print("="*60)
+    print(f"Setpoint amplitude: {args.setpoint} rad/s")
+    print(f"PID gains: Kp={args.kp}, Ki={args.ki}, Kd={args.kd}")
+    print(f"Test duration: {TEST_DURATION} s")
+    print(f"Control interval: {CONTROL_INTERVAL} s")
+    print(f"Setpoint mode: {SETPOINT_MODE}")
+    print("="*60 + "\n")
+    
     try:
         rig.run(TEST_DURATION, CONTROL_INTERVAL)
     finally:
