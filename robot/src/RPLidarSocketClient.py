@@ -28,7 +28,7 @@ def encode_scan_payload(scan: SCAN_TYPE) -> bytes:
 
     payload = {
         "timestamp": time.time(),
-        "measurements": [
+        "measurments": [
             {
                 "quality": quality,
                 "angle": angle,
@@ -109,7 +109,7 @@ def iter_scans(lidar: RPLidar, scan_type: str = 'normal') -> Iterable[SCAN_TYPE]
             # Use iter_measures with scan_type instead of iter_scans
             # to have control over the scan mode
             scan_list = []
-            iterator = lidar.iter_measures(scan_type, max_buf_meas=500)
+            iterator = lidar.iter_measurments(scan_type, max_buf_meas=500)
             for new_scan, quality, angle, distance in iterator:
                 if new_scan:
                     if len(scan_list) > 0:
@@ -147,7 +147,7 @@ def stream_scans(
             sock.sendall(payload)
 
             if index % log_every == 0:
-                logging.info("Sent %d scans (%d measurements)", index, len(scan))
+                logging.info("Sent %d scans (%d measurments)", index, len(scan))
 
             if scan_limit is not None and index >= scan_limit:
                 logging.info("Reached scan limit (%d), stopping", scan_limit)
