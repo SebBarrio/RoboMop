@@ -32,6 +32,10 @@ def encode_scan_payload(scan: ScanType, scan_number: int) -> bytes:
 def initialize_lidar(lidar: RPLidarProtocol) -> Dict:
     """Initialize lidar and check health."""
     lidar.reset_device()
+    # Clear any residual stream
+    if lidar.ser:
+        lidar.ser.reset_input_buffer()
+    time.sleep(0.1)
     info = lidar.get_device_info()
     health = lidar.get_device_health()
     
@@ -42,33 +46,55 @@ def initialize_lidar(lidar: RPLidarProtocol) -> Dict:
 
 
 def collect_scans(lidar: RPLidarProtocol):
-    """Yield complete scans from continuous measurement stream."""
+    """Yield complete scans from continuous measurement stream with resync.
+
+    More robust new-scan detection using both header check bits and angle wrap.
+    """
     current_scan: ScanType = []
-    
+    last_angle: float | None = None
+
     while True:
         try:
-            if lidar.ser and lidar.ser.in_waiting >= 5:
-                raw = lidar.ser.read(5)
-                
-                start_flag = (raw[0] & 0x01) != 0
-                quality = (raw[0] >> 2) & 0x3F
-                angle = ((((raw[2] << 8) | raw[1]) >> 1) & 0x7FFF) / 64.0
-                distance = ((raw[4] << 8) | raw[3]) / 4.0
-                
-                if start_flag and current_scan:
-                    yield current_scan
-                    current_scan = []
-                
-                if distance > 0 and quality > 0:
-                    current_scan.append((quality, angle, distance))
-            else:
+            if not lidar.ser or lidar.ser.in_waiting < 5:
                 time.sleep(0.001)
-                
+                continue
+
+            raw = lidar.ser.read(5)
+
+            # Validate header: bit0 = S (start), bit1 = !S must be complementary
+            s_bit = raw[0] & 0x01
+            not_s_bit = (raw[0] >> 1) & 0x01
+            header_ok = (s_bit ^ not_s_bit) == 1
+            if not header_ok:
+                # Drop this chunk to resync; next reads will realign
+                continue
+
+            start_flag = s_bit == 1
+            quality = (raw[0] >> 2) & 0x3F
+            angle = ((((raw[2] << 8) | raw[1]) >> 1) & 0x7FFF) / 64.0
+            distance = ((raw[4] << 8) | raw[3]) / 4.0
+
+            # Detect new scan either by start flag or by angle wrap-around
+            new_scan = False
+            if start_flag and current_scan:
+                new_scan = True
+            elif last_angle is not None and last_angle > 300.0 and angle < 60.0 and current_scan:
+                new_scan = True
+
+            if new_scan:
+                yield current_scan
+                current_scan = []
+
+            if distance > 0 and quality > 0:
+                current_scan.append((quality, angle, distance))
+
+            last_angle = angle
+
         except Exception as exc:
             logging.error("Measurement error: %s", exc)
             if lidar.ser:
                 lidar.ser.reset_input_buffer()
-            time.sleep(0.1)
+            time.sleep(0.05)
 
 
 def stream_scans(lidar: RPLidarProtocol, sock: socket.socket, 
@@ -76,6 +102,12 @@ def stream_scans(lidar: RPLidarProtocol, sock: socket.socket,
     """Stream scans from lidar to socket."""
     with closing(sock):
         sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        # Ensure device is in a clean state before starting scan
+        try:
+            lidar.stop_scan()
+        except Exception:
+            pass
+        time.sleep(0.05)
         lidar.start_scan()
         
         for scan_number, scan in enumerate(collect_scans(lidar), start=1):
@@ -126,7 +158,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if not lidar.connect():
             return 1
         
-        time.sleep(1.0)
+        time.sleep(0.3)
         initialize_lidar(lidar)
         
         logging.info("Connecting to %s:%d", args.host, args.port)

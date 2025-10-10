@@ -243,7 +243,15 @@ class MotorTestRig:
     def _evaluate_setpoint(self, t: float) -> float:
         """Output shaft setpoint speed (rad/s) as a function of time."""
         if SETPOINT_MODE == "sine":
-            return self._setpoint_amplitude * math.sin(2.0 * math.pi * SETPOINT_FREQ_HZ * t)
+            # One-step response (0 -> 5s), wait 2s (5 -> 7s), then sine starts at t=7s
+            if t < 5.0:
+                return self._setpoint_amplitude
+            elif t < 7.0:
+                return 0.0
+            else:
+                # Adjust time for sine to start at t=7s
+                t_sine = t - 7.0
+                return self._setpoint_amplitude * math.sin(2.0 * math.pi * SETPOINT_FREQ_HZ * t_sine)
         # steps profile: 0 -> +A -> -A/2 -> 0
         if t < 2.0:
             return 0.0
@@ -255,9 +263,14 @@ class MotorTestRig:
 
     def _evaluate_setpoint_derivative(self, t: float) -> float:
         if SETPOINT_MODE == "sine":
-            return (
-                self._setpoint_amplitude * 2.0 * math.pi * SETPOINT_FREQ_HZ * math.cos(2.0 * math.pi * SETPOINT_FREQ_HZ * t)
-            )
+            # Derivative is zero during step and wait, then sine derivative starts at t=7s
+            if t < 7.0:
+                return 0.0
+            else:
+                t_sine = t - 7.0
+                return (
+                    self._setpoint_amplitude * 2.0 * math.pi * SETPOINT_FREQ_HZ * math.cos(2.0 * math.pi * SETPOINT_FREQ_HZ * t_sine)
+                )
         return 0.0
 
     def _voltage_feedforward(self, omega_out_des: float, alpha_out_des: float) -> float:
