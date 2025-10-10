@@ -139,14 +139,41 @@ def scan_and_save_image(port: str, output_dir: str = "logs"):
             lidar.start_motor()
             time.sleep(2.0)  # Give motor time to spin up
             
+            # Clear any buffered data before scanning
+            lidar.clear_input()
+            time.sleep(0.2)
+            
             # Collect one full scan
             scan_data = []
             print("Collecting scan data...")
             
-            for i, scan in enumerate(lidar.iter_scans(max_buf_meas=500)):
-                scan_data = scan
-                print(f"✓ Collected {len(scan_data)} measurements")
-                break  # Just get one scan
+            # Try different scan modes
+            try:
+                # Method 1: Use iter_scans with scan_type
+                for i, scan in enumerate(lidar.iter_scans(scan_type='normal', max_buf_meas=1000)):
+                    scan_data = scan
+                    print(f"✓ Collected {len(scan_data)} measurements")
+                    break  # Just get one scan
+            except Exception as e1:
+                print(f"⚠ iter_scans failed: {e1}, trying alternative method...")
+                # Method 2: Use iter_measurements and build scan manually
+                try:
+                    scan_data = []
+                    start_angle = None
+                    for i, measurement in enumerate(lidar.iter_measurements(max_buf_meas=1000)):
+                        new_scan, quality, angle, distance = measurement
+                        
+                        if new_scan and len(scan_data) > 10:
+                            # Complete scan collected
+                            print(f"✓ Collected {len(scan_data)} measurements (manual)")
+                            break
+                        
+                        scan_data.append((quality, angle, distance))
+                        
+                        if i > 2000:  # Safety limit
+                            break
+                except Exception as e2:
+                    print(f"✗ Both scan methods failed: {e2}")
             
             # Stop motor
             lidar.stop_motor()
