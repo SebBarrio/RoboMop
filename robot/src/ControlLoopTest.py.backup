@@ -42,7 +42,7 @@ MOTOR_CHANNELS: Sequence[tuple[int, int]] = ((0, 1), (2, 3), (4, 5), (6, 7))
 ENCODER_CHANNELS: Sequence[tuple[int, int]] = ((13, 26), (5, 6))
 
 # Map motor index to encoder index. Motors 0,1 use encoder 0. Motors 2,3 use encoder 1.
-MOTOR_TO_ENCODER_MAP: dict[int, int] = {0: 1, 1: 1, 2: 0, 3: 0}
+MOTOR_TO_ENCODER_MAP: dict[int, int] = {0: 0, 1: 0, 2: 1, 3: 1}
 
 # Motor and drive electrical/mechanical model constants
 # Units: R[Ohm], L[H], J[kg*m^2], B[N*m*s/rad], Kt[N*m/A], Ke[V*s/rad], N[ratio]
