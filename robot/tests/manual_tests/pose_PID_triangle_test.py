@@ -69,6 +69,10 @@ PWM_MAX: int = 0xFFFF
 
 CONTROL_INTERVAL_S: float = 0.02  # 50 Hz
 
+# Motor polarity
+# Right side wiring is reversed; apply -1 polarity to right commands only.
+RIGHT_SIDE_POLARITY: float = -1.0
+
 # Outer-loop defaults
 POS_KP_DEFAULT: float = 1.2
 POS_KI_DEFAULT: float = 0.0
@@ -166,7 +170,7 @@ class MotorController:
         for idx in LEFT_MOTOR_INDICES:
             self.set_voltage(idx, v_left)
         for idx in RIGHT_MOTOR_INDICES:
-            self.set_voltage(idx, v_right)
+            self.set_voltage(idx, RIGHT_SIDE_POLARITY * v_right)
 
     def stop_all(self) -> None:
         for cfg in self._configs:
