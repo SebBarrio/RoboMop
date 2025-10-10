@@ -162,8 +162,8 @@ class EncoderReader:
             config.index: RotaryEncoder(config.pin_a, config.pin_b, max_steps=0)
             for config in encoder_configs
         }
-        # Track last counts per encoder
-        self._last_counts = {idx: 0 for idx in self._encoders.keys()}
+        # Track last counts per motor (not per encoder) since motors share encoders
+        self._last_counts_per_motor = {motor_idx: 0 for motor_idx in MOTOR_TO_ENCODER_MAP.keys()}
         self._zero_counts = {idx: enc.steps for idx, enc in self._encoders.items()}
         # Per-motor filtered speed storage (rad/s)
         self._omega_filtered_per_motor = {motor_idx: 0.0 for motor_idx in MOTOR_TO_ENCODER_MAP.keys()}
@@ -173,17 +173,15 @@ class EncoderReader:
         # Use minimum dt threshold to prevent division by very small values
         MIN_DT = 0.001  # 1ms minimum
         if dt < MIN_DT:
-            # For very small dt, return the last known filtered speed to avoid spikes
-            return self._omega_filtered_per_motor.get(motor_index, 0.0), 0.0
+            return 0.0, 0.0
         
         encoder_index = MOTOR_TO_ENCODER_MAP[motor_index]
         encoder = self._encoders[encoder_index]
         steps = encoder.steps
         
-        # Calculate delta based on per-encoder last count
-        delta_steps = steps - self._last_counts[encoder_index]
-        # Update last count for the encoder *after* all motors using it have been processed
-        # This is handled by calling update_last_counts() after the control loop.
+        # Use per-motor last counts to handle multiple motors sharing one encoder
+        delta_steps = steps - self._last_counts_per_motor[motor_index]
+        self._last_counts_per_motor[motor_index] = steps
 
         # Total angle from zero (radians)
         total_steps = steps - self._zero_counts[encoder_index]
@@ -208,11 +206,6 @@ class EncoderReader:
         self._omega_filtered_per_motor[motor_index] = omega_out
 
         return omega_out, theta_out
-
-    def update_last_counts(self):
-        """Update the last known step count for each encoder."""
-        for idx, encoder in self._encoders.items():
-            self._last_counts[idx] = encoder.steps
 
     def close(self) -> None:
         for encoder in self._encoders.values():
@@ -301,11 +294,6 @@ class MotorTestRig:
         # Initialize setpoint position to 0 for all motors
         for idx in self._last_theta_sp:
             self._last_theta_sp[idx] = 0.0
-        
-        # Ensure initial encoder counts are correct
-        if isinstance(self._feedback_provider.__self__, EncoderReader):
-            self._feedback_provider.__self__.update_last_counts()
-
         while time.monotonic() - start < duration:
             now = time.monotonic()
             dt = now - last_ts
@@ -334,11 +322,6 @@ class MotorTestRig:
                 self._theta_sp[motor_index].append(theta_sp)
                 self._omega_meas[motor_index].append(omega_meas)
                 self._theta_meas[motor_index].append(theta_meas)
-            
-            # Update encoder counts after all motors have been processed for this cycle
-            if isinstance(self._feedback_provider.__self__, EncoderReader):
-                self._feedback_provider.__self__.update_last_counts()
-
             time.sleep(max(0.0, interval - (time.monotonic() - now)))
         self._controller.stop_all()
 
