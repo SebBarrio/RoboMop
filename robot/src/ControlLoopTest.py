@@ -75,12 +75,12 @@ SETPOINT_AMPLITUDE_RAD_PER_S: float = 20.0
 SETPOINT_FREQ_HZ: float = 0.2  # Only used for sine
 
 # Speed control PID gains (output units: Volts). Tuned for correct rad/s units.
-SPEED_KP: float = .365
-SPEED_KI: float = 0.147
-SPEED_KD: float = 0.0
+SPEED_KP: float = 0.45
+SPEED_KI: float = 0.2
+SPEED_KD: float = 0.01
 
 # First-order low-pass filter time constant for measured speed (seconds)
-SPEED_LP_TAU_S: float = 0.02
+SPEED_LP_TAU_S: float = 0.04
 
 
 @dataclass(frozen=True)
