@@ -2,7 +2,10 @@ import { DataSource, FindManyOptions, QueryFailedError, Repository } from "typeo
 
 import AppDataSource from "../config/database.js";
 import { Robot } from "../models/Robot.js";
-import { RobotStatus } from "../models/enums.js";
+import { RobotState } from "../models/RobotState.js";
+import { RobotStatus, RobotMode } from "../models/enums.js";
+import { Position, Velocity, MotorCurrents } from "../models/embeddables.js";
+
 import { ConflictError, InternalServiceError, NotFoundError, ValidationError } from "./errors.js";
 
 export interface RobotListOptions {
@@ -27,11 +30,24 @@ export interface UpdateRobotInput {
   lastSeenAt?: Date;
 }
 
+export interface UpdateRobotStateInput {
+  mode: RobotMode;
+  position: Position;
+  velocity: Velocity;
+  batteryLevel: number;
+  waterLevel: number;
+  motorCurrents: MotorCurrents;
+  errors?: string[] | null;
+  sessionId?: string | null;
+}
+
 export class RobotService {
   private readonly repository: Repository<Robot>;
+  private readonly stateRepository: Repository<RobotState>;
 
   constructor(dataSource: DataSource = AppDataSource) {
     this.repository = dataSource.getRepository(Robot);
+    this.stateRepository = dataSource.getRepository(RobotState);
   }
 
   async list(options: RobotListOptions = {}): Promise<Robot[]> {
@@ -154,6 +170,46 @@ export class RobotService {
     }
   }
 
+  async getCurrentState(robotId: string): Promise<RobotState> {
+    await this.getById(robotId);
+
+    const state = await this.stateRepository.findOne({
+      where: { robotId },
+      order: { timestamp: "DESC" }
+    });
+
+    if (!state) {
+      throw new NotFoundError(`No state found for robot with id '${robotId}'`);
+    }
+
+    return state;
+  }
+
+  async updateState(robotId: string, input: UpdateRobotStateInput): Promise<RobotState> {
+    await this.getById(robotId);
+
+    this.validateStateInput(input);
+
+    const state = this.stateRepository.create({
+      robotId,
+      sessionId: input.sessionId ?? null,
+      mode: input.mode,
+      position: input.position,
+      velocity: input.velocity,
+      batteryLevel: input.batteryLevel,
+      waterLevel: input.waterLevel,
+      motorCurrents: input.motorCurrents,
+      errors: input.errors ?? null,
+      timestamp: new Date()
+    });
+
+    try {
+      return await this.stateRepository.save(state);
+    } catch (error) {
+      this.handleRepositoryError(error, "update robot state");
+    }
+  }
+
   async delete(id: string): Promise<void> {
     const result = await this.repository.delete({ id });
     if (result.affected === 0) {
@@ -161,9 +217,36 @@ export class RobotService {
     }
   }
 
+  private validateStateInput(input: UpdateRobotStateInput): void {
+    if (!input.mode) {
+      throw new ValidationError("Robot mode is required", input);
+    }
+
+    if (!input.position || typeof input.position.x !== "number" || typeof input.position.y !== "number") {
+      throw new ValidationError("Valid position is required", input.position);
+    }
+
+    if (!input.velocity || typeof input.velocity.linear !== "number" || typeof input.velocity.angular !== "number") {
+      throw new ValidationError("Valid velocity is required", input.velocity);
+    }
+
+    if (typeof input.batteryLevel !== "number" || input.batteryLevel < 0 || input.batteryLevel > 100) {
+      throw new ValidationError("Battery level must be between 0 and 100", input.batteryLevel);
+    }
+
+    if (typeof input.waterLevel !== "number" || input.waterLevel < 0 || input.waterLevel > 100) {
+      throw new ValidationError("Water level must be between 0 and 100", input.waterLevel);
+    }
+
+    if (!input.motorCurrents || typeof input.motorCurrents.left !== "number" || typeof input.motorCurrents.right !== "number") {
+      throw new ValidationError("Valid motor currents are required", input.motorCurrents);
+    }
+  }
+
   private handleRepositoryError(error: unknown, action: string): never {
     if (error instanceof QueryFailedError) {
-      const driverCode = (error.driverError?.code ?? error.message) as string;
+      const driverError = error.driverError as { code?: string } | undefined;
+      const driverCode = driverError?.code ?? error.message;
       if (driverCode === "23505" || driverCode === "SQLITE_CONSTRAINT" || driverCode.includes("UNIQUE")) {
         throw new ConflictError("Robot with the same serial number already exists");
       }

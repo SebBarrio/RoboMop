@@ -2,6 +2,7 @@ import { DataSource, FindManyOptions, QueryFailedError, Repository } from "typeo
 
 import AppDataSource from "../config/database.js";
 import { RestrictedZone, RestrictedZoneGeometry } from "../models/RestrictedZone.js";
+
 import { DependencyError, InternalServiceError, NotFoundError, ValidationError } from "./errors.js";
 
 export interface ZoneListOptions {
@@ -128,7 +129,8 @@ export class ZoneService {
 
   private handleRepositoryError(error: unknown, action: string): never {
     if (error instanceof QueryFailedError) {
-      const code = (error.driverError?.code ?? "") as string;
+      const driverError = error.driverError as { code?: string } | undefined;
+      const code = driverError?.code ?? "";
       if (code === "23503" || code === "SQLITE_CONSTRAINT" || code.includes("FOREIGN")) {
         throw new DependencyError("Referenced map does not exist", error.driverError);
       }

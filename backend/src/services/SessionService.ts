@@ -4,6 +4,7 @@ import AppDataSource from "../config/database.js";
 import { Session } from "../models/Session.js";
 import { Map } from "../models/Map.js";
 import { SessionStatus, SessionType } from "../models/enums.js";
+
 import { DependencyError, InternalServiceError, NotFoundError, ValidationError } from "./errors.js";
 
 export interface SessionListOptions {
@@ -172,7 +173,8 @@ export class SessionService {
 
   private handleRepositoryError(error: unknown, action: string): never {
     if (error instanceof QueryFailedError) {
-      const code = (error.driverError?.code ?? "") as string;
+      const driverError = error.driverError as { code?: string } | undefined;
+      const code = driverError?.code ?? "";
       if (code === "23503" || code === "SQLITE_CONSTRAINT" || code.includes("FOREIGN")) {
         throw new DependencyError("Referenced robot or map does not exist", error.driverError);
       }

@@ -8,6 +8,9 @@ const config: Config = {
   collectCoverageFrom: ["src/**/*.ts"],
   coverageDirectory: "coverage",
   testMatch: ["**/?(*.)+(spec|test).ts"],
+  moduleNameMapper: {
+    "^(\\.{1,2}/.*)\\.js$": "$1"
+  },
   transform: {
     "^.+\\.(ts)$": [
       "ts-jest",
