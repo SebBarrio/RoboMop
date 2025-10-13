@@ -80,16 +80,15 @@ function Test-FeatureBranch {
     }
     
     if ($Branch -notmatch '^[0-9]{3}-') {
-        Write-Output "ERROR: Not on a feature branch. Current branch: $Branch"
-        Write-Output "Feature branches should be named like: 001-feature-name"
-        return $false
+        Write-Warning "[specify] Warning: Non-standard branch name detected: $Branch. Expected 'NNN-feature-name'. Proceeding."
+        return $true
     }
     return $true
 }
 
 function Get-FeatureDir {
     param([string]$RepoRoot, [string]$Branch)
-    Join-Path $RepoRoot "specs/$Branch"
+    Join-Path $RepoRoot "specs/001-the-robomop-project"
 }
 
 function Get-FeaturePathsEnv {

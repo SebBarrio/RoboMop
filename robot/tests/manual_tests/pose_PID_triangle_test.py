@@ -1,0 +1,638 @@
+"""Pose PID Triangle Control Test
+
+Drives an equilateral triangle using encoder-based differential-drive odometry
+and a cascaded controller:
+  - Outer loop: XY distance PID -> linear velocity v, heading PID -> angular rate ω
+  - Inner loop: wheel-speed PID per side -> motor voltages
+
+Hardware:
+  - PCA9685 PWM (two channels per motor; 4 motors total)
+  - Two quadrature encoders, one per side (left encoder index 1, right index 0)
+
+Safety:
+  - Run in a safe, open area. Start with low velocity/turn-rate limits.
+  - Ctrl+C triggers stop and cleanup.
+"""
+
+from __future__ import annotations
+
+import argparse
+import math
+import os
+import time
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Sequence, Tuple
+
+import board
+import busio
+from adafruit_pca9685 import PCA9685
+from gpiozero import RotaryEncoder
+
+# Use non-interactive backend for headless plotting
+import matplotlib
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import numpy as np
+
+
+# ---------------------------- Geometry and Hardware ----------------------------
+
+# PWM channels per motor (forward_channel, reverse_channel)
+# Motor 0: (0, 1), Motor 1: (2, 3), Motor 2: (4, 5), Motor 3: (6, 7)
+MOTOR_CHANNELS: Sequence[Tuple[int, int]] = ((0, 1), (2, 3), (4, 5), (6, 7))
+
+# Encoders: index 0 on pins (13, 26), index 1 on pins (5, 6)
+# Per user mapping: left encoder = 1, right encoder = 0
+ENCODER_CHANNELS: Sequence[Tuple[int, int]] = ((13, 26), (5, 6))
+LEFT_ENCODER_INDEX: int = 1
+RIGHT_ENCODER_INDEX: int = 0
+
+# Left motors = indices [0, 1]; Right motors = [2, 3]
+LEFT_MOTOR_INDICES: Tuple[int, int] = (0, 1)
+RIGHT_MOTOR_INDICES: Tuple[int, int] = (2, 3)
+
+# Physical dimensions
+WHEEL_DIAMETER_M: float = 0.1524
+TRACK_WIDTH_M: float = 0.661
+
+# Encoder configuration
+ENCODER_PULSES_PER_REV: int = 400
+ENCODER_ON_OUTPUT_SHAFT: bool = True
+
+# Electrical / control
+SUPPLY_VOLTAGE: float = 12.0
+PWM_FREQUENCY: int = 1000
+PWM_MIN: int = 0
+PWM_MAX: int = 0xFFFF
+
+CONTROL_INTERVAL_S: float = 0.02  # 50 Hz
+
+# Motor polarity
+# Right side wiring is reversed; apply -1 polarity to right commands only.
+RIGHT_SIDE_POLARITY: float = -1.0
+
+# Outer-loop defaults
+POS_KP_DEFAULT: float = 1.2
+POS_KI_DEFAULT: float = 0.0
+POS_KD_DEFAULT: float = 0.0
+
+HEADING_KP_DEFAULT: float = 3.0
+HEADING_KI_DEFAULT: float = 0.0
+HEADING_KD_DEFAULT: float = 0.1
+
+V_MAX_DEFAULT_MPS: float = 0.6
+W_MAX_DEFAULT_RADPS: float = 2.0
+
+# Inner wheel-speed PID defaults (rad/s -> Volts)
+WS_KP_DEFAULT: float = 0.45
+WS_KI_DEFAULT: float = 0.2
+WS_KD_DEFAULT: float = 0.01
+
+# Path defaults
+SIDE_LENGTH_M_DEFAULT: float = 1.0
+POS_TOL_M: float = 0.02
+ANG_TOL_RAD: float = math.radians(2.0)
+
+
+# ------------------------------ Utility helpers -------------------------------
+
+
+def wrap_angle(angle_rad: float) -> float:
+    """Wrap angle to (-pi, pi]."""
+    a = (angle_rad + math.pi) % (2.0 * math.pi)
+    if a <= 0.0:
+        return a + math.pi
+    return a - math.pi
+
+
+@dataclass(frozen=True)
+class MotorConfig:
+    index: int
+    forward_channel: int
+    reverse_channel: int
+
+
+class PIDController:
+    """Simple PID with integrator clamping."""
+
+    def __init__(
+        self,
+        kp: float,
+        ki: float,
+        kd: float,
+        integrator_limit: float = 1.0,
+    ) -> None:
+        self._kp = kp
+        self._ki = ki
+        self._kd = kd
+        self._integrator = 0.0
+        self._prev_error = 0.0
+        self._integrator_limit = integrator_limit
+
+    def reset(self) -> None:
+        self._integrator = 0.0
+        self._prev_error = 0.0
+
+    def update(self, error: float, dt: float) -> float:
+        self._integrator += error * dt
+        self._integrator = max(
+            -self._integrator_limit, min(self._integrator, self._integrator_limit)
+        )
+        derivative = (error - self._prev_error) / dt if dt > 0 else 0.0
+        self._prev_error = error
+        return (self._kp * error) + (self._ki * self._integrator) + (self._kd * derivative)
+
+
+class MotorController:
+    """Drives individual motors and provides side-level control convenience."""
+
+    def __init__(self, pwm_board: PCA9685, motor_configs: Sequence[MotorConfig]) -> None:
+        self._pwm_board = pwm_board
+        self._configs = tuple(motor_configs)
+        self._motors = {config.index: config for config in self._configs}
+
+    def set_voltage(self, motor_index: int, voltage_command: float) -> None:
+        """Command motor voltage in [-SUPPLY_VOLTAGE, SUPPLY_VOLTAGE]."""
+        config = self._motors[motor_index]
+        v_cmd = max(-SUPPLY_VOLTAGE, min(voltage_command, SUPPLY_VOLTAGE))
+        duty = abs(v_cmd) / SUPPLY_VOLTAGE
+        level = int(PWM_MIN + (PWM_MAX - PWM_MIN) * duty)
+        if v_cmd >= 0:
+            self._pwm_board.channels[config.forward_channel].duty_cycle = level
+            self._pwm_board.channels[config.reverse_channel].duty_cycle = PWM_MIN
+        else:
+            self._pwm_board.channels[config.forward_channel].duty_cycle = PWM_MIN
+            self._pwm_board.channels[config.reverse_channel].duty_cycle = level
+
+    def set_side_voltages(self, v_left: float, v_right: float) -> None:
+        for idx in LEFT_MOTOR_INDICES:
+            self.set_voltage(idx, v_left)
+        for idx in RIGHT_MOTOR_INDICES:
+            self.set_voltage(idx, RIGHT_SIDE_POLARITY * v_right)
+
+    def stop_all(self) -> None:
+        for cfg in self._configs:
+            self._pwm_board.channels[cfg.forward_channel].duty_cycle = PWM_MIN
+            self._pwm_board.channels[cfg.reverse_channel].duty_cycle = PWM_MIN
+
+
+class SideEncoderReader:
+    """Reads left/right encoder steps and computes filtered wheel speeds."""
+
+    def __init__(self, encoder_channels: Sequence[Tuple[int, int]], pulses_per_rev: int) -> None:
+        self._ppr = float(pulses_per_rev)
+        # Instantiate encoders by index
+        self._encoders = {
+            idx: RotaryEncoder(pins[0], pins[1], max_steps=0)
+            for idx, pins in enumerate(encoder_channels)
+        }
+        self._last_counts = {
+            "left": self._encoders[LEFT_ENCODER_INDEX].steps,
+            "right": self._encoders[RIGHT_ENCODER_INDEX].steps,
+        }
+        self._omega_filtered = {"left": 0.0, "right": 0.0}
+        self._r = WHEEL_DIAMETER_M / 2.0
+
+    def read_counts(self) -> Tuple[int, int]:
+        left = self._encoders[LEFT_ENCODER_INDEX].steps
+        right = self._encoders[RIGHT_ENCODER_INDEX].steps
+        return left, right
+
+    def read_wheel_omegas(self, dt: float) -> Tuple[float, float]:
+        """Return (omega_left, omega_right) in rad/s based on encoder deltas."""
+        MIN_DT = 0.001
+        if dt < MIN_DT:
+            return 0.0, 0.0
+        left_steps = self._encoders[LEFT_ENCODER_INDEX].steps
+        right_steps = self._encoders[RIGHT_ENCODER_INDEX].steps
+        d_left_steps = left_steps - self._last_counts["left"]
+        d_right_steps = right_steps - self._last_counts["right"]
+        self._last_counts["left"] = left_steps
+        self._last_counts["right"] = right_steps
+
+        # Steps -> rotations -> radians
+        rot_l = d_left_steps / self._ppr
+        rot_r = d_right_steps / self._ppr
+        dtheta_l = 2.0 * math.pi * rot_l
+        dtheta_r = 2.0 * math.pi * rot_r
+
+        # Wheel angular speed (rad/s)
+        omega_l_raw = dtheta_l / dt
+        omega_r_raw = dtheta_r / dt
+
+        # Low-pass filter
+        tau = 0.04
+        alpha = dt / (tau + dt)
+        omega_l = self._omega_filtered["left"] + alpha * (omega_l_raw - self._omega_filtered["left"])
+        omega_r = self._omega_filtered["right"] + alpha * (omega_r_raw - self._omega_filtered["right"])
+        self._omega_filtered["left"] = omega_l
+        self._omega_filtered["right"] = omega_r
+        return omega_l, omega_r
+
+    def close(self) -> None:
+        for enc in self._encoders.values():
+            enc.close()
+
+
+class DifferentialOdometry:
+    """Differential-drive odometry using encoder counts."""
+
+    def __init__(self, encoder_reader: SideEncoderReader) -> None:
+        self._enc = encoder_reader
+        self.x = 0.0
+        self.y = 0.0
+        self.psi = 0.0
+        self._prev_counts = self._enc.read_counts()
+        self._r = WHEEL_DIAMETER_M / 2.0
+
+    def update(self, dt: float) -> Tuple[float, float, float, float, float]:
+        """Update pose. Returns (x, y, psi, omega_l, omega_r)."""
+        MIN_DT = 0.001
+        if dt < MIN_DT:
+            omegas = self._enc.read_wheel_omegas(dt)
+            return self.x, self.y, self.psi, omegas[0], omegas[1]
+
+        counts_l, counts_r = self._enc.read_counts()
+        prev_l, prev_r = self._prev_counts
+        self._prev_counts = (counts_l, counts_r)
+
+        d_left_steps = counts_l - prev_l
+        d_right_steps = counts_r - prev_r
+
+        rot_l = d_left_steps / float(ENCODER_PULSES_PER_REV)
+        rot_r = d_right_steps / float(ENCODER_PULSES_PER_REV)
+        dtheta_l = 2.0 * math.pi * rot_l
+        dtheta_r = 2.0 * math.pi * rot_r
+        ds_l = self._r * dtheta_l
+        ds_r = self._r * dtheta_r
+        ds = 0.5 * (ds_l + ds_r)
+        dpsi = (ds_r - ds_l) / TRACK_WIDTH_M
+
+        # Midpoint heading integration
+        self.x += ds * math.cos(self.psi + 0.5 * dpsi)
+        self.y += ds * math.sin(self.psi + 0.5 * dpsi)
+        self.psi = wrap_angle(self.psi + dpsi)
+
+        # Measured wheel speeds
+        omega_l = dtheta_l / dt
+        omega_r = dtheta_r / dt
+        return self.x, self.y, self.psi, omega_l, omega_r
+
+
+class PoseController:
+    """Outer-loop controller that computes (v, omega) for pose regulation."""
+
+    def __init__(
+        self,
+        pos_pid: PIDController,
+        heading_pid: PIDController,
+        v_max: float,
+        w_max: float,
+    ) -> None:
+        self._pos_pid = pos_pid
+        self._heading_pid = heading_pid
+        self._v_max = v_max
+        self._w_max = w_max
+
+    def compute_to_waypoint(
+        self, x: float, y: float, psi: float, goal_x: float, goal_y: float, dt: float
+    ) -> Tuple[float, float, float, float]:
+        """Return (v, w, dist_error, heading_error_to_goal)."""
+        dx = goal_x - x
+        dy = goal_y - y
+        dist = math.hypot(dx, dy)
+        desired_heading = math.atan2(dy, dx) if dist > 1e-6 else psi
+        heading_error = wrap_angle(desired_heading - psi)
+
+        # Distance PID for forward velocity (always non-negative command)
+        v_cmd = self._pos_pid.update(dist, dt)
+
+        # Reduce forward velocity when facing away
+        v_cmd *= max(0.0, math.cos(heading_error))
+
+        # Heading PID for angular rate
+        w_cmd = self._heading_pid.update(heading_error, dt)
+
+        # Saturations
+        v_cmd = max(-self._v_max, min(v_cmd, self._v_max))
+        w_cmd = max(-self._w_max, min(w_cmd, self._w_max))
+        return v_cmd, w_cmd, dist, heading_error
+
+    def compute_rotate_to(
+        self, psi: float, target_psi: float, dt: float
+    ) -> Tuple[float, float]:
+        """Rotate in place to target heading. Returns (v=0, w)."""
+        heading_error = wrap_angle(target_psi - psi)
+        w_cmd = self._heading_pid.update(heading_error, dt)
+        w_cmd = max(-self._w_max, min(w_cmd, self._w_max))
+        return 0.0, w_cmd
+
+
+def build_motor_configs() -> Sequence[MotorConfig]:
+    return [
+        MotorConfig(index=idx, forward_channel=ch[0], reverse_channel=ch[1])
+        for idx, ch in enumerate(MOTOR_CHANNELS)
+    ]
+
+
+def triangle_waypoints(side_length_m: float) -> Sequence[Tuple[float, float]]:
+    l = side_length_m
+    return [
+        (0.0, 0.0),
+        (l, 0.0),
+        (0.5 * l, (math.sqrt(3.0) / 2.0) * l),
+        (0.0, 0.0),
+    ]
+
+
+def run_triangle(
+    side_length_m: float,
+    v_max: float,
+    w_max: float,
+    pos_kp: float,
+    pos_ki: float,
+    pos_kd: float,
+    heading_kp: float,
+    heading_ki: float,
+    heading_kd: float,
+    ws_kp: float,
+    ws_ki: float,
+    ws_kd: float,
+) -> None:
+    """Main control loop to execute the triangle path."""
+    # Hardware init
+    i2c = busio.I2C(board.SCL, board.SDA)
+    pwm = PCA9685(i2c)
+    pwm.frequency = PWM_FREQUENCY
+    controller = MotorController(pwm, build_motor_configs())
+    encoders = SideEncoderReader(ENCODER_CHANNELS, ENCODER_PULSES_PER_REV)
+    odom = DifferentialOdometry(encoders)
+
+    # Controllers
+    pos_pid = PIDController(pos_kp, pos_ki, pos_kd, integrator_limit=2.0)
+    heading_pid = PIDController(heading_kp, heading_ki, heading_kd, integrator_limit=2.0)
+    pose_ctrl = PoseController(pos_pid, heading_pid, v_max=v_max, w_max=w_max)
+    ws_left_pid = PIDController(ws_kp, ws_ki, ws_kd, integrator_limit=SUPPLY_VOLTAGE)
+    ws_right_pid = PIDController(ws_kp, ws_ki, ws_kd, integrator_limit=SUPPLY_VOLTAGE)
+
+    # Logs
+    times: list[float] = []
+    xs: list[float] = []
+    ys: list[float] = []
+    psis: list[float] = []
+    v_cmds: list[float] = []
+    w_cmds: list[float] = []
+    omega_l_des_log: list[float] = []
+    omega_r_des_log: list[float] = []
+    omega_l_meas_log: list[float] = []
+    omega_r_meas_log: list[float] = []
+    v_left_volts: list[float] = []
+    v_right_volts: list[float] = []
+
+    try:
+        waypoints = triangle_waypoints(side_length_m)
+        start_time = time.monotonic()
+        last_ts = start_time
+
+        # Execute each leg
+        for wp_idx in range(1, len(waypoints)):
+            goal_x, goal_y = waypoints[wp_idx]
+
+            # Goto waypoint
+            leg_start = time.monotonic()
+            while True:
+                now = time.monotonic()
+                dt = now - last_ts
+                last_ts = now
+
+                # Update odometry and measured wheel speeds
+                x, y, psi, omega_l_meas, omega_r_meas = odom.update(dt)
+
+                # Outer loop
+                v_cmd, w_cmd, dist, _ = pose_ctrl.compute_to_waypoint(
+                    x, y, psi, goal_x, goal_y, dt
+                )
+
+                # Map to wheel angular speeds
+                v_l = v_cmd - (w_cmd * (TRACK_WIDTH_M / 2.0))
+                v_r = v_cmd + (w_cmd * (TRACK_WIDTH_M / 2.0))
+                r = WHEEL_DIAMETER_M / 2.0
+                omega_l_des = v_l / r
+                omega_r_des = v_r / r
+
+                # Inner wheel-speed PID -> voltages
+                err_l = omega_l_des - omega_l_meas
+                err_r = omega_r_des - omega_r_meas
+                v_left = ws_left_pid.update(err_l, dt)
+                v_right = ws_right_pid.update(err_r, dt)
+                v_left = max(-SUPPLY_VOLTAGE, min(v_left, SUPPLY_VOLTAGE))
+                v_right = max(-SUPPLY_VOLTAGE, min(v_right, SUPPLY_VOLTAGE))
+                controller.set_side_voltages(v_left, v_right)
+
+                # Logs
+                t_rel = now - start_time
+                times.append(t_rel)
+                xs.append(x)
+                ys.append(y)
+                psis.append(psi)
+                v_cmds.append(v_cmd)
+                w_cmds.append(w_cmd)
+                omega_l_des_log.append(omega_l_des)
+                omega_r_des_log.append(omega_r_des)
+                omega_l_meas_log.append(omega_l_meas)
+                omega_r_meas_log.append(omega_r_meas)
+                v_left_volts.append(v_left)
+                v_right_volts.append(v_right)
+
+                # Check convergence or timeout
+                if dist <= POS_TOL_M:
+                    break
+                if (now - leg_start) > max(10.0, 60.0 * side_length_m):
+                    print("Warning: position step timeout; proceeding to next step")
+                    break
+
+                # Maintain control cadence
+                time.sleep(max(0.0, CONTROL_INTERVAL_S - (time.monotonic() - now)))
+
+            # Rotate +120 degrees relative
+            rotate_start = time.monotonic()
+            target_psi = wrap_angle(odom.psi + (2.0 * math.pi / 3.0))
+            while True:
+                now = time.monotonic()
+                dt = now - last_ts
+                last_ts = now
+
+                x, y, psi, omega_l_meas, omega_r_meas = odom.update(dt)
+                v_cmd, w_cmd = pose_ctrl.compute_rotate_to(psi, target_psi, dt)
+
+                # Map to wheel speeds (v=0)
+                v_l = -w_cmd * (TRACK_WIDTH_M / 2.0)
+                v_r = w_cmd * (TRACK_WIDTH_M / 2.0)
+                r = WHEEL_DIAMETER_M / 2.0
+                omega_l_des = v_l / r
+                omega_r_des = v_r / r
+
+                # Wheel speed PID
+                err_l = omega_l_des - omega_l_meas
+                err_r = omega_r_des - omega_r_meas
+                v_left = ws_left_pid.update(err_l, dt)
+                v_right = ws_right_pid.update(err_r, dt)
+                v_left = max(-SUPPLY_VOLTAGE, min(v_left, SUPPLY_VOLTAGE))
+                v_right = max(-SUPPLY_VOLTAGE, min(v_right, SUPPLY_VOLTAGE))
+                controller.set_side_voltages(v_left, v_right)
+
+                # Logs
+                t_rel = now - start_time
+                times.append(t_rel)
+                xs.append(x)
+                ys.append(y)
+                psis.append(psi)
+                v_cmds.append(v_cmd)
+                w_cmds.append(w_cmd)
+                omega_l_des_log.append(omega_l_des)
+                omega_r_des_log.append(omega_r_des)
+                omega_l_meas_log.append(omega_l_meas)
+                omega_r_meas_log.append(omega_r_meas)
+                v_left_volts.append(v_left)
+                v_right_volts.append(v_right)
+
+                # Check completion or timeout
+                ang_err = abs(wrap_angle(target_psi - psi))
+                if ang_err <= ANG_TOL_RAD:
+                    break
+                if (now - rotate_start) > 20.0:
+                    print("Warning: rotation step timeout; proceeding to next step")
+                    break
+
+                time.sleep(max(0.0, CONTROL_INTERVAL_S - (time.monotonic() - now)))
+
+        # Stop motors after completion
+        controller.stop_all()
+
+    except KeyboardInterrupt:
+        print("\nInterrupted by user")
+    finally:
+        try:
+            controller.stop_all()
+        except Exception:
+            pass
+        try:
+            encoders.close()
+        except Exception:
+            pass
+        try:
+            pwm.deinit()
+        except Exception:
+            pass
+
+    # Save plots
+    if times:
+        os.makedirs("logs", exist_ok=True)
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        base = (
+            f"triangle_{ts}_L{side_length_m:.2f}_kp{pos_kp:.2f}_kh{heading_kp:.2f}_"
+            f"v{v_max:.2f}_w{w_max:.2f}"
+        )
+
+        # XY trace
+        plt.figure(figsize=(8, 8))
+        plt.title("XY Path Trace")
+        plt.plot(xs, ys, label="trajectory")
+        for gx, gy in triangle_waypoints(side_length_m):
+            plt.plot(gx, gy, "ko")
+        plt.axis("equal")
+        plt.grid(True)
+        plt.legend()
+        plt.xlabel("x (m)")
+        plt.ylabel("y (m)")
+        plt.tight_layout()
+        path_xy = os.path.join("logs", f"{base}_xy.png")
+        plt.savefig(path_xy, dpi=150)
+        plt.close()
+
+        # Heading and wheel speeds
+        t_arr = np.array(times)
+        plt.figure(figsize=(10, 8))
+        ax1 = plt.subplot(2, 1, 1)
+        ax1.set_title("Heading vs Time")
+        ax1.plot(t_arr, psis, label="psi (rad)")
+        ax1.set_xlabel("time (s)")
+        ax1.set_ylabel("psi (rad)")
+        ax1.grid(True)
+        ax1.legend()
+
+        ax2 = plt.subplot(2, 1, 2)
+        ax2.set_title("Wheel Speeds")
+        ax2.plot(t_arr, omega_l_des_log, "k--", label="omega_L des")
+        ax2.plot(t_arr, omega_r_des_log, "k:", label="omega_R des")
+        ax2.plot(t_arr, omega_l_meas_log, label="omega_L meas")
+        ax2.plot(t_arr, omega_r_meas_log, label="omega_R meas")
+        ax2.set_xlabel("time (s)")
+        ax2.set_ylabel("rad/s")
+        ax2.grid(True)
+        ax2.legend()
+        plt.tight_layout()
+        path_hw = os.path.join("logs", f"{base}_heading_wheels.png")
+        plt.savefig(path_hw, dpi=150)
+        plt.close()
+
+        print(f"Plots saved to {path_xy} and {path_hw}")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Pose PID triangle control test")
+    parser.add_argument("--side-length", type=float, default=SIDE_LENGTH_M_DEFAULT)
+    parser.add_argument("--v-max", type=float, default=V_MAX_DEFAULT_MPS)
+    parser.add_argument("--w-max", type=float, default=W_MAX_DEFAULT_RADPS)
+
+    parser.add_argument("--pos-kp", type=float, default=POS_KP_DEFAULT)
+    parser.add_argument("--pos-ki", type=float, default=POS_KI_DEFAULT)
+    parser.add_argument("--pos-kd", type=float, default=POS_KD_DEFAULT)
+
+    parser.add_argument("--heading-kp", type=float, default=HEADING_KP_DEFAULT)
+    parser.add_argument("--heading-ki", type=float, default=HEADING_KI_DEFAULT)
+    parser.add_argument("--heading-kd", type=float, default=HEADING_KD_DEFAULT)
+
+    parser.add_argument("--ws-kp", type=float, default=WS_KP_DEFAULT)
+    parser.add_argument("--ws-ki", type=float, default=WS_KI_DEFAULT)
+    parser.add_argument("--ws-kd", type=float, default=WS_KD_DEFAULT)
+
+    args = parser.parse_args()
+
+    print("=" * 60)
+    print("Pose PID Triangle Control Test")
+    print("=" * 60)
+    print(f"Side length: {args.side_length:.2f} m")
+    print(f"v_max: {args.v_max:.2f} m/s, w_max: {args.w_max:.2f} rad/s")
+    print(
+        f"Position PID: Kp={args.pos_kp:.2f}, Ki={args.pos_ki:.2f}, Kd={args.pos_kd:.2f} | "
+        f"Heading PID: Kp={args.heading_kp:.2f}, Ki={args.heading_ki:.2f}, Kd={args.heading_kd:.2f}"
+    )
+    print(
+        f"Wheel-speed PID: Kp={args.ws_kp:.3f}, Ki={args.ws_ki:.3f}, Kd={args.ws_kd:.3f}"
+    )
+    print(f"Track width: {TRACK_WIDTH_M:.3f} m, Wheel diameter: {WHEEL_DIAMETER_M:.4f} m")
+    print("=" * 60 + "\n")
+
+    run_triangle(
+        side_length_m=args.side_length,
+        v_max=args.v_max,
+        w_max=args.w_max,
+        pos_kp=args.pos_kp,
+        pos_ki=args.pos_ki,
+        pos_kd=args.pos_kd,
+        heading_kp=args.heading_kp,
+        heading_ki=args.heading_ki,
+        heading_kd=args.heading_kd,
+        ws_kp=args.ws_kp,
+        ws_ki=args.ws_ki,
+        ws_kd=args.ws_kd,
+    )
+
+
+if __name__ == "__main__":
+    main()
+
+

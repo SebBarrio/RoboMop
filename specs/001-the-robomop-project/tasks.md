@@ -33,15 +33,15 @@
 
 ## Phase 3.1: Setup
 
-- [ ] **T001** Create root project structure (robot/, backend/, frontend/, docs/)
-- [ ] **T002** [P] Initialize Python project in robot/ with requirements.txt (Python 3.11+, pytest, black, pylint, mypy, rplidar SDK, numpy, scipy, python-socketio, asyncio)
-- [ ] **T003** [P] Initialize Node.js project in backend/ with package.json (Node 20.x, TypeScript 5.x, Express 4.x, Socket.io, TypeORM, Jest, supertest)
-- [ ] **T004** [P] Initialize Vite+React project in frontend/ with package.json (TypeScript 5.x, React 18.x, Vite 5.x, socket.io-client, Vitest, React Testing Library, Playwright)
-- [ ] **T005** [P] Configure Python linting in robot/ (black, pylint, mypy configs, pre-commit hook)
-- [ ] **T006** [P] Configure TypeScript linting in backend/ and frontend/ (ESLint, Prettier, tsconfig.json strict mode)
-- [ ] **T007** [P] Setup PostgreSQL and SQLite TypeORM configurations in backend/src/config/database.ts
-- [ ] **T008** [P] Create TypeORM migration scripts in backend/src/migrations/
-- [ ] **T009** [P] Setup CI/CD pipeline config (.github/workflows/ or equivalent: lint, test, coverage)
+- [x] **T001** Create root project structure (robot/, backend/, frontend/, docs/)
+- [x] **T002** [P] Initialize Python project in robot/ with requirements.txt (Python 3.11+, pytest, black, pylint, mypy, rplidar SDK, numpy, scipy, python-socketio, asyncio)
+- [x] **T003** [P] Initialize Node.js project in backend/ with package.json (Node 20.x, TypeScript 5.x, Express 4.x, Socket.io, TypeORM, Jest, supertest)
+- [x] **T004** [P] Initialize Vite+React project in frontend/ with package.json (TypeScript 5.x, React 18.x, Vite 5.x, socket.io-client, Vitest, React Testing Library, Playwright)
+- [x] **T005** [P] Configure Python linting in robot/ (black, pylint, mypy configs, pre-commit hook)
+- [x] **T006** [P] Configure TypeScript linting in backend/ and frontend/ (ESLint, Prettier, tsconfig.json strict mode)
+- [x] **T007** [P] Setup PostgreSQL and SQLite TypeORM configurations in backend/src/config/database.ts
+- [x] **T008** [P] Create TypeORM migration scripts in backend/src/migrations/
+- [x] **T009** [P] Setup CI/CD pipeline config (.github/workflows/ or equivalent: lint, test, coverage)
 
 ---
 
@@ -50,57 +50,57 @@
 
 ### Contract Tests - Backend API
 
-- [ ] **T010** [P] Contract test GET /api/v1/robots in backend/tests/contract/test_robots_get.test.ts
-- [ ] **T011** [P] Contract test POST /api/v1/robots in backend/tests/contract/test_robots_post.test.ts
-- [ ] **T012** [P] Contract test GET /api/v1/robots/{robotId} in backend/tests/contract/test_robot_get.test.ts
-- [ ] **T013** [P] Contract test PATCH /api/v1/robots/{robotId} in backend/tests/contract/test_robot_patch.test.ts
-- [ ] **T014** [P] Contract test GET /api/v1/robots/{robotId}/state in backend/tests/contract/test_robot_state_get.test.ts
-- [ ] **T015** [P] Contract test POST /api/v1/robots/{robotId}/state in backend/tests/contract/test_robot_state_post.test.ts
-- [ ] **T016** [P] Contract test POST /api/v1/robots/{robotId}/command in backend/tests/contract/test_robot_command.test.ts
-- [ ] **T017** [P] Contract test GET /api/v1/maps in backend/tests/contract/test_maps_get.test.ts
-- [ ] **T018** [P] Contract test POST /api/v1/maps in backend/tests/contract/test_maps_post.test.ts
-- [ ] **T019** [P] Contract test GET /api/v1/maps/{mapId} in backend/tests/contract/test_map_get.test.ts
-- [ ] **T020** [P] Contract test PATCH /api/v1/maps/{mapId} in backend/tests/contract/test_map_patch.test.ts
-- [ ] **T021** [P] Contract test DELETE /api/v1/maps/{mapId} in backend/tests/contract/test_map_delete.test.ts
-- [ ] **T022** [P] Contract test GET /api/v1/maps/{mapId}/data in backend/tests/contract/test_map_data_get.test.ts
-- [ ] **T023** [P] Contract test PUT /api/v1/maps/{mapId}/data in backend/tests/contract/test_map_data_put.test.ts
-- [ ] **T024** [P] Contract test PATCH /api/v1/maps/{mapId}/data in backend/tests/contract/test_map_data_patch.test.ts
-- [ ] **T025** [P] Contract test GET /api/v1/maps/{mapId}/zones in backend/tests/contract/test_zones_get.test.ts
-- [ ] **T026** [P] Contract test POST /api/v1/maps/{mapId}/zones in backend/tests/contract/test_zones_post.test.ts
-- [ ] **T027** [P] Contract test GET /api/v1/zones/{zoneId} in backend/tests/contract/test_zone_get.test.ts
-- [ ] **T028** [P] Contract test PATCH /api/v1/zones/{zoneId} in backend/tests/contract/test_zone_patch.test.ts
-- [ ] **T029** [P] Contract test DELETE /api/v1/zones/{zoneId} in backend/tests/contract/test_zone_delete.test.ts
-- [ ] **T030** [P] Contract test GET /api/v1/sessions in backend/tests/contract/test_sessions_get.test.ts
-- [ ] **T031** [P] Contract test POST /api/v1/sessions in backend/tests/contract/test_sessions_post.test.ts
-- [ ] **T032** [P] Contract test GET /api/v1/sessions/{sessionId} in backend/tests/contract/test_session_get.test.ts
-- [ ] **T033** [P] Contract test PATCH /api/v1/sessions/{sessionId} in backend/tests/contract/test_session_patch.test.ts
-- [ ] **T034** [P] Contract test GET /api/v1/logs in backend/tests/contract/test_logs_get.test.ts
-- [ ] **T035** [P] Contract test DELETE /api/v1/logs in backend/tests/contract/test_logs_delete.test.ts
+- [X] **T010** [P] Contract test GET /api/v1/robots in backend/tests/contract/test_robots_get.test.ts
+- [X] **T011** [P] Contract test POST /api/v1/robots in backend/tests/contract/test_robots_post.test.ts
+- [X] **T012** [P] Contract test GET /api/v1/robots/{robotId} in backend/tests/contract/test_robot_get.test.ts
+- [X] **T013** [P] Contract test PATCH /api/v1/robots/{robotId} in backend/tests/contract/test_robot_patch.test.ts
+- [X] **T014** [P] Contract test GET /api/v1/robots/{robotId}/state in backend/tests/contract/test_robot_state_get.test.ts
+- [X] **T015** [P] Contract test POST /api/v1/robots/{robotId}/state in backend/tests/contract/test_robot_state_post.test.ts
+- [X] **T016** [P] Contract test POST /api/v1/robots/{robotId}/command in backend/tests/contract/test_robot_command.test.ts
+- [X] **T017** [P] Contract test GET /api/v1/maps in backend/tests/contract/test_maps_get.test.ts
+- [X] **T018** [P] Contract test POST /api/v1/maps in backend/tests/contract/test_maps_post.test.ts
+- [X] **T019** [P] Contract test GET /api/v1/maps/{mapId} in backend/tests/contract/test_map_get.test.ts
+- [X] **T020** [P] Contract test PATCH /api/v1/maps/{mapId} in backend/tests/contract/test_map_patch.test.ts
+- [X] **T021** [P] Contract test DELETE /api/v1/maps/{mapId} in backend/tests/contract/test_map_delete.test.ts
+- [X] **T022** [P] Contract test GET /api/v1/maps/{mapId}/data in backend/tests/contract/test_map_data_get.test.ts
+- [X] **T023** [P] Contract test PUT /api/v1/maps/{mapId}/data in backend/tests/contract/test_map_data_put.test.ts
+- [X] **T024** [P] Contract test PATCH /api/v1/maps/{mapId}/data in backend/tests/contract/test_map_data_patch.test.ts
+- [X] **T025** [P] Contract test GET /api/v1/maps/{mapId}/zones in backend/tests/contract/test_zones_get.test.ts
+- [X] **T026** [P] Contract test POST /api/v1/maps/{mapId}/zones in backend/tests/contract/test_zones_post.test.ts
+- [X] **T027** [P] Contract test GET /api/v1/zones/{zoneId} in backend/tests/contract/test_zone_get.test.ts
+- [X] **T028** [P] Contract test PATCH /api/v1/zones/{zoneId} in backend/tests/contract/test_zone_patch.test.ts
+- [X] **T029** [P] Contract test DELETE /api/v1/zones/{zoneId} in backend/tests/contract/test_zone_delete.test.ts
+- [X] **T030** [P] Contract test GET /api/v1/sessions in backend/tests/contract/test_sessions_get.test.ts
+- [X] **T031** [P] Contract test POST /api/v1/sessions in backend/tests/contract/test_sessions_post.test.ts
+- [X] **T032** [P] Contract test GET /api/v1/sessions/{sessionId} in backend/tests/contract/test_session_get.test.ts
+- [X] **T033** [P] Contract test PATCH /api/v1/sessions/{sessionId} in backend/tests/contract/test_session_patch.test.ts
+- [X] **T034** [P] Contract test GET /api/v1/logs in backend/tests/contract/test_logs_get.test.ts
+- [X] **T035** [P] Contract test DELETE /api/v1/logs in backend/tests/contract/test_logs_delete.test.ts
 
 ### Contract Tests - WebSocket Events
 
-- [ ] **T036** [P] WebSocket contract test robot:heartbeat event in backend/tests/contract/test_ws_heartbeat.test.ts
-- [ ] **T037** [P] WebSocket contract test robot:state event in backend/tests/contract/test_ws_robot_state.test.ts
-- [ ] **T038** [P] WebSocket contract test robot:map-update event in backend/tests/contract/test_ws_map_update.test.ts
-- [ ] **T039** [P] WebSocket contract test robot:sensor-data event in backend/tests/contract/test_ws_sensor_data.test.ts
-- [ ] **T040** [P] WebSocket contract test command:move event in backend/tests/contract/test_ws_command_move.test.ts
-- [ ] **T041** [P] WebSocket contract test command:set-mode event in backend/tests/contract/test_ws_command_mode.test.ts
-- [ ] **T042** [P] WebSocket contract test command:e-stop event in backend/tests/contract/test_ws_e_stop.test.ts
-- [ ] **T043** [P] WebSocket contract test ui:command event in backend/tests/contract/test_ws_ui_command.test.ts
-- [ ] **T044** [P] WebSocket contract test ui:create-zone event in backend/tests/contract/test_ws_create_zone.test.ts
+- [X] **T036** [P] WebSocket contract test robot:heartbeat event in backend/tests/contract/test_ws_heartbeat.test.ts
+- [X] **T037** [P] WebSocket contract test robot:state event in backend/tests/contract/test_ws_robot_state.test.ts
+- [X] **T038** [P] WebSocket contract test robot:map-update event in backend/tests/contract/test_ws_map_update.test.ts
+- [X] **T039** [P] WebSocket contract test robot:sensor-data event in backend/tests/contract/test_ws_sensor_data.test.ts
+- [X] **T040** [P] WebSocket contract test command:move event in backend/tests/contract/test_ws_command_move.test.ts
+- [X] **T041** [P] WebSocket contract test command:set-mode event in backend/tests/contract/test_ws_command_mode.test.ts
+- [X] **T042** [P] WebSocket contract test command:e-stop event in backend/tests/contract/test_ws_e_stop.test.ts
+- [X] **T043** [P] WebSocket contract test ui:command event in backend/tests/contract/test_ws_ui_command.test.ts
+- [X] **T044** [P] WebSocket contract test ui:create-zone event in backend/tests/contract/test_ws_create_zone.test.ts
 
 ### Integration Tests - Quickstart Scenarios
 
-- [ ] **T045** [P] Integration test Scenario 1: Robot registration and connection in backend/tests/integration/test_robot_registration.test.ts
-- [ ] **T046** [P] Integration test Scenario 2: Exploration mode in robot/tests/integration/test_exploration_mode.py
-- [ ] **T047** [P] Integration test Scenario 3: Cleaning mode in robot/tests/integration/test_cleaning_mode.py
-- [ ] **T048** [P] Integration test Scenario 4: Manual control in frontend/tests/e2e/test_manual_control.spec.ts
-- [ ] **T049** [P] Integration test Scenario 5: Emergency stop in frontend/tests/e2e/test_emergency_stop.spec.ts
-- [ ] **T050** [P] Integration test Scenario 6: Restricted zones in frontend/tests/e2e/test_restricted_zones.spec.ts
-- [ ] **T051** [P] Integration test Scenario 7: Water level monitoring in robot/tests/integration/test_water_level.py
-- [ ] **T052** [P] Integration test Scenario 8: Low battery behavior in robot/tests/integration/test_low_battery.py
-- [ ] **T053** [P] Integration test Scenario 9: WiFi disconnection in robot/tests/integration/test_wifi_disconnect.py
-- [ ] **T054** [P] Integration test Scenario 10: Real-time map updates in frontend/tests/e2e/test_map_updates.spec.ts
+- [X] **T045** [P] Integration test Scenario 1: Robot registration and connection in backend/tests/integration/test_robot_registration.test.ts
+- [X] **T046** [P] Integration test Scenario 2: Exploration mode in robot/tests/integration/test_exploration_mode.py
+- [X] **T047** [P] Integration test Scenario 3: Cleaning mode in robot/tests/integration/test_cleaning_mode.py
+- [X] **T048** [P] Integration test Scenario 4: Manual control in frontend/tests/e2e/test_manual_control.spec.ts
+- [X] **T049** [P] Integration test Scenario 5: Emergency stop in frontend/tests/e2e/test_emergency_stop.spec.ts
+- [X] **T050** [P] Integration test Scenario 6: Restricted zones in frontend/tests/e2e/test_restricted_zones.spec.ts
+- [X] **T051** [P] Integration test Scenario 7: Water level monitoring in robot/tests/integration/test_water_level.py
+- [X] **T052** [P] Integration test Scenario 8: Low battery behavior in robot/tests/integration/test_low_battery.py
+- [X] **T053** [P] Integration test Scenario 9: WiFi disconnection in robot/tests/integration/test_wifi_disconnect.py
+- [X] **T054** [P] Integration test Scenario 10: Real-time map updates in frontend/tests/e2e/test_map_updates.spec.ts
 
 ---
 
@@ -108,20 +108,20 @@
 
 ### Backend - Data Models (TypeORM Entities)
 
-- [ ] **T055** [P] Robot entity model in backend/src/models/Robot.ts
-- [ ] **T056** [P] RobotState entity model in backend/src/models/RobotState.ts
-- [ ] **T057** [P] Map entity model in backend/src/models/Map.ts
-- [ ] **T058** [P] RestrictedZone entity model in backend/src/models/RestrictedZone.ts
-- [ ] **T059** [P] Session entity model in backend/src/models/Session.ts
-- [ ] **T060** [P] Log entity model in backend/src/models/Log.ts
+- [X] **T055** [P] Robot entity model in backend/src/models/Robot.ts
+- [X] **T056** [P] RobotState entity model in backend/src/models/RobotState.ts
+- [X] **T057** [P] Map entity model in backend/src/models/Map.ts
+- [X] **T058** [P] RestrictedZone entity model in backend/src/models/RestrictedZone.ts
+- [X] **T059** [P] Session entity model in backend/src/models/Session.ts
+- [X] **T060** [P] Log entity model in backend/src/models/Log.ts
 
 ### Backend - Services
 
-- [ ] **T061** [P] RobotService CRUD operations in backend/src/services/RobotService.ts
-- [ ] **T062** [P] MapService CRUD and map data operations in backend/src/services/MapService.ts
-- [ ] **T063** [P] SessionService session lifecycle management in backend/src/services/SessionService.ts
-- [ ] **T064** [P] ZoneService restricted zone management in backend/src/services/ZoneService.ts
-- [ ] **T065** [P] LogService log querying and clearing in backend/src/services/LogService.ts
+- [X] **T061** [P] RobotService CRUD operations in backend/src/services/RobotService.ts
+- [X] **T062** [P] MapService CRUD and map data operations in backend/src/services/MapService.ts
+- [X] **T063** [P] SessionService session lifecycle management in backend/src/services/SessionService.ts
+- [X] **T064** [P] ZoneService restricted zone management in backend/src/services/ZoneService.ts
+- [X] **T065** [P] LogService log querying and clearing in backend/src/services/LogService.ts
 
 ### Backend - API Routes
 
@@ -141,8 +141,8 @@
 
 ### Robot - Hardware Interfaces
 
-- [ ] **T075** [P] RPLIDAR S2L interface in robot/src/sensors/lidar.py (async scan acquisition, 10 Hz)
-- [ ] **T076** [P] MPU9250 IMU interface in robot/src/sensors/imu.py (I2C communication, complementary filter, 100 Hz)
+- [x] **T075** [P] RPLIDAR S2L interface in robot/src/sensors/lidar.py (async scan acquisition, 10 Hz)
+- [x] **T076** [P] MPU9250 IMU interface in robot/src/sensors/imu.py (I2C communication, complementary filter, 100 Hz)
 - [ ] **T077** [P] Encoder interface in robot/src/sensors/encoders.py (quadrature decoding, velocity calculation)
 - [ ] **T078** [P] Ultrasonic sensor interface in robot/src/sensors/ultrasonic.py (HC-SR04, floor drop detection)
 - [ ] **T079** [P] Water level sensor interface in robot/src/sensors/water_level.py (4-point sensor reading)

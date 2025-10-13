@@ -1,0 +1,22 @@
+[MASTER]
+ignore=venv
+extension-pkg-whitelist=
+load-plugins=
+
+[MESSAGES CONTROL]
+disable=
+    missing-module-docstring,
+    missing-class-docstring,
+    missing-function-docstring
+
+[FORMAT]
+max-line-length=100
+
+[TYPECHECK]
+generated-members=
+
+[REPORTS]
+output-format=colorized
+
+[BASIC]
+good-names=i,j,k,x,y,z,dx,dy,dz
