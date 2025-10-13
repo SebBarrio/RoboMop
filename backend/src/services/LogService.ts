@@ -76,10 +76,6 @@ export class LogService {
   }
 
   async clear(options: ClearLogsOptions = {}): Promise<number> {
-    if (!options.robotId && !options.before) {
-      throw new ValidationError("Clearing logs requires at least robotId or before timestamp");
-    }
-
     const qb = this.repository.createQueryBuilder().delete().from(Log);
 
     if (options.robotId) {

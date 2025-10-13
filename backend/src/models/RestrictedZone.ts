@@ -34,7 +34,7 @@ export class RestrictedZone {
   @JoinColumn({ name: "mapId" })
   map!: Map;
 
-  @Column({ length: 100, nullable: true })
+  @Column({ type: "varchar", length: 100, nullable: true })
   name!: string | null;
 
   @Column({ type: "simple-json" })
