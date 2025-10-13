@@ -142,7 +142,7 @@
 ### Robot - Hardware Interfaces
 
 - [x] **T075** [P] RPLIDAR S2L interface in robot/src/sensors/lidar.py (async scan acquisition, 10 Hz)
-- [ ] **T076** [P] MPU9250 IMU interface in robot/src/sensors/imu.py (I2C communication, complementary filter, 100 Hz)
+- [x] **T076** [P] MPU9250 IMU interface in robot/src/sensors/imu.py (I2C communication, complementary filter, 100 Hz)
 - [ ] **T077** [P] Encoder interface in robot/src/sensors/encoders.py (quadrature decoding, velocity calculation)
 - [ ] **T078** [P] Ultrasonic sensor interface in robot/src/sensors/ultrasonic.py (HC-SR04, floor drop detection)
 - [ ] **T079** [P] Water level sensor interface in robot/src/sensors/water_level.py (4-point sensor reading)
