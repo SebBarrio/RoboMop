@@ -66,21 +66,26 @@ class MPU9250SocketSender:
         """
         try:
             print(f"Initializing MPU9250 on I2C bus {self.i2c_bus} at address 0x{self.mpu_address:02x}...")
+            
+            # Initialize without magnetometer first (more reliable)
             self.mpu = MPU9250(
-                address_ak=AK8963_ADDRESS,
                 address_mpu_master=self.mpu_address,
                 address_mpu_slave=None,
                 bus=self.i2c_bus,
                 gfs=GFS_250,
-                afs=AFS_2G,
-                mfs=AK8963_BIT_16,
-                mode=AK8963_MODE_C100HZ
+                afs=AFS_2G
             )
             
-            # Configure the sensor
+            # Configure the sensor (this sets up accel and gyro)
             self.mpu.configure()
             
-            print("MPU9250 initialized successfully")
+            # Try to configure magnetometer separately (may fail, but that's OK)
+            try:
+                self.mpu.configureMagnetometer(mode=AK8963_MODE_C100HZ, mfs=AK8963_BIT_16)
+                print("MPU9250 initialized successfully (with magnetometer)")
+            except Exception:
+                print("MPU9250 initialized successfully (accel/gyro only, magnetometer unavailable)")
+            
             return True
             
         except OSError as e:
@@ -144,8 +149,12 @@ class MPU9250SocketSender:
             # Read gyroscope data (degrees/s)
             gyro = self.mpu.readGyroscopeMaster()
             
-            # Read magnetometer data (uT)
-            mag = self.mpu.readMagnetometerMaster()
+            # Read magnetometer data (uT) - may fail if not configured
+            mag = None
+            try:
+                mag = self.mpu.readMagnetometerMaster()
+            except Exception:
+                pass  # Magnetometer not available
             
             # Read temperature (°C)
             temp = self.mpu.readTemperatureMaster()
@@ -163,10 +172,10 @@ class MPU9250SocketSender:
                     'z': float(gyro[2])
                 },
                 'magnetometer': {
-                    'x': float(mag[0]),
-                    'y': float(mag[1]),
-                    'z': float(mag[2])
-                },
+                    'x': float(mag[0]) if mag else 0.0,
+                    'y': float(mag[1]) if mag else 0.0,
+                    'z': float(mag[2]) if mag else 0.0
+                } if mag else None,
                 'temperature': float(temp)
             }
             
