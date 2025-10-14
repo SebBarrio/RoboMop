@@ -7,7 +7,14 @@ import math
 import threading
 import time
 from dataclasses import dataclass
-from typing import AsyncIterator, Callable, Optional, Protocol
+from typing import AsyncIterator, Callable, Optional
+
+try:
+    from mpu9250_jmdev.registers import MPU9050
+    from mpu9250_jmdev.mpu_9250 import MPU9250 as MPU9250Driver
+except ImportError:
+    MPU9050 = None  # type: ignore
+    MPU9250Driver = None  # type: ignore
 
 
 GRAVITY = 9.80665
@@ -43,63 +50,9 @@ class ImuSample:
     timestamp_s: float
 
 
-class MPU9250RegisterIO(Protocol):
-    """Minimal protocol for MPU9250 register access."""
-
-    def write(self, register: int, data: bytes) -> None:  # pragma: no cover - protocol definition
-        ...
-
-    def read(self, register: int, length: int) -> bytes:  # pragma: no cover - protocol definition
-        ...
-
-    def write_mag(self, register: int, data: bytes) -> None:  # pragma: no cover - protocol definition
-        ...
-
-    def read_mag(self, register: int, length: int) -> bytes:  # pragma: no cover - protocol definition
-        ...
-
-
-class _I2CRegisterIO:
-    """Adapter around ``adafruit_bus_device.i2c_device.I2CDevice``."""
-
-    def __init__(
-        self,
-        i2c: object,
-        address: int,
-        magnetometer_address: int,
-        i2c_device_cls: Optional[type] = None,
-    ) -> None:
-        if i2c_device_cls is None:
-            from adafruit_bus_device.i2c_device import I2CDevice  # type: ignore
-
-            i2c_device_cls = I2CDevice
-        self._device = i2c_device_cls(i2c, address)
-        self._mag_device = i2c_device_cls(i2c, magnetometer_address)
-
-    def write(self, register: int, data: bytes) -> None:
-        payload = bytes([register]) + bytes(data)
-        with self._device as device:
-            device.write(payload)
-
-    def read(self, register: int, length: int) -> bytes:
-        buffer = bytearray(length)
-        with self._device as device:
-            device.write_then_readinto(bytes([register]), buffer)
-        return bytes(buffer)
-
-    def write_mag(self, register: int, data: bytes) -> None:
-        payload = bytes([register]) + bytes(data)
-        with self._mag_device as device:
-            device.write(payload)
-
-    def read_mag(self, register: int, length: int) -> bytes:
-        buffer = bytearray(length)
-        with self._mag_device as device:
-            device.write_then_readinto(bytes([register]), buffer)
-        return bytes(buffer)
-
-
 class _ComplementaryFilter:
+    """Complementary filter for sensor fusion."""
+
     def __init__(self, sample_rate_hz: float, alpha: float) -> None:
         if not 0.0 < alpha < 1.0:
             raise ValueError("alpha must be between 0 and 1")
@@ -151,58 +104,40 @@ class _ComplementaryFilter:
 
 
 class MPU9250:
-    """High-level IMU interface providing calibrated samples at 100 Hz."""
-
-    # Register map
-    SMPLRT_DIV = 0x19
-    CONFIG = 0x1A
-    GYRO_CONFIG = 0x1B
-    ACCEL_CONFIG = 0x1C
-    ACCEL_CONFIG2 = 0x1D
-    INT_PIN_CFG = 0x37
-    INT_ENABLE = 0x38
-    ACCEL_XOUT_H = 0x3B
-    TEMP_OUT_H = 0x41
-    GYRO_XOUT_H = 0x43
-    USER_CTRL = 0x6A
-    PWR_MGMT_1 = 0x6B
-    PWR_MGMT_2 = 0x6C
-
-    AK8963_ST1 = 0x02
-    AK8963_HXL = 0x03
-    AK8963_ST2 = 0x09
-    AK8963_CNTL1 = 0x0A
-    AK8963_ASAX = 0x10
-
-    DEFAULT_ADDRESS = 0x68
-    DEFAULT_MAG_ADDRESS = 0x0C
+    """High-level IMU interface providing calibrated samples using mpu9250-jmdev library."""
 
     def __init__(
         self,
         i2c: Optional[object] = None,
         *,
-        register_io: Optional[MPU9250RegisterIO] = None,
-        i2c_device_cls: Optional[type] = None,
+        bus: int = 1,
+        address: int = 0x68,
         sample_rate_hz: float = 100.0,
         filter_alpha: float = 0.98,
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
-        if register_io is None:
-            if i2c is None:
-                raise ValueError("Either register_io or i2c must be provided")
-            register_io = _I2CRegisterIO(i2c, self.DEFAULT_ADDRESS, self.DEFAULT_MAG_ADDRESS, i2c_device_cls)
+        if MPU9250Driver is None:
+            raise ImportError(
+                "mpu9250-jmdev library not found. Install with: pip install mpu9250-jmdev"
+            )
 
-        self._io = register_io
         self._sample_rate_hz = sample_rate_hz
         self._filter_alpha = filter_alpha
         self._sleep = sleep
 
-        self._accel_scale = GRAVITY / 8192.0  # ±4g full-scale
-        self._gyro_scale = (math.pi / 180.0) / 65.5  # ±500 °/s
-        self._mag_scale = 0.15  # µT per LSB in 16-bit mode
+        # Initialize the MPU9250 driver
+        self._driver = MPU9250Driver(
+            address_ak=address,
+            address_mpu_master=address,
+            address_mpu_slave=None,
+            bus=bus,
+            gfs=MPU9050.GFS_500,  # ±500 °/s
+            afs=MPU9050.AFS_4G,   # ±4g
+            mfs=MPU9050.MFS_16BITS,  # 16-bit magnetometer
+            mode=MPU9050.AK8963_MODE_C100HZ,  # 100 Hz continuous
+        )
 
         self._filter = _ComplementaryFilter(sample_rate_hz, filter_alpha)
-        self._mag_adjust = Vector3(1.0, 1.0, 1.0)
 
         self._initialized = False
         self._lock = threading.Lock()
@@ -220,24 +155,39 @@ class MPU9250:
         await self.stop()
 
     def initialize(self) -> None:
+        """Initialize the sensor."""
         if self._initialized:
             return
-        self._reset()
-        self._configure()
-        self._configure_magnetometer()
+        
+        # Configure the sensor
+        self._driver.configure()
+        
+        # Calibrate accelerometer and gyroscope
+        self._driver.calibrate()
+        
+        # Configure magnetometer
+        self._driver.configure_mag()
+        
+        # Calibrate magnetometer
+        self._driver.calibrateMag()
+        
         self._initialized = True
 
     async def start(self) -> None:
+        """Start async sampling."""
         if self._queue is not None:
             return
         self.initialize()
         self._loop = asyncio.get_running_loop()
         self._queue = asyncio.Queue(maxsize=512)
         self._stop_event.clear()
-        self._reader_thread = threading.Thread(target=self._reader_main, name="mpu9250-reader", daemon=True)
+        self._reader_thread = threading.Thread(
+            target=self._reader_main, name="mpu9250-reader", daemon=True
+        )
         self._reader_thread.start()
 
     async def stop(self) -> None:
+        """Stop async sampling."""
         if self._queue is None:
             return
         self._stop_event.set()
@@ -250,6 +200,7 @@ class MPU9250:
         self._reader_thread = None
 
     async def iter_samples(self) -> AsyncIterator[ImuSample]:
+        """Iterate over samples asynchronously."""
         if self._queue is None:
             raise RuntimeError("iter_samples() requires an active start()")
         while True:
@@ -259,32 +210,39 @@ class MPU9250:
             yield sample
 
     def read_sample(self) -> ImuSample:
+        """Read a single IMU sample with orientation."""
         self.initialize()
         with self._lock:
-            accel_raw, gyro_raw, temperature_c = self._read_accel_gyro()
-            magnetic_field = self._read_magnetometer()
+            # Read raw sensor data
+            accel = self._driver.readAccelerometerMaster()
+            gyro = self._driver.readGyroscopeMaster()
+            mag = self._driver.readMagnetometerMaster()
+            temp = self._driver.readTemperatureMaster()
 
+            # Convert to our data structures
             acceleration = Vector3(
-                accel_raw.x * self._accel_scale,
-                accel_raw.y * self._accel_scale,
-                accel_raw.z * self._accel_scale,
+                accel[0] * GRAVITY,  # Convert g to m/s²
+                accel[1] * GRAVITY,
+                accel[2] * GRAVITY,
             )
+            
             angular_velocity = Vector3(
-                gyro_raw.x * self._gyro_scale,
-                gyro_raw.y * self._gyro_scale,
-                gyro_raw.z * self._gyro_scale,
+                math.radians(gyro[0]),  # Convert deg/s to rad/s
+                math.radians(gyro[1]),
+                math.radians(gyro[2]),
             )
 
             magnetic_vector: Optional[Vector3]
-            if magnetic_field is not None:
+            if mag is not None and len(mag) == 3:
                 magnetic_vector = Vector3(
-                    magnetic_field.x * self._mag_scale * self._mag_adjust.x,
-                    magnetic_field.y * self._mag_scale * self._mag_adjust.y,
-                    magnetic_field.z * self._mag_scale * self._mag_adjust.z,
+                    mag[0],  # Already in µT
+                    mag[1],
+                    mag[2],
                 )
             else:
                 magnetic_vector = None
 
+            # Update complementary filter
             orientation = self._filter.update(acceleration, angular_velocity, magnetic_vector)
             timestamp = time.perf_counter()
 
@@ -292,79 +250,13 @@ class MPU9250:
             acceleration_m_s2=acceleration,
             angular_velocity_rad_s=angular_velocity,
             magnetic_field_uT=magnetic_vector,
-            temperature_c=temperature_c,
+            temperature_c=temp,
             orientation=orientation,
             timestamp_s=timestamp,
         )
 
-    def _reset(self) -> None:
-        self._io.write(self.PWR_MGMT_1, bytes([0x80]))
-        self._sleep(0.1)
-
-    def _configure(self) -> None:
-        self._io.write(self.PWR_MGMT_1, bytes([0x01]))
-        self._sleep(0.01)
-        self._io.write(self.PWR_MGMT_2, bytes([0x00]))
-        divider = max(0, min(255, int(max(4.0, 1000.0 / self._sample_rate_hz)) - 1))
-        self._io.write(self.SMPLRT_DIV, bytes([divider]))
-        self._io.write(self.CONFIG, bytes([0x03]))
-        self._io.write(self.GYRO_CONFIG, bytes([0x08]))  # ±500 °/s
-        self._io.write(self.ACCEL_CONFIG, bytes([0x08]))  # ±4 g
-        self._io.write(self.ACCEL_CONFIG2, bytes([0x03]))
-        self._io.write(self.USER_CTRL, bytes([0x00]))
-        self._io.write(self.INT_PIN_CFG, bytes([0x02]))  # BYPASS_EN to access AK8963 directly
-        self._io.write(self.INT_ENABLE, bytes([0x00]))
-        self._sleep(0.01)
-
-    def _configure_magnetometer(self) -> None:
-        try:
-            self._io.write_mag(self.AK8963_CNTL1, bytes([0x00]))
-            self._sleep(0.01)
-            self._io.write_mag(self.AK8963_CNTL1, bytes([0x0F]))  # Fuse ROM access
-            self._sleep(0.01)
-            asa = self._io.read_mag(self.AK8963_ASAX, 3)
-            self._mag_adjust = Vector3(
-                _asa_adjust(asa[0]),
-                _asa_adjust(asa[1]),
-                _asa_adjust(asa[2]),
-            )
-            self._io.write_mag(self.AK8963_CNTL1, bytes([0x00]))
-            self._sleep(0.01)
-        except OSError:
-            self._mag_adjust = Vector3(1.0, 1.0, 1.0)
-
-        self._io.write_mag(self.AK8963_CNTL1, bytes([0x16]))  # 16-bit, 100 Hz continuous
-        self._sleep(0.01)
-
-    def _read_accel_gyro(self) -> tuple[Vector3, Vector3, float]:
-        data = self._io.read(self.ACCEL_XOUT_H, 14)
-        ax = _int16_be(data[0], data[1])
-        ay = _int16_be(data[2], data[3])
-        az = _int16_be(data[4], data[5])
-        temp_raw = _int16_be(data[6], data[7])
-        gx = _int16_be(data[8], data[9])
-        gy = _int16_be(data[10], data[11])
-        gz = _int16_be(data[12], data[13])
-        temperature_c = (temp_raw / 333.87) + 21.0
-        return Vector3(ax, ay, az), Vector3(gx, gy, gz), temperature_c
-
-    def _read_magnetometer(self) -> Optional[Vector3]:
-        try:
-            status = self._io.read_mag(self.AK8963_ST1, 1)
-        except OSError:
-            return None
-        if not status or (status[0] & 0x01) == 0:
-            return None
-        data = self._io.read_mag(self.AK8963_HXL, 6)
-        status2 = self._io.read_mag(self.AK8963_ST2, 1)
-        if status2 and (status2[0] & 0x08):
-            return None
-        hx = _int16_le(data[0], data[1])
-        hy = _int16_le(data[2], data[3])
-        hz = _int16_le(data[4], data[5])
-        return Vector3(hx, hy, hz)
-
     def _reader_main(self) -> None:
+        """Background thread for continuous sampling."""
         assert self._queue is not None
         assert self._loop is not None
         interval = 1.0 / self._sample_rate_hz
@@ -386,26 +278,14 @@ class MPU9250:
                 next_deadline = time.perf_counter()
 
 
-def _asa_adjust(raw: int) -> float:
-    return ((raw - 128) / 256.0) + 1.0
-
-
-def _int16_be(msb: int, lsb: int) -> int:
-    value = (msb << 8) | lsb
-    return value - 0x10000 if value & 0x8000 else value
-
-
-def _int16_le(lsb: int, msb: int) -> int:
-    value = (msb << 8) | lsb
-    return value - 0x10000 if value & 0x8000 else value
-
-
 def _wrap_angle(angle: float) -> float:
+    """Wrap angle to [-π, π]."""
     wrapped = (angle + math.pi) % (2.0 * math.pi)
     return wrapped - math.pi
 
 
 def _compute_yaw(magnetic: Vector3, roll: float, pitch: float) -> float:
+    """Compute yaw from magnetometer reading compensated for tilt."""
     cos_roll = math.cos(roll)
     sin_roll = math.sin(roll)
     cos_pitch = math.cos(pitch)

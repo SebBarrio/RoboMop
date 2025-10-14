@@ -3,133 +3,170 @@
 from __future__ import annotations
 
 import math
-import struct
-from collections import deque
-from dataclasses import dataclass
+from unittest.mock import MagicMock, patch
 
-from src.sensors.imu import MPU9250
+from src.sensors.imu import MPU9250, Vector3
 
 
 G = 9.80665
 
 
-@dataclass
-class _MagFrame:
-    st1: int
-    data: bytes
-    st2: int
+class _FakeMPU9250Driver:
+    """Mock MPU9250 driver for testing."""
 
+    def __init__(self, **kwargs):
+        self.accel_data = [0.0, 0.0, 1.0]  # 1g on z-axis
+        self.gyro_data = [0.0, 0.0, 0.0]  # No rotation
+        self.mag_data = [40.0, 0.0, 0.0]  # µT
+        self.temp_data = 25.0  # Celsius
+        self.configured = False
+        self.calibrated = False
+        self.mag_configured = False
+        self.mag_calibrated = False
 
-class _FakeRegisterIO:
-    def __init__(self, accel_gyro_frames: list[bytes], mag_frames: list[_MagFrame]):
-        self._frames = deque(accel_gyro_frames)
-        self._mag_frames = deque(mag_frames)
-        self._pending_mag: _MagFrame | None = None
-        self.main_writes: list[tuple[int, bytes]] = []
-        self.mag_writes: list[tuple[int, bytes]] = []
+    def configure(self) -> None:
+        self.configured = True
 
-    def write(self, register: int, data: bytes) -> None:
-        self.main_writes.append((register, bytes(data)))
+    def calibrate(self) -> None:
+        self.calibrated = True
 
-    def read(self, register: int, length: int) -> bytes:
-        if register == MPU9250.ACCEL_XOUT_H and length == 14:
-            if not self._frames:
-                raise RuntimeError("No accel/gyro frames remaining")
-            return self._frames.popleft()
-        raise AssertionError(f"Unexpected read register 0x{register:02x}")
+    def configure_mag(self) -> None:
+        self.mag_configured = True
 
-    def write_mag(self, register: int, data: bytes) -> None:
-        self.mag_writes.append((register, bytes(data)))
+    def calibrateMag(self) -> None:
+        self.mag_calibrated = True
 
-    def read_mag(self, register: int, length: int) -> bytes:
-        if register == MPU9250.AK8963_ST1 and length == 1:
-            if not self._mag_frames:
-                return bytes([0])
-            self._pending_mag = self._mag_frames[0]
-            return bytes([self._pending_mag.st1])
-        if register == MPU9250.AK8963_HXL and length == 6:
-            if self._pending_mag is None:
-                return bytes([0] * length)
-            return self._pending_mag.data
-        if register == MPU9250.AK8963_ST2 and length == 1:
-            if self._pending_mag is None:
-                return bytes([0])
-            frame = self._mag_frames.popleft()
-            self._pending_mag = None
-            return bytes([frame.st2])
-        if register == MPU9250.AK8963_ASAX and length == 3:
-            # Factory sensitivity adjustment values default to 1.0 scaling.
-            return bytes([128, 128, 128])
-        raise AssertionError(f"Unexpected magnetometer read 0x{register:02x}")
+    def readAccelerometerMaster(self) -> list[float]:
+        return self.accel_data
 
+    def readGyroscopeMaster(self) -> list[float]:
+        return self.gyro_data
 
-def _frame(ax: int, ay: int, az: int, temp: int, gx: int, gy: int, gz: int) -> bytes:
-    return struct.pack(">hhhhhhh", ax, ay, az, temp, gx, gy, gz)
+    def readMagnetometerMaster(self) -> list[float] | None:
+        return self.mag_data
 
-
-def _mag_frame(hx: int, hy: int, hz: int, st1: int = 0x01, st2: int = 0x00) -> _MagFrame:
-    return _MagFrame(st1=st1, data=struct.pack("<hhh", hx, hy, hz), st2=st2)
+    def readTemperatureMaster(self) -> float:
+        return self.temp_data
 
 
 def test_read_sample_converts_raw_values() -> None:
-    accel_frame = _frame(0, 0, 8192, 1335, 0, 0, 0)
-    mag_frame = _mag_frame(400, 0, 0)
-    io = _FakeRegisterIO([accel_frame], [mag_frame])
-    imu = MPU9250(
-        register_io=io,
-        sample_rate_hz=100.0,
-        filter_alpha=0.98,
-        sleep=lambda _: None,
-    )
+    """Test that raw sensor values are correctly converted."""
+    with patch("src.sensors.imu.MPU9250Driver", _FakeMPU9250Driver):
+        imu = MPU9250(
+            bus=1,
+            sample_rate_hz=100.0,
+            filter_alpha=0.98,
+            sleep=lambda _: None,
+        )
 
-    sample = imu.read_sample()
+        sample = imu.read_sample()
 
-    assert math.isclose(sample.acceleration_m_s2.x, 0.0, abs_tol=1e-6)
-    assert math.isclose(sample.acceleration_m_s2.y, 0.0, abs_tol=1e-6)
-    assert math.isclose(sample.acceleration_m_s2.z, G, rel_tol=1e-3)
-    assert math.isclose(sample.angular_velocity_rad_s.x, 0.0, abs_tol=1e-6)
-    assert math.isclose(sample.angular_velocity_rad_s.y, 0.0, abs_tol=1e-6)
-    assert math.isclose(sample.angular_velocity_rad_s.z, 0.0, abs_tol=1e-6)
-    assert math.isclose(sample.temperature_c, 25.0, rel_tol=1e-3)
-    assert sample.magnetic_field_uT is not None
-    assert math.isclose(sample.magnetic_field_uT.x, 60.0, rel_tol=1e-3)
-    assert math.isclose(sample.magnetic_field_uT.y, 0.0, abs_tol=1e-6)
-    assert math.isclose(sample.magnetic_field_uT.z, 0.0, abs_tol=1e-6)
-    assert math.isclose(sample.orientation.roll, 0.0, abs_tol=1e-3)
-    assert math.isclose(sample.orientation.pitch, 0.0, abs_tol=1e-3)
-    assert math.isclose(sample.orientation.yaw, 0.0, abs_tol=1e-3)
+        # Check acceleration (0, 0, 1g) -> (0, 0, 9.8 m/s²)
+        assert math.isclose(sample.acceleration_m_s2.x, 0.0, abs_tol=1e-6)
+        assert math.isclose(sample.acceleration_m_s2.y, 0.0, abs_tol=1e-6)
+        assert math.isclose(sample.acceleration_m_s2.z, G, rel_tol=1e-3)
+
+        # Check angular velocity (all zero)
+        assert math.isclose(sample.angular_velocity_rad_s.x, 0.0, abs_tol=1e-6)
+        assert math.isclose(sample.angular_velocity_rad_s.y, 0.0, abs_tol=1e-6)
+        assert math.isclose(sample.angular_velocity_rad_s.z, 0.0, abs_tol=1e-6)
+
+        # Check temperature
+        assert math.isclose(sample.temperature_c, 25.0, rel_tol=1e-3)
+
+        # Check magnetic field
+        assert sample.magnetic_field_uT is not None
+        assert math.isclose(sample.magnetic_field_uT.x, 40.0, rel_tol=1e-3)
+        assert math.isclose(sample.magnetic_field_uT.y, 0.0, abs_tol=1e-6)
+        assert math.isclose(sample.magnetic_field_uT.z, 0.0, abs_tol=1e-6)
+
+        # Check orientation (level, no rotation)
+        assert math.isclose(sample.orientation.roll, 0.0, abs_tol=1e-3)
+        assert math.isclose(sample.orientation.pitch, 0.0, abs_tol=1e-3)
+        assert math.isclose(sample.orientation.yaw, 0.0, abs_tol=1e-3)
 
 
 def test_filter_integrates_gyro_between_samples() -> None:
-    initial = _frame(0, 0, 8192, 1335, 0, 0, 0)
-    gyro_step = _frame(0, 0, 8192, 1335, 0, 0, 3754)
-    mag = _mag_frame(400, 0, 0)
-    io = _FakeRegisterIO([initial, gyro_step], [mag, mag])
-    imu = MPU9250(
-        register_io=io,
-        sample_rate_hz=100.0,
-        filter_alpha=0.98,
-        sleep=lambda _: None,
-    )
+    """Test that the complementary filter integrates gyroscope data."""
+    driver = _FakeMPU9250Driver()
+    
+    with patch("src.sensors.imu.MPU9250Driver", return_value=driver):
+        imu = MPU9250(
+            bus=1,
+            sample_rate_hz=100.0,
+            filter_alpha=0.98,
+            sleep=lambda _: None,
+        )
 
-    first = imu.read_sample()
-    assert math.isclose(first.orientation.yaw, 0.0, abs_tol=1e-3)
+        # First sample: no rotation
+        first = imu.read_sample()
+        assert math.isclose(first.orientation.yaw, 0.0, abs_tol=1e-3)
 
-    second = imu.read_sample()
-    expected_yaw = 0.98 * (1.0 * (1.0 / 100.0))
-    assert math.isclose(second.orientation.yaw, expected_yaw, rel_tol=1e-2)
+        # Second sample: constant yaw rate of 57.3 deg/s (1 rad/s)
+        driver.gyro_data = [0.0, 0.0, 57.3]
+        second = imu.read_sample()
+        
+        # At 100 Hz, dt = 0.01s, so yaw should be approximately 0.98 * 1.0 * 0.01 = 0.0098 rad
+        expected_yaw = 0.98 * (1.0 * (1.0 / 100.0))
+        assert math.isclose(second.orientation.yaw, expected_yaw, rel_tol=1e-2)
 
 
 def test_magnetic_field_optional_when_not_ready() -> None:
-    frame = _frame(0, 0, 8192, 1335, 0, 0, 0)
-    no_mag = _MagFrame(st1=0x00, data=struct.pack("<hhh", 0, 0, 0), st2=0x00)
-    io = _FakeRegisterIO([frame], [no_mag])
-    imu = MPU9250(
-        register_io=io,
-        sample_rate_hz=100.0,
-        filter_alpha=0.98,
-        sleep=lambda _: None,
-    )
+    """Test that magnetic field can be None when magnetometer is not ready."""
+    driver = _FakeMPU9250Driver()
+    driver.mag_data = None  # Magnetometer not ready
+    
+    with patch("src.sensors.imu.MPU9250Driver", return_value=driver):
+        imu = MPU9250(
+            bus=1,
+            sample_rate_hz=100.0,
+            filter_alpha=0.98,
+            sleep=lambda _: None,
+        )
 
-    sample = imu.read_sample()
-    assert sample.magnetic_field_uT is None
+        sample = imu.read_sample()
+        assert sample.magnetic_field_uT is None
+
+
+def test_initialization_configures_and_calibrates() -> None:
+    """Test that initialization properly configures and calibrates the sensor."""
+    driver = _FakeMPU9250Driver()
+    
+    with patch("src.sensors.imu.MPU9250Driver", return_value=driver):
+        imu = MPU9250(
+            bus=1,
+            sample_rate_hz=100.0,
+            filter_alpha=0.98,
+            sleep=lambda _: None,
+        )
+
+        # Initialize should trigger configuration and calibration
+        imu.initialize()
+        
+        assert driver.configured
+        assert driver.calibrated
+        assert driver.mag_configured
+        assert driver.mag_calibrated
+
+
+def test_complementary_filter_alpha_validation() -> None:
+    """Test that filter alpha is validated."""
+    from src.sensors.imu import _ComplementaryFilter
+    import pytest
+
+    # Alpha must be between 0 and 1
+    with pytest.raises(ValueError, match="alpha must be between 0 and 1"):
+        _ComplementaryFilter(100.0, 0.0)
+    
+    with pytest.raises(ValueError, match="alpha must be between 0 and 1"):
+        _ComplementaryFilter(100.0, 1.0)
+    
+    with pytest.raises(ValueError, match="alpha must be between 0 and 1"):
+        _ComplementaryFilter(100.0, -0.5)
+    
+    with pytest.raises(ValueError, match="alpha must be between 0 and 1"):
+        _ComplementaryFilter(100.0, 1.5)
+    
+    # Valid alpha should work
+    filter = _ComplementaryFilter(100.0, 0.98)
+    assert filter is not None

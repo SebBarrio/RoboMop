@@ -23,9 +23,6 @@ SRC_ROOT = ROBOT_ROOT / "src"
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
-import board  # type: ignore
-import busio  # type: ignore
-
 from sensors.imu import ImuSample, MPU9250
 
 
@@ -119,8 +116,7 @@ def send_json(sock: socket.socket, message: Dict[str, Any]) -> None:
 
 
 def initialize_imu(sample_rate_hz: float, alpha: float) -> MPU9250:
-    i2c = busio.I2C(board.SCL, board.SDA)
-    return MPU9250(i2c=i2c, sample_rate_hz=sample_rate_hz, filter_alpha=alpha)
+    return MPU9250(bus=1, sample_rate_hz=sample_rate_hz, filter_alpha=alpha)
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
