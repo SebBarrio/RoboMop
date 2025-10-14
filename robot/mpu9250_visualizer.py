@@ -397,7 +397,8 @@ class IMUVisualizer:
             self.fig,
             self.update_plot,
             interval=20,  # 20ms = 50Hz
-            blit=False
+            blit=False,
+            cache_frame_data=False  # Disable frame caching to avoid unbounded memory
         )
         
         plt.show()

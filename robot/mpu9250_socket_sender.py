@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
 """
 MPU9250 Sensor Data Socket Sender
-Reads accelerometer, gyroscope, and temperature data from MPU9250
+Reads accelerometer, gyroscope, magnetometer, and temperature data from MPU9250
 and sends it over a TCP socket connection.
+
+Features:
+    - Automatic gyroscope calibration to reduce drift
+    - Magnetometer support (AK8963)
+    - Direct I2C communication using smbus2
 
 Requirements:
     pip install smbus2
@@ -16,7 +21,7 @@ import json
 import time
 import argparse
 import sys
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 try:
     from smbus2 import SMBus
@@ -35,12 +40,22 @@ class MPU9250SocketSender:
     GYRO_XOUT_H = 0x43
     TEMP_OUT_H = 0x41
     WHO_AM_I = 0x75
+    INT_PIN_CFG = 0x37
+    USER_CTRL = 0x6A
+    
+    # AK8963 (Magnetometer) Registers
+    AK8963_ADDRESS = 0x0C
+    AK8963_WHO_AM_I = 0x00
+    AK8963_CNTL1 = 0x0A
+    AK8963_ST1 = 0x02
+    AK8963_XOUT_L = 0x03
     
     # Scale factors
     ACCEL_SCALE = 16384.0  # for ±2g
     GYRO_SCALE = 131.0     # for ±250°/s
     TEMP_OFFSET = 21.0
     TEMP_SCALE = 333.87
+    MAG_SCALE = 4912.0 / 32760.0  # μT (for 16-bit mode)
 
     def __init__(self, host: str = '0.0.0.0', port: int = 9250, i2c_bus: int = 1, 
                  mpu_address: int = 0x68):
@@ -61,6 +76,7 @@ class MPU9250SocketSender:
         self.server_socket = None
         self.client_socket = None
         self.running = False
+        self.magnetometer_enabled = False
         
         # Gyroscope calibration offsets (to reduce drift)
         self.gyro_offset_x = 0.0
@@ -85,15 +101,19 @@ class MPU9250SocketSender:
             if who_am_i not in [0x71, 0x73]:  # MPU9250/MPU9255
                 print(f"Warning: Unexpected WHO_AM_I value: 0x{who_am_i:02x} (expected 0x71 or 0x73)")
             
-            # Wake up sensor (clear sleep bit)
+            # Wake up MPU9250 (clear sleep bit)
             self.bus.write_byte_data(self.mpu_address, self.PWR_MGMT_1, 0x00)
             time.sleep(0.1)  # Wait for sensor to wake up
             
-            # Calibrate gyroscope (reduce drift)
+            # Try to initialize magnetometer
+            self._initialize_magnetometer()
+            
+            # Calibrate gyroscope to reduce drift
             print("Calibrating gyroscope... Keep sensor still!")
             self._calibrate_gyroscope()
             
-            print(f"MPU9250 initialized successfully (WHO_AM_I: 0x{who_am_i:02x})")
+            mag_status = "with magnetometer" if self.magnetometer_enabled else "accel/gyro only"
+            print(f"MPU9250 initialized successfully ({mag_status})")
             return True
             
         except OSError as e:
@@ -106,6 +126,29 @@ class MPU9250SocketSender:
         except Exception as e:
             print(f"Error initializing MPU9250: {e}")
             return False
+    
+    def _initialize_magnetometer(self):
+        """Initialize the AK8963 magnetometer."""
+        try:
+            # Enable I2C bypass to access magnetometer directly
+            self.bus.write_byte_data(self.mpu_address, self.INT_PIN_CFG, 0x02)
+            time.sleep(0.01)
+            
+            # Check magnetometer WHO_AM_I
+            mag_id = self.bus.read_byte_data(self.AK8963_ADDRESS, self.AK8963_WHO_AM_I)
+            if mag_id != 0x48:
+                print(f"Warning: Magnetometer not found (WHO_AM_I: 0x{mag_id:02x})")
+                return
+            
+            # Set magnetometer to continuous measurement mode (100Hz, 16-bit)
+            self.bus.write_byte_data(self.AK8963_ADDRESS, self.AK8963_CNTL1, 0x16)
+            time.sleep(0.01)
+            
+            self.magnetometer_enabled = True
+            
+        except Exception as e:
+            print(f"Magnetometer initialization failed: {e}")
+            self.magnetometer_enabled = False
     
     def _calibrate_gyroscope(self, samples: int = 100):
         """
@@ -213,6 +256,11 @@ class MPU9250SocketSender:
             
             temp = (temp_raw / self.TEMP_SCALE) + self.TEMP_OFFSET  # °C
             
+            # Read magnetometer if available
+            mag_data = None
+            if self.magnetometer_enabled:
+                mag_data = self._read_magnetometer()
+            
             data = {
                 'timestamp': time.time(),
                 'accelerometer': {
@@ -225,7 +273,7 @@ class MPU9250SocketSender:
                     'y': float(gyro_y),
                     'z': float(gyro_z)
                 },
-                'magnetometer': None,  # Not reading magnetometer
+                'magnetometer': mag_data,
                 'temperature': float(temp)
             }
             
@@ -251,6 +299,45 @@ class MPU9250SocketSender:
         if value >= 0x8000:
             value = -((65535 - value) + 1)
         return value
+    
+    def _read_magnetometer(self) -> Optional[Dict[str, float]]:
+        """
+        Read magnetometer data from AK8963.
+        
+        Returns:
+            Dictionary with x, y, z magnetic field values in μT, or None if read fails
+        """
+        try:
+            # Check if data is ready
+            status = self.bus.read_byte_data(self.AK8963_ADDRESS, self.AK8963_ST1)
+            if not (status & 0x01):  # Data not ready
+                return None
+            
+            # Read 7 bytes: mag x, y, z (6 bytes) + status2 (1 byte)
+            mag_bytes = self.bus.read_i2c_block_data(self.AK8963_ADDRESS, self.AK8963_XOUT_L, 7)
+            
+            # Check overflow bit in status2
+            if mag_bytes[6] & 0x08:  # Magnetic sensor overflow
+                return None
+            
+            # Parse magnetometer data (note: low byte first for AK8963!)
+            mag_x_raw = self._bytes_to_int16(mag_bytes[1], mag_bytes[0])
+            mag_y_raw = self._bytes_to_int16(mag_bytes[3], mag_bytes[2])
+            mag_z_raw = self._bytes_to_int16(mag_bytes[5], mag_bytes[4])
+            
+            # Convert to μT
+            mag_x = mag_x_raw * self.MAG_SCALE
+            mag_y = mag_y_raw * self.MAG_SCALE
+            mag_z = mag_z_raw * self.MAG_SCALE
+            
+            return {
+                'x': float(mag_x),
+                'y': float(mag_y),
+                'z': float(mag_z)
+            }
+            
+        except Exception:
+            return None
 
     def send_data(self, data: Dict[str, Any]) -> bool:
         """
