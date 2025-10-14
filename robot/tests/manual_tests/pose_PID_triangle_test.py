@@ -71,7 +71,14 @@ CONTROL_INTERVAL_S: float = 0.02  # 50 Hz
 
 # Motor polarity
 # Right side wiring is reversed; apply -1 polarity to right commands only.
-RIGHT_SIDE_POLARITY: float = 1.0
+RIGHT_SIDE_POLARITY: float = -1.0
+
+# Encoder speed filtering (tunable)
+# First-order low-pass time constant and a small accumulation window to
+# reduce quantization noise at low speeds.
+SPEED_LP_TAU_S_DEFAULT: float = 0.12
+SPEED_WINDOW_MIN_S: float = 0.06
+SPEED_WINDOW_MIN_COUNTS: int = 2
 
 # Outer-loop defaults
 POS_KP_DEFAULT: float = 1.2
@@ -94,6 +101,12 @@ WS_KD_DEFAULT: float = 0.01
 SIDE_LENGTH_M_DEFAULT: float = 1.0
 POS_TOL_M: float = 0.02
 ANG_TOL_RAD: float = math.radians(2.0)
+
+# Heading gating: do not move forward until roughly aligned
+HEADING_MOVE_GATE_DEG_DEFAULT: float = 6.0
+
+# Rotation settle/hold time (stay within tolerance for this time)
+ROTATE_HOLD_TIME_S_DEFAULT: float = 0.35
 
 
 # ------------------------------ Utility helpers -------------------------------
@@ -239,13 +252,16 @@ class SideEncoderReader:
 class DifferentialOdometry:
     """Differential-drive odometry using encoder counts."""
 
-    def __init__(self, encoder_reader: SideEncoderReader) -> None:
+    def __init__(self, encoder_reader: SideEncoderReader, speed_lp_tau_s: float = SPEED_LP_TAU_S_DEFAULT) -> None:
         self._enc = encoder_reader
         self.x = 0.0
         self.y = 0.0
         self.psi = 0.0
         self._prev_counts = self._enc.read_counts()
         self._r = WHEEL_DIAMETER_M / 2.0
+        self._omega_filt_l = 0.0
+        self._omega_filt_r = 0.0
+        self._speed_tau = float(max(1e-3, speed_lp_tau_s))
 
     def update(self, dt: float) -> Tuple[float, float, float, float, float]:
         """Update pose. Returns (x, y, psi, omega_l, omega_r)."""
@@ -275,10 +291,13 @@ class DifferentialOdometry:
         self.y += ds * math.sin(self.psi + 0.5 * dpsi)
         self.psi = wrap_angle(self.psi + dpsi)
 
-        # Measured wheel speeds
-        omega_l = dtheta_l / dt
-        omega_r = dtheta_r / dt
-        return self.x, self.y, self.psi, omega_l, omega_r
+        # Measured wheel speeds (low-pass filtered)
+        omega_l_raw = dtheta_l / dt
+        omega_r_raw = dtheta_r / dt
+        alpha = dt / (self._speed_tau + dt)
+        self._omega_filt_l = self._omega_filt_l + alpha * (omega_l_raw - self._omega_filt_l)
+        self._omega_filt_r = self._omega_filt_r + alpha * (omega_r_raw - self._omega_filt_r)
+        return self.x, self.y, self.psi, self._omega_filt_l, self._omega_filt_r
 
 
 class PoseController:
@@ -368,7 +387,7 @@ def run_triangle(
     pwm.frequency = PWM_FREQUENCY
     controller = MotorController(pwm, build_motor_configs())
     encoders = SideEncoderReader(ENCODER_CHANNELS, ENCODER_PULSES_PER_REV)
-    odom = DifferentialOdometry(encoders)
+    odom = DifferentialOdometry(encoders, speed_lp_tau_s=SPEED_LP_TAU_S_DEFAULT)
 
     # Controllers
     pos_pid = PIDController(pos_kp, pos_ki, pos_kd, integrator_limit=2.0)
@@ -411,9 +430,13 @@ def run_triangle(
                 x, y, psi, omega_l_meas, omega_r_meas = odom.update(dt)
 
                 # Outer loop
-                v_cmd, w_cmd, dist, _ = pose_ctrl.compute_to_waypoint(
+                v_cmd, w_cmd, dist, heading_err = pose_ctrl.compute_to_waypoint(
                     x, y, psi, goal_x, goal_y, dt
                 )
+
+                # Heading gating: suppress forward motion until roughly aligned
+                if abs(math.degrees(heading_err)) > HEADING_MOVE_GATE_DEG_DEFAULT:
+                    v_cmd = 0.0
 
                 # Map to wheel angular speeds
                 v_l = v_cmd - (w_cmd * (TRACK_WIDTH_M / 2.0))
@@ -456,9 +479,10 @@ def run_triangle(
                 # Maintain control cadence
                 time.sleep(max(0.0, CONTROL_INTERVAL_S - (time.monotonic() - now)))
 
-            # Rotate +120 degrees relative
+            # Rotate +120 degrees relative with hold-time inside tolerance
             rotate_start = time.monotonic()
             target_psi = wrap_angle(odom.psi + (2.0 * math.pi / 3.0))
+            hold_timer_start = None
             while True:
                 now = time.monotonic()
                 dt = now - last_ts
@@ -498,10 +522,15 @@ def run_triangle(
                 v_left_volts.append(v_left)
                 v_right_volts.append(v_right)
 
-                # Check completion or timeout
+                # Check completion or timeout (need to hold for some time)
                 ang_err = abs(wrap_angle(target_psi - psi))
                 if ang_err <= ANG_TOL_RAD:
-                    break
+                    if hold_timer_start is None:
+                        hold_timer_start = now
+                    if (now - hold_timer_start) >= ROTATE_HOLD_TIME_S_DEFAULT:
+                        break
+                else:
+                    hold_timer_start = None
                 if (now - rotate_start) > 20.0:
                     print("Warning: rotation step timeout; proceeding to next step")
                     break
@@ -554,17 +583,23 @@ def run_triangle(
 
         # Heading and wheel speeds
         t_arr = np.array(times)
-        plt.figure(figsize=(10, 8))
+        plt.figure(figsize=(10, 10))
         ax1 = plt.subplot(2, 1, 1)
         ax1.set_title("Heading vs Time")
         ax1.plot(t_arr, psis, label="psi (rad)")
+        # Draw 120° headings to visualize target changes
+        if len(psis) > 0:
+            psi0 = psis[0]
+            for k in range(1, 4):
+                line = wrap_angle(psi0 + k * (2.0 * math.pi / 3.0))
+                ax1.hlines(line, t_arr[0], t_arr[-1], colors="gray", linestyles=":", label=None)
         ax1.set_xlabel("time (s)")
         ax1.set_ylabel("psi (rad)")
         ax1.grid(True)
         ax1.legend()
 
         ax2 = plt.subplot(2, 1, 2)
-        ax2.set_title("Wheel Speeds")
+        ax2.set_title("Wheel Speeds (filtered)")
         ax2.plot(t_arr, omega_l_des_log, "k--", label="omega_L des")
         ax2.plot(t_arr, omega_r_des_log, "k:", label="omega_R des")
         ax2.plot(t_arr, omega_l_meas_log, label="omega_L meas")
@@ -599,6 +634,25 @@ def main() -> None:
     parser.add_argument("--ws-ki", type=float, default=WS_KI_DEFAULT)
     parser.add_argument("--ws-kd", type=float, default=WS_KD_DEFAULT)
 
+    parser.add_argument(
+        "--speed-lp-tau",
+        type=float,
+        default=SPEED_LP_TAU_S_DEFAULT,
+        help="Low-pass filter time constant for wheel speed (s)",
+    )
+    parser.add_argument(
+        "--heading-gate",
+        type=float,
+        default=HEADING_MOVE_GATE_DEG_DEFAULT,
+        help="Do not move forward until |heading error| < this (deg)",
+    )
+    parser.add_argument(
+        "--rotate-hold",
+        type=float,
+        default=ROTATE_HOLD_TIME_S_DEFAULT,
+        help="Hold time within angle tolerance during rotation (s)",
+    )
+
     args = parser.parse_args()
 
     print("=" * 60)
@@ -615,6 +669,14 @@ def main() -> None:
     )
     print(f"Track width: {TRACK_WIDTH_M:.3f} m, Wheel diameter: {WHEEL_DIAMETER_M:.4f} m")
     print("=" * 60 + "\n")
+
+    # Apply runtime tuning knobs
+    global SPEED_LP_TAU_S_DEFAULT
+    global HEADING_MOVE_GATE_DEG_DEFAULT
+    global ROTATE_HOLD_TIME_S_DEFAULT
+    SPEED_LP_TAU_S_DEFAULT = max(0.01, float(args.speed_lp_tau))
+    HEADING_MOVE_GATE_DEG_DEFAULT = float(args.heading_gate)
+    ROTATE_HOLD_TIME_S_DEFAULT = max(0.0, float(args.rotate_hold))
 
     run_triangle(
         side_length_m=args.side_length,
