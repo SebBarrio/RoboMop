@@ -37,7 +37,8 @@ except ImportError:
 class MPU9250SocketSender:
     """Reads MPU9250 data and sends it over TCP socket."""
 
-    def __init__(self, host: str = '0.0.0.0', port: int = 9250, i2c_bus: int = 1):
+    def __init__(self, host: str = '0.0.0.0', port: int = 9250, i2c_bus: int = 1, 
+                 mpu_address: int = 0x68):
         """
         Initialize the MPU9250 sensor and socket server.
 
@@ -45,10 +46,12 @@ class MPU9250SocketSender:
             host: Host address to bind socket server (0.0.0.0 for all interfaces)
             port: Port number for socket server
             i2c_bus: I2C bus number (typically 1 on Raspberry Pi)
+            mpu_address: I2C address of MPU9250 (0x68 or 0x69)
         """
         self.host = host
         self.port = port
         self.i2c_bus = i2c_bus
+        self.mpu_address = mpu_address
         self.mpu = None
         self.server_socket = None
         self.client_socket = None
@@ -62,10 +65,10 @@ class MPU9250SocketSender:
             True if successful, False otherwise
         """
         try:
-            print(f"Initializing MPU9250 on I2C bus {self.i2c_bus}...")
+            print(f"Initializing MPU9250 on I2C bus {self.i2c_bus} at address 0x{self.mpu_address:02x}...")
             self.mpu = MPU9250(
                 address_ak=AK8963_ADDRESS,
-                address_mpu_master=MPU9050_ADDRESS_68,
+                address_mpu_master=self.mpu_address,
                 address_mpu_slave=None,
                 bus=self.i2c_bus,
                 gfs=GFS_250,
@@ -79,6 +82,13 @@ class MPU9250SocketSender:
             
             print("MPU9250 initialized successfully")
             return True
+            
+        except OSError as e:
+            if e.errno == 121:
+                print(f"Error: I2C Remote I/O error (errno 121) - Device not responding")
+            else:
+                print(f"Error: I/O error - {e}")
+            return False
             
         except Exception as e:
             print(f"Error initializing MPU9250: {e}")
@@ -280,13 +290,20 @@ def main():
         default=1,
         help='I2C bus number (default: 1)'
     )
+    parser.add_argument(
+        '--address',
+        type=lambda x: int(x, 0),  # Accepts hex (0x68) or decimal (104)
+        default=0x68,
+        help='I2C address of MPU9250: 0x68 or 0x69 (default: 0x68)'
+    )
 
     args = parser.parse_args()
 
     sender = MPU9250SocketSender(
         host=args.host,
         port=args.port,
-        i2c_bus=args.i2c_bus
+        i2c_bus=args.i2c_bus,
+        mpu_address=args.address
     )
     
     sender.run(rate_hz=args.rate)
