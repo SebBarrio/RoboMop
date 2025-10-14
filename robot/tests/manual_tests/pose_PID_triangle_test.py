@@ -71,7 +71,7 @@ CONTROL_INTERVAL_S: float = 0.02  # 50 Hz
 
 # Motor polarity
 # Right side wiring is reversed; apply -1 polarity to right commands only.
-RIGHT_SIDE_POLARITY: float = -1.0
+RIGHT_SIDE_POLARITY: float = 1.0
 
 # Outer-loop defaults
 POS_KP_DEFAULT: float = 1.2
