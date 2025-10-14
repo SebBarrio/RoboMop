@@ -18,23 +18,19 @@ import argparse
 import sys
 from typing import Dict, Any
 
-# Debug: Show Python version and path
-print(f"Python version: {sys.version}")
-print(f"Python executable: {sys.executable}")
-print(f"Attempting to import mpu9250-jmdev...")
-
 try:
-    from mpu9250_jmdev.registers import MPU9250
-    from mpu9250_jmdev.mpu_9250 import MPU9250 as MPU9250_Driver
-    print("Successfully imported mpu9250-jmdev")
-except ImportError as e:
-    print(f"\nImport Error: {e}")
-    print(f"\nTroubleshooting:")
-    print(f"1. Ensure you're in the virtual environment")
-    print(f"2. Try: source .venv/bin/activate")
-    print(f"3. Try running with: python mpu9250_socket_sender.py (not python3)")
-    print(f"4. Verify installation: pip list | grep mpu9250")
-    print(f"5. Try reinstalling: pip install --force-reinstall mpu9250-jmdev smbus2")
+    from mpu9250_jmdev.mpu_9250 import MPU9250
+    from mpu9250_jmdev.registers import (
+        AK8963_ADDRESS, 
+        MPU9050_ADDRESS_68,
+        GFS_250,
+        AFS_2G,
+        AK8963_BIT_16,
+        AK8963_MODE_C100HZ
+    )
+except ImportError:
+    print("Error: mpu9250-jmdev library not found.")
+    print("Install with: pip install mpu9250-jmdev smbus2")
     sys.exit(1)
 
 
@@ -67,15 +63,15 @@ class MPU9250SocketSender:
         """
         try:
             print(f"Initializing MPU9250 on I2C bus {self.i2c_bus}...")
-            self.mpu = MPU9250_Driver(
-                address_ak=MPU9250.AK8963_ADDRESS,
-                address_mpu_master=MPU9250.MPU9050_ADDRESS_68,
+            self.mpu = MPU9250(
+                address_ak=AK8963_ADDRESS,
+                address_mpu_master=MPU9050_ADDRESS_68,
                 address_mpu_slave=None,
                 bus=self.i2c_bus,
-                gfs=MPU9250.GFS_250,
-                afs=MPU9250.AFS_2G,
-                mfs=MPU9250.AK8963_BIT_16,
-                mode=MPU9250.AK8963_MODE_C100HZ
+                gfs=GFS_250,
+                afs=AFS_2G,
+                mfs=AK8963_BIT_16,
+                mode=AK8963_MODE_C100HZ
             )
             
             # Configure the sensor
