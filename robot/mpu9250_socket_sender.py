@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
 MPU9250 Sensor Data Socket Sender
-Reads accelerometer, gyroscope, and magnetometer data from MPU9250
+Reads accelerometer, gyroscope, and temperature data from MPU9250
 and sends it over a TCP socket connection.
 
 Requirements:
-    pip install mpu9250-jmdev smbus2
+    pip install smbus2
 
 Usage:
-    python mpu9250_socket_sender.py [--host HOST] [--port PORT]
+    python mpu9250_socket_sender.py [--host HOST] [--port PORT] [--rate HZ]
 """
 
 import socket
@@ -19,23 +19,28 @@ import sys
 from typing import Dict, Any
 
 try:
-    from mpu9250_jmdev.mpu_9250 import MPU9250
-    from mpu9250_jmdev.registers import (
-        AK8963_ADDRESS, 
-        MPU9050_ADDRESS_68,
-        GFS_250,
-        AFS_2G,
-        AK8963_BIT_16,
-        AK8963_MODE_C100HZ
-    )
+    from smbus2 import SMBus
 except ImportError:
-    print("Error: mpu9250-jmdev library not found.")
-    print("Install with: pip install mpu9250-jmdev smbus2")
+    print("Error: smbus2 library not found.")
+    print("Install with: pip install smbus2")
     sys.exit(1)
 
 
 class MPU9250SocketSender:
     """Reads MPU9250 data and sends it over TCP socket."""
+    
+    # MPU9250 Registers
+    PWR_MGMT_1 = 0x6B
+    ACCEL_XOUT_H = 0x3B
+    GYRO_XOUT_H = 0x43
+    TEMP_OUT_H = 0x41
+    WHO_AM_I = 0x75
+    
+    # Scale factors
+    ACCEL_SCALE = 16384.0  # for ±2g
+    GYRO_SCALE = 131.0     # for ±250°/s
+    TEMP_OFFSET = 21.0
+    TEMP_SCALE = 333.87
 
     def __init__(self, host: str = '0.0.0.0', port: int = 9250, i2c_bus: int = 1, 
                  mpu_address: int = 0x68):
@@ -52,7 +57,7 @@ class MPU9250SocketSender:
         self.port = port
         self.i2c_bus = i2c_bus
         self.mpu_address = mpu_address
-        self.mpu = None
+        self.bus = None
         self.server_socket = None
         self.client_socket = None
         self.running = False
@@ -67,25 +72,19 @@ class MPU9250SocketSender:
         try:
             print(f"Initializing MPU9250 on I2C bus {self.i2c_bus} at address 0x{self.mpu_address:02x}...")
             
-            # Initialize without magnetometer first (more reliable)
-            self.mpu = MPU9250(
-                address_mpu_master=self.mpu_address,
-                address_mpu_slave=None,
-                bus=self.i2c_bus,
-                gfs=GFS_250,
-                afs=AFS_2G
-            )
+            # Open I2C bus
+            self.bus = SMBus(self.i2c_bus)
             
-            # Configure the sensor (this sets up accel and gyro)
-            self.mpu.configure()
+            # Check WHO_AM_I register
+            who_am_i = self.bus.read_byte_data(self.mpu_address, self.WHO_AM_I)
+            if who_am_i not in [0x71, 0x73]:  # MPU9250/MPU9255
+                print(f"Warning: Unexpected WHO_AM_I value: 0x{who_am_i:02x} (expected 0x71 or 0x73)")
             
-            # Try to configure magnetometer separately (may fail, but that's OK)
-            try:
-                self.mpu.configureMagnetometer(mode=AK8963_MODE_C100HZ, mfs=AK8963_BIT_16)
-                print("MPU9250 initialized successfully (with magnetometer)")
-            except Exception:
-                print("MPU9250 initialized successfully (accel/gyro only, magnetometer unavailable)")
+            # Wake up MPU9250 (clear sleep bit)
+            self.bus.write_byte_data(self.mpu_address, self.PWR_MGMT_1, 0x00)
+            time.sleep(0.1)  # Wait for sensor to wake up
             
+            print(f"MPU9250 initialized successfully (WHO_AM_I: 0x{who_am_i:02x})")
             return True
             
         except OSError as e:
@@ -143,39 +142,46 @@ class MPU9250SocketSender:
             Dictionary containing sensor data
         """
         try:
-            # Read accelerometer data (m/s^2)
-            accel = self.mpu.readAccelerometerMaster()
+            # Read all sensor data in one burst (14 bytes: accel, temp, gyro)
+            data_bytes = self.bus.read_i2c_block_data(self.mpu_address, self.ACCEL_XOUT_H, 14)
             
-            # Read gyroscope data (degrees/s)
-            gyro = self.mpu.readGyroscopeMaster()
+            # Parse accelerometer data (registers 0-5)
+            accel_x_raw = self._bytes_to_int16(data_bytes[0], data_bytes[1])
+            accel_y_raw = self._bytes_to_int16(data_bytes[2], data_bytes[3])
+            accel_z_raw = self._bytes_to_int16(data_bytes[4], data_bytes[5])
             
-            # Read magnetometer data (uT) - may fail if not configured
-            mag = None
-            try:
-                mag = self.mpu.readMagnetometerMaster()
-            except Exception:
-                pass  # Magnetometer not available
+            # Parse temperature data (registers 6-7)
+            temp_raw = self._bytes_to_int16(data_bytes[6], data_bytes[7])
             
-            # Read temperature (°C)
-            temp = self.mpu.readTemperatureMaster()
+            # Parse gyroscope data (registers 8-13)
+            gyro_x_raw = self._bytes_to_int16(data_bytes[8], data_bytes[9])
+            gyro_y_raw = self._bytes_to_int16(data_bytes[10], data_bytes[11])
+            gyro_z_raw = self._bytes_to_int16(data_bytes[12], data_bytes[13])
+            
+            # Convert to physical units
+            accel_x = (accel_x_raw / self.ACCEL_SCALE) * 9.80665  # m/s^2
+            accel_y = (accel_y_raw / self.ACCEL_SCALE) * 9.80665
+            accel_z = (accel_z_raw / self.ACCEL_SCALE) * 9.80665
+            
+            gyro_x = gyro_x_raw / self.GYRO_SCALE  # degrees/s
+            gyro_y = gyro_y_raw / self.GYRO_SCALE
+            gyro_z = gyro_z_raw / self.GYRO_SCALE
+            
+            temp = (temp_raw / self.TEMP_SCALE) + self.TEMP_OFFSET  # °C
             
             data = {
                 'timestamp': time.time(),
                 'accelerometer': {
-                    'x': float(accel[0]),
-                    'y': float(accel[1]),
-                    'z': float(accel[2])
+                    'x': float(accel_x),
+                    'y': float(accel_y),
+                    'z': float(accel_z)
                 },
                 'gyroscope': {
-                    'x': float(gyro[0]),
-                    'y': float(gyro[1]),
-                    'z': float(gyro[2])
+                    'x': float(gyro_x),
+                    'y': float(gyro_y),
+                    'z': float(gyro_z)
                 },
-                'magnetometer': {
-                    'x': float(mag[0]) if mag else 0.0,
-                    'y': float(mag[1]) if mag else 0.0,
-                    'z': float(mag[2]) if mag else 0.0
-                } if mag else None,
+                'magnetometer': None,  # Not reading magnetometer
                 'temperature': float(temp)
             }
             
@@ -184,6 +190,23 @@ class MPU9250SocketSender:
         except Exception as e:
             print(f"Error reading sensor data: {e}")
             return None
+    
+    def _bytes_to_int16(self, high_byte: int, low_byte: int) -> int:
+        """
+        Convert two bytes to signed 16-bit integer.
+        
+        Args:
+            high_byte: High byte
+            low_byte: Low byte
+            
+        Returns:
+            Signed 16-bit integer
+        """
+        value = (high_byte << 8) | low_byte
+        # Convert to signed
+        if value >= 0x8000:
+            value = -((65535 - value) + 1)
+        return value
 
     def send_data(self, data: Dict[str, Any]) -> bool:
         """
@@ -266,6 +289,9 @@ class MPU9250SocketSender:
             
         if self.server_socket:
             self.server_socket.close()
+        
+        if self.bus:
+            self.bus.close()
             
         print("Cleanup complete")
 

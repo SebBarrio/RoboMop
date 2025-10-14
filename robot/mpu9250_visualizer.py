@@ -339,10 +339,17 @@ class IMUVisualizer:
         self.gyro_history['z'].append(data['gyroscope']['z'])
         self.gyro_history['t'].append(current_time)
         
-        self.mag_history['x'].append(data['magnetometer']['x'])
-        self.mag_history['y'].append(data['magnetometer']['y'])
-        self.mag_history['z'].append(data['magnetometer']['z'])
-        self.mag_history['t'].append(current_time)
+        # Handle magnetometer (may be None)
+        if data.get('magnetometer'):
+            self.mag_history['x'].append(data['magnetometer']['x'])
+            self.mag_history['y'].append(data['magnetometer']['y'])
+            self.mag_history['z'].append(data['magnetometer']['z'])
+            self.mag_history['t'].append(current_time)
+        else:
+            self.mag_history['x'].append(0.0)
+            self.mag_history['y'].append(0.0)
+            self.mag_history['z'].append(0.0)
+            self.mag_history['t'].append(current_time)
         
         # Trim history
         for hist in [self.accel_history, self.gyro_history, self.mag_history]:
