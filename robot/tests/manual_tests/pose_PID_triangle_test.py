@@ -617,6 +617,11 @@ def run_triangle(
 
 
 def main() -> None:
+    # Declare globals at the start of the function
+    global SPEED_LP_TAU_S_DEFAULT
+    global HEADING_MOVE_GATE_DEG_DEFAULT
+    global ROTATE_HOLD_TIME_S_DEFAULT
+    
     parser = argparse.ArgumentParser(description="Pose PID triangle control test")
     parser.add_argument("--side-length", type=float, default=SIDE_LENGTH_M_DEFAULT)
     parser.add_argument("--v-max", type=float, default=V_MAX_DEFAULT_MPS)
@@ -671,9 +676,6 @@ def main() -> None:
     print("=" * 60 + "\n")
 
     # Apply runtime tuning knobs
-    global SPEED_LP_TAU_S_DEFAULT
-    global HEADING_MOVE_GATE_DEG_DEFAULT
-    global ROTATE_HOLD_TIME_S_DEFAULT
     SPEED_LP_TAU_S_DEFAULT = max(0.01, float(args.speed_lp_tau))
     HEADING_MOVE_GATE_DEG_DEFAULT = float(args.heading_gate)
     ROTATE_HOLD_TIME_S_DEFAULT = max(0.0, float(args.rotate_hold))

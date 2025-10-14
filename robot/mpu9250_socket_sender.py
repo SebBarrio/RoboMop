@@ -61,6 +61,11 @@ class MPU9250SocketSender:
         self.server_socket = None
         self.client_socket = None
         self.running = False
+        
+        # Gyroscope calibration offsets (to reduce drift)
+        self.gyro_offset_x = 0.0
+        self.gyro_offset_y = 0.0
+        self.gyro_offset_z = 0.0
 
     def initialize_sensor(self) -> bool:
         """
@@ -80,9 +85,13 @@ class MPU9250SocketSender:
             if who_am_i not in [0x71, 0x73]:  # MPU9250/MPU9255
                 print(f"Warning: Unexpected WHO_AM_I value: 0x{who_am_i:02x} (expected 0x71 or 0x73)")
             
-            # Wake up MPU9250 (clear sleep bit)
+            # Wake up sensor (clear sleep bit)
             self.bus.write_byte_data(self.mpu_address, self.PWR_MGMT_1, 0x00)
             time.sleep(0.1)  # Wait for sensor to wake up
+            
+            # Calibrate gyroscope (reduce drift)
+            print("Calibrating gyroscope... Keep sensor still!")
+            self._calibrate_gyroscope()
             
             print(f"MPU9250 initialized successfully (WHO_AM_I: 0x{who_am_i:02x})")
             return True
@@ -97,6 +106,40 @@ class MPU9250SocketSender:
         except Exception as e:
             print(f"Error initializing MPU9250: {e}")
             return False
+    
+    def _calibrate_gyroscope(self, samples: int = 100):
+        """
+        Calibrate gyroscope by measuring bias while stationary.
+        
+        Args:
+            samples: Number of samples to average
+        """
+        try:
+            sum_x = 0.0
+            sum_y = 0.0
+            sum_z = 0.0
+            
+            for _ in range(samples):
+                data_bytes = self.bus.read_i2c_block_data(self.mpu_address, self.GYRO_XOUT_H, 6)
+                
+                gyro_x_raw = self._bytes_to_int16(data_bytes[0], data_bytes[1])
+                gyro_y_raw = self._bytes_to_int16(data_bytes[2], data_bytes[3])
+                gyro_z_raw = self._bytes_to_int16(data_bytes[4], data_bytes[5])
+                
+                sum_x += gyro_x_raw / self.GYRO_SCALE
+                sum_y += gyro_y_raw / self.GYRO_SCALE
+                sum_z += gyro_z_raw / self.GYRO_SCALE
+                
+                time.sleep(0.01)
+            
+            self.gyro_offset_x = sum_x / samples
+            self.gyro_offset_y = sum_y / samples
+            self.gyro_offset_z = sum_z / samples
+            
+            print(f"Gyro offsets: X={self.gyro_offset_x:.2f} Y={self.gyro_offset_y:.2f} Z={self.gyro_offset_z:.2f} °/s")
+            
+        except Exception as e:
+            print(f"Warning: Gyroscope calibration failed: {e}")
 
     def setup_socket(self) -> bool:
         """
@@ -163,9 +206,10 @@ class MPU9250SocketSender:
             accel_y = (accel_y_raw / self.ACCEL_SCALE) * 9.80665
             accel_z = (accel_z_raw / self.ACCEL_SCALE) * 9.80665
             
-            gyro_x = gyro_x_raw / self.GYRO_SCALE  # degrees/s
-            gyro_y = gyro_y_raw / self.GYRO_SCALE
-            gyro_z = gyro_z_raw / self.GYRO_SCALE
+            # Apply calibration offsets to reduce drift
+            gyro_x = (gyro_x_raw / self.GYRO_SCALE) - self.gyro_offset_x  # degrees/s
+            gyro_y = (gyro_y_raw / self.GYRO_SCALE) - self.gyro_offset_y
+            gyro_z = (gyro_z_raw / self.GYRO_SCALE) - self.gyro_offset_z
             
             temp = (temp_raw / self.TEMP_SCALE) + self.TEMP_OFFSET  # °C
             
