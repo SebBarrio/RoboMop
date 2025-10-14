@@ -10,11 +10,14 @@ from dataclasses import dataclass
 from typing import AsyncIterator, Callable, Optional
 
 try:
-    from mpu9250_jmdev.registers import MPU9050
     from mpu9250_jmdev.mpu_9250 import MPU9250 as MPU9250Driver
+    from mpu9250_jmdev.registers import GFS_500, AFS_4G, MFS_16BITS, AK8963_MODE_C100HZ
 except ImportError:
-    MPU9050 = None  # type: ignore
     MPU9250Driver = None  # type: ignore
+    GFS_500 = None  # type: ignore
+    AFS_4G = None  # type: ignore
+    MFS_16BITS = None  # type: ignore
+    AK8963_MODE_C100HZ = None  # type: ignore
 
 
 GRAVITY = 9.80665
@@ -131,10 +134,10 @@ class MPU9250:
             address_mpu_master=address,
             address_mpu_slave=None,
             bus=bus,
-            gfs=MPU9050.GFS_500,  # ±500 °/s
-            afs=MPU9050.AFS_4G,   # ±4g
-            mfs=MPU9050.MFS_16BITS,  # 16-bit magnetometer
-            mode=MPU9050.AK8963_MODE_C100HZ,  # 100 Hz continuous
+            gfs=GFS_500,  # ±500 °/s
+            afs=AFS_4G,   # ±4g
+            mfs=MFS_16BITS,  # 16-bit magnetometer
+            mode=AK8963_MODE_C100HZ,  # 100 Hz continuous
         )
 
         self._filter = _ComplementaryFilter(sample_rate_hz, filter_alpha)
