@@ -18,15 +18,15 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Dict, Optional, Sequence
 
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-SRC_ROOT = PROJECT_ROOT / "src"
+ROBOT_ROOT = Path(__file__).resolve().parents[2]
+SRC_ROOT = ROBOT_ROOT / "src"
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 import board  # type: ignore
 import busio  # type: ignore
 
-from ...src.sensors.imu import ImuSample, MPU9250
+from sensors.imu import ImuSample, MPU9250
 
 
 def parse_args(argv: Sequence[str]) -> argparse.Namespace:
