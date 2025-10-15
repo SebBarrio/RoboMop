@@ -1,7 +1,7 @@
-"""Pose PID Triangle Control Test
+"""Pose PID Path Control Test
 
-Drives an equilateral triangle using encoder-based differential-drive odometry
-and a cascaded controller:
+Drives geometric paths using encoder-based differential-drive odometry and a
+cascaded controller:
   - Outer loop: XY distance PID -> linear velocity v, heading PID -> angular rate ω
   - Inner loop: wheel-speed PID per side -> motor voltages
 
@@ -12,6 +12,10 @@ Hardware:
 Safety:
   - Run in a safe, open area. Start with low velocity/turn-rate limits.
   - Ctrl+C triggers stop and cleanup.
+
+Modes:
+  - triangle: Equilateral triangle
+  - line: Straight line segment along +X
 """
 
 from __future__ import annotations
@@ -413,6 +417,14 @@ def triangle_waypoints(side_length_m: float) -> Sequence[Tuple[float, float]]:
     ]
 
 
+def line_waypoints(length_m: float) -> Sequence[Tuple[float, float]]:
+    """Return waypoints for a straight line along +X."""
+    return [
+        (0.0, 0.0),
+        (length_m, 0.0),
+    ]
+
+
 def run_triangle(
     side_length_m: float,
     v_max: float,
@@ -677,16 +689,219 @@ def run_triangle(
         print(f"Plots saved to {path_xy} and {path_hw}")
 
 
+def run_line(
+    length_m: float,
+    v_max: float,
+    w_max: float,
+    pos_kp: float,
+    pos_ki: float,
+    pos_kd: float,
+    heading_kp: float,
+    heading_ki: float,
+    heading_kd: float,
+    ws_kp: float,
+    ws_ki: float,
+    ws_kd: float,
+    setpoint_lp_tau_s: float = SETPOINT_LP_TAU_S_DEFAULT,
+    setpoint_slew_radps2: float = SETPOINT_SLEW_RADPS2_DEFAULT,
+) -> None:
+    """Main control loop to execute a straight line path (no rotations)."""
+    # Hardware init
+    i2c = busio.I2C(board.SCL, board.SDA)
+    pwm = PCA9685(i2c)
+    pwm.frequency = PWM_FREQUENCY
+    controller = MotorController(pwm, build_motor_configs())
+    encoders = SideEncoderReader(ENCODER_CHANNELS, ENCODER_PULSES_PER_REV)
+    odom = DifferentialOdometry(encoders, speed_lp_tau_s=SPEED_LP_TAU_S_DEFAULT)
+
+    # Setpoint shapers for desired wheel speeds
+    sp_left = SetpointShaper(slew_rate_radps2=setpoint_slew_radps2, lp_tau_s=setpoint_lp_tau_s)
+    sp_right = SetpointShaper(slew_rate_radps2=setpoint_slew_radps2, lp_tau_s=setpoint_lp_tau_s)
+
+    # Controllers
+    pos_pid = PIDController(pos_kp, pos_ki, pos_kd, integrator_limit=2.0)
+    heading_pid = PIDController(heading_kp, heading_ki, heading_kd, integrator_limit=2.0)
+    pose_ctrl = PoseController(pos_pid, heading_pid, v_max=v_max, w_max=w_max)
+    ws_left_pid = PIDController(ws_kp, ws_ki, ws_kd, integrator_limit=SUPPLY_VOLTAGE)
+    ws_right_pid = PIDController(ws_kp, ws_ki, ws_kd, integrator_limit=SUPPLY_VOLTAGE)
+
+    # Logs
+    times: list[float] = []
+    xs: list[float] = []
+    ys: list[float] = []
+    psis: list[float] = []
+    v_cmds: list[float] = []
+    w_cmds: list[float] = []
+    omega_l_des_log: list[float] = []
+    omega_r_des_log: list[float] = []
+    omega_l_meas_log: list[float] = []
+    omega_r_meas_log: list[float] = []
+    v_left_volts: list[float] = []
+    v_right_volts: list[float] = []
+
+    try:
+        waypoints = line_waypoints(length_m)
+        start_time = time.monotonic()
+        last_ts = start_time
+
+        # Single leg (start -> end)
+        for wp_idx in range(1, len(waypoints)):
+            goal_x, goal_y = waypoints[wp_idx]
+
+            # Goto waypoint
+            leg_start = time.monotonic()
+            while True:
+                now = time.monotonic()
+                dt = now - last_ts
+                last_ts = now
+
+                # Update odometry and measured wheel speeds
+                x, y, psi, omega_l_meas, omega_r_meas = odom.update(dt)
+
+                # Outer loop
+                v_cmd, w_cmd, dist, heading_err = pose_ctrl.compute_to_waypoint(
+                    x, y, psi, goal_x, goal_y, dt
+                )
+
+                # Heading gating: suppress forward motion until roughly aligned
+                if abs(math.degrees(heading_err)) > HEADING_MOVE_GATE_DEG_DEFAULT:
+                    v_cmd = 0.0
+
+                # Map to wheel angular speeds
+                v_l = v_cmd - (w_cmd * (TRACK_WIDTH_M / 2.0))
+                v_r = v_cmd + (w_cmd * (TRACK_WIDTH_M / 2.0))
+                r = WHEEL_DIAMETER_M / 2.0
+                omega_l_des_raw = v_l / r
+                omega_r_des_raw = v_r / r
+
+                # Shape desired wheel speeds
+                omega_l_des = sp_left.shape(omega_l_des_raw, dt)
+                omega_r_des = sp_right.shape(omega_r_des_raw, dt)
+
+                # Inner wheel-speed PID -> voltages
+                err_l = omega_l_des - omega_l_meas
+                err_r = omega_r_des - omega_r_meas
+                v_left = ws_left_pid.update(err_l, dt)
+                v_right = ws_right_pid.update(err_r, dt)
+                v_left = max(-SUPPLY_VOLTAGE, min(v_left, SUPPLY_VOLTAGE))
+                v_right = max(-SUPPLY_VOLTAGE, min(v_right, SUPPLY_VOLTAGE))
+                controller.set_side_voltages(v_left, v_right)
+
+                # Logs
+                t_rel = now - start_time
+                times.append(t_rel)
+                xs.append(x)
+                ys.append(y)
+                psis.append(psi)
+                v_cmds.append(v_cmd)
+                w_cmds.append(w_cmd)
+                omega_l_des_log.append(omega_l_des)
+                omega_r_des_log.append(omega_r_des)
+                omega_l_meas_log.append(omega_l_meas)
+                omega_r_meas_log.append(omega_r_meas)
+                v_left_volts.append(v_left)
+                v_right_volts.append(v_right)
+
+                # Check convergence or timeout
+                if dist <= POS_TOL_M:
+                    break
+                if (now - leg_start) > max(10.0, 60.0 * length_m):
+                    print("Warning: position step timeout; stopping")
+                    break
+
+                # Maintain control cadence
+                time.sleep(max(0.0, CONTROL_INTERVAL_S - (time.monotonic() - now)))
+
+        # Stop motors after completion
+        controller.stop_all()
+
+    except KeyboardInterrupt:
+        print("\nInterrupted by user")
+    finally:
+        try:
+            controller.stop_all()
+        except Exception:
+            pass
+        try:
+            encoders.close()
+        except Exception:
+            pass
+        try:
+            pwm.deinit()
+        except Exception:
+            pass
+
+    # Save plots
+    if times:
+        os.makedirs("logs", exist_ok=True)
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        base = (
+            f"line_{ts}_L{length_m:.2f}_kp{pos_kp:.2f}_kh{heading_kp:.2f}_"
+            f"v{v_max:.2f}_w{w_max:.2f}_spTau{setpoint_lp_tau_s:.2f}_spSlew{setpoint_slew_radps2:.0f}"
+        )
+
+        # XY trace
+        plt.figure(figsize=(8, 8))
+        plt.title("XY Path Trace")
+        plt.plot(xs, ys, label="trajectory")
+        for gx, gy in waypoints:
+            plt.plot(gx, gy, "ko")
+        plt.axis("equal")
+        plt.grid(True)
+        plt.legend()
+        plt.xlabel("x (m)")
+        plt.ylabel("y (m)")
+        plt.tight_layout()
+        path_xy = os.path.join("logs", f"{base}_xy.png")
+        plt.savefig(path_xy, dpi=150)
+        plt.close()
+
+        # Heading and wheel speeds
+        t_arr = np.array(times)
+        plt.figure(figsize=(10, 10))
+        ax1 = plt.subplot(2, 1, 1)
+        ax1.set_title("Heading vs Time")
+        ax1.plot(t_arr, psis, label="psi (rad)")
+        ax1.set_xlabel("time (s)")
+        ax1.set_ylabel("psi (rad)")
+        ax1.grid(True)
+        ax1.legend()
+
+        ax2 = plt.subplot(2, 1, 2)
+        ax2.set_title("Wheel Speeds (filtered)")
+        ax2.plot(t_arr, omega_l_des_log, "k--", label="omega_L des")
+        ax2.plot(t_arr, omega_r_des_log, "k:", label="omega_R des")
+        ax2.plot(t_arr, omega_l_meas_log, label="omega_L meas")
+        ax2.plot(t_arr, omega_r_meas_log, label="omega_R meas")
+        ax2.set_xlabel("time (s)")
+        ax2.set_ylabel("rad/s")
+        ax2.grid(True)
+        ax2.legend()
+        plt.tight_layout()
+        path_hw = os.path.join("logs", f"{base}_heading_wheels.png")
+        plt.savefig(path_hw, dpi=150)
+        plt.close()
+
+        print(f"Plots saved to {path_xy} and {path_hw}")
+
+
 def main() -> None:
     # Declare globals at the start of the function
     global SPEED_LP_TAU_S_DEFAULT
     global HEADING_MOVE_GATE_DEG_DEFAULT
     global ROTATE_HOLD_TIME_S_DEFAULT
     
-    parser = argparse.ArgumentParser(description="Pose PID triangle control test")
+    parser = argparse.ArgumentParser(description="Pose PID path control test")
     parser.add_argument("--side-length", type=float, default=SIDE_LENGTH_M_DEFAULT)
     parser.add_argument("--v-max", type=float, default=V_MAX_DEFAULT_MPS)
     parser.add_argument("--w-max", type=float, default=W_MAX_DEFAULT_RADPS)
+    parser.add_argument(
+        "--mode",
+        type=str,
+        choices=["triangle", "line"],
+        default="triangle",
+        help="Path mode to execute",
+    )
 
     parser.add_argument("--pos-kp", type=float, default=POS_KP_DEFAULT)
     parser.add_argument("--pos-ki", type=float, default=POS_KI_DEFAULT)
@@ -734,8 +949,9 @@ def main() -> None:
     args = parser.parse_args()
 
     print("=" * 60)
-    print("Pose PID Triangle Control Test")
+    print("Pose PID Path Control Test")
     print("=" * 60)
+    print(f"Mode: {args.mode}")
     print(f"Side length: {args.side_length:.2f} m")
     print(f"v_max: {args.v_max:.2f} m/s, w_max: {args.w_max:.2f} rad/s")
     print(
@@ -756,22 +972,40 @@ def main() -> None:
     HEADING_MOVE_GATE_DEG_DEFAULT = float(args.heading_gate)
     ROTATE_HOLD_TIME_S_DEFAULT = max(0.0, float(args.rotate_hold))
 
-    run_triangle(
-        side_length_m=args.side_length,
-        v_max=args.v_max,
-        w_max=args.w_max,
-        pos_kp=args.pos_kp,
-        pos_ki=args.pos_ki,
-        pos_kd=args.pos_kd,
-        heading_kp=args.heading_kp,
-        heading_ki=args.heading_ki,
-        heading_kd=args.heading_kd,
-        ws_kp=args.ws_kp,
-        ws_ki=args.ws_ki,
-        ws_kd=args.ws_kd,
-        setpoint_lp_tau_s=args.sp_lp_tau,
-        setpoint_slew_radps2=args.sp_slew,
-    )
+    if args.mode == "triangle":
+        run_triangle(
+            side_length_m=args.side_length,
+            v_max=args.v_max,
+            w_max=args.w_max,
+            pos_kp=args.pos_kp,
+            pos_ki=args.pos_ki,
+            pos_kd=args.pos_kd,
+            heading_kp=args.heading_kp,
+            heading_ki=args.heading_ki,
+            heading_kd=args.heading_kd,
+            ws_kp=args.ws_kp,
+            ws_ki=args.ws_ki,
+            ws_kd=args.ws_kd,
+            setpoint_lp_tau_s=args.sp_lp_tau,
+            setpoint_slew_radps2=args.sp_slew,
+        )
+    else:
+        run_line(
+            length_m=args.side_length,
+            v_max=args.v_max,
+            w_max=args.w_max,
+            pos_kp=args.pos_kp,
+            pos_ki=args.pos_ki,
+            pos_kd=args.pos_kd,
+            heading_kp=args.heading_kp,
+            heading_ki=args.heading_ki,
+            heading_kd=args.heading_kd,
+            ws_kp=args.ws_kp,
+            ws_ki=args.ws_ki,
+            ws_kd=args.ws_kd,
+            setpoint_lp_tau_s=args.sp_lp_tau,
+            setpoint_slew_radps2=args.sp_slew,
+        )
 
 
 if __name__ == "__main__":
