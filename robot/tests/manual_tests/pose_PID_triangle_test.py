@@ -108,6 +108,12 @@ HEADING_MOVE_GATE_DEG_DEFAULT: float = 6.0
 # Rotation settle/hold time (stay within tolerance for this time)
 ROTATE_HOLD_TIME_S_DEFAULT: float = 0.35
 
+# Desired wheel-speed (setpoint) shaping
+#  - First-order low-pass on the desired omega
+#  - Slew-rate limiter to cap step changes per tick (rad/s^2)
+SETPOINT_LP_TAU_S_DEFAULT: float = 0.10
+SETPOINT_SLEW_RADPS2_DEFAULT: float = 50.0
+
 
 # ------------------------------ Utility helpers -------------------------------
 
@@ -156,6 +162,47 @@ class PIDController:
         derivative = (error - self._prev_error) / dt if dt > 0 else 0.0
         self._prev_error = error
         return (self._kp * error) + (self._ki * self._integrator) + (self._kd * derivative)
+
+
+class SetpointShaper:
+    """Slew-rate + first-order low-pass filter for setpoint shaping.
+
+    This reduces sharp peaks in desired wheel angular speed to better match
+    drivetrain backlash and actuator latency.
+    """
+
+    def __init__(self, slew_rate_radps2: float, lp_tau_s: float) -> None:
+        self._slew = max(0.0, float(slew_rate_radps2))
+        self._tau = max(0.0, float(lp_tau_s))
+        self._last_slewed = 0.0
+        self._y = 0.0
+
+    def reset(self) -> None:
+        self._last_slewed = 0.0
+        self._y = 0.0
+
+    def shape(self, target: float, dt: float) -> float:
+        # Slew-rate limit the target first
+        if dt > 0.0 and self._slew > 0.0:
+            max_step = self._slew * dt
+            delta = target - self._last_slewed
+            if delta > max_step:
+                slewed = self._last_slewed + max_step
+            elif delta < -max_step:
+                slewed = self._last_slewed - max_step
+            else:
+                slewed = target
+        else:
+            slewed = target
+        self._last_slewed = slewed
+
+        # Then apply a first-order low-pass
+        if dt > 0.0 and self._tau > 0.0:
+            alpha = dt / (self._tau + dt)
+            self._y = self._y + alpha * (slewed - self._y)
+        else:
+            self._y = slewed
+        return self._y
 
 
 class MotorController:
@@ -379,6 +426,8 @@ def run_triangle(
     ws_kp: float,
     ws_ki: float,
     ws_kd: float,
+    setpoint_lp_tau_s: float = SETPOINT_LP_TAU_S_DEFAULT,
+    setpoint_slew_radps2: float = SETPOINT_SLEW_RADPS2_DEFAULT,
 ) -> None:
     """Main control loop to execute the triangle path."""
     # Hardware init
@@ -388,6 +437,10 @@ def run_triangle(
     controller = MotorController(pwm, build_motor_configs())
     encoders = SideEncoderReader(ENCODER_CHANNELS, ENCODER_PULSES_PER_REV)
     odom = DifferentialOdometry(encoders, speed_lp_tau_s=SPEED_LP_TAU_S_DEFAULT)
+
+    # Setpoint shapers for desired wheel speeds
+    sp_left = SetpointShaper(slew_rate_radps2=setpoint_slew_radps2, lp_tau_s=setpoint_lp_tau_s)
+    sp_right = SetpointShaper(slew_rate_radps2=setpoint_slew_radps2, lp_tau_s=setpoint_lp_tau_s)
 
     # Controllers
     pos_pid = PIDController(pos_kp, pos_ki, pos_kd, integrator_limit=2.0)
@@ -442,8 +495,12 @@ def run_triangle(
                 v_l = v_cmd - (w_cmd * (TRACK_WIDTH_M / 2.0))
                 v_r = v_cmd + (w_cmd * (TRACK_WIDTH_M / 2.0))
                 r = WHEEL_DIAMETER_M / 2.0
-                omega_l_des = v_l / r
-                omega_r_des = v_r / r
+                omega_l_des_raw = v_l / r
+                omega_r_des_raw = v_r / r
+
+                # Shape desired wheel speeds
+                omega_l_des = sp_left.shape(omega_l_des_raw, dt)
+                omega_r_des = sp_right.shape(omega_r_des_raw, dt)
 
                 # Inner wheel-speed PID -> voltages
                 err_l = omega_l_des - omega_l_meas
@@ -495,8 +552,12 @@ def run_triangle(
                 v_l = -w_cmd * (TRACK_WIDTH_M / 2.0)
                 v_r = w_cmd * (TRACK_WIDTH_M / 2.0)
                 r = WHEEL_DIAMETER_M / 2.0
-                omega_l_des = v_l / r
-                omega_r_des = v_r / r
+                omega_l_des_raw = v_l / r
+                omega_r_des_raw = v_r / r
+
+                # Shape desired wheel speeds for rotation as well
+                omega_l_des = sp_left.shape(omega_l_des_raw, dt)
+                omega_r_des = sp_right.shape(omega_r_des_raw, dt)
 
                 # Wheel speed PID
                 err_l = omega_l_des - omega_l_meas
@@ -562,7 +623,7 @@ def run_triangle(
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         base = (
             f"triangle_{ts}_L{side_length_m:.2f}_kp{pos_kp:.2f}_kh{heading_kp:.2f}_"
-            f"v{v_max:.2f}_w{w_max:.2f}"
+            f"v{v_max:.2f}_w{w_max:.2f}_spTau{setpoint_lp_tau_s:.2f}_spSlew{setpoint_slew_radps2:.0f}"
         )
 
         # XY trace
@@ -646,6 +707,18 @@ def main() -> None:
         help="Low-pass filter time constant for wheel speed (s)",
     )
     parser.add_argument(
+        "--sp-lp-tau",
+        type=float,
+        default=SETPOINT_LP_TAU_S_DEFAULT,
+        help="Low-pass tau for desired wheel-speed setpoint (s)",
+    )
+    parser.add_argument(
+        "--sp-slew",
+        type=float,
+        default=SETPOINT_SLEW_RADPS2_DEFAULT,
+        help="Max slew rate for desired wheel-speed (rad/s^2)",
+    )
+    parser.add_argument(
         "--heading-gate",
         type=float,
         default=HEADING_MOVE_GATE_DEG_DEFAULT,
@@ -672,6 +745,9 @@ def main() -> None:
     print(
         f"Wheel-speed PID: Kp={args.ws_kp:.3f}, Ki={args.ws_ki:.3f}, Kd={args.ws_kd:.3f}"
     )
+    print(
+        f"Setpoint shaping: tau={args.sp_lp_tau:.2f}s, slew={args.sp_slew:.1f} rad/s^2"
+    )
     print(f"Track width: {TRACK_WIDTH_M:.3f} m, Wheel diameter: {WHEEL_DIAMETER_M:.4f} m")
     print("=" * 60 + "\n")
 
@@ -693,6 +769,8 @@ def main() -> None:
         ws_kp=args.ws_kp,
         ws_ki=args.ws_ki,
         ws_kd=args.ws_kd,
+        setpoint_lp_tau_s=args.sp_lp_tau,
+        setpoint_slew_radps2=args.sp_slew,
     )
 
 
