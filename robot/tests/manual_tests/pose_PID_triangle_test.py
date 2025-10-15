@@ -26,7 +26,12 @@ import os
 import time
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Sequence, Tuple
+from typing import Any, Dict, Optional, Sequence, Tuple
+
+try:
+    from smbus2 import SMBus
+except ImportError:  # pragma: no cover - hardware dependency
+    SMBus = None
 
 import board
 import busio
@@ -135,6 +140,14 @@ class MotorConfig:
     index: int
     forward_channel: int
     reverse_channel: int
+
+
+@dataclass(frozen=True)
+class IMUConfig:
+    bus: int
+    address: int
+    heading_alpha: float
+    position_alpha: float
 
 
 class PIDController:
@@ -351,6 +364,195 @@ class DifferentialOdometry:
         return self.x, self.y, self.psi, self._omega_filt_l, self._omega_filt_r
 
 
+class MPU9250Sensor:
+    """Minimal MPU9250 reader for sensor fusion."""
+
+    PWR_MGMT_1 = 0x6B
+    ACCEL_XOUT_H = 0x3B
+    GYRO_XOUT_H = 0x43
+    WHO_AM_I = 0x75
+    INT_PIN_CFG = 0x37
+
+    AK8963_ADDRESS = 0x0C
+    AK8963_WHO_AM_I = 0x00
+    AK8963_CNTL1 = 0x0A
+    AK8963_ST1 = 0x02
+    AK8963_XOUT_L = 0x03
+
+    ACCEL_SCALE = 16384.0
+    GYRO_SCALE = 131.0
+
+    def __init__(self, bus: int, address: int) -> None:
+        if SMBus is None:
+            raise RuntimeError("smbus2 library not available; install smbus2 to enable IMU support")
+        self._bus_num = bus
+        self._address = address
+        self._bus: Optional[Any] = None
+        self._gyro_offsets = (0.0, 0.0, 0.0)
+        self._magnetometer_enabled = False
+
+    def initialize(self) -> None:
+        self._bus = SMBus(self._bus_num)
+        who_am_i = self._bus.read_byte_data(self._address, self.WHO_AM_I)
+        if who_am_i not in (0x71, 0x73):
+            print(f"Warning: Unexpected MPU9250 WHO_AM_I value 0x{who_am_i:02x}")
+
+        self._bus.write_byte_data(self._address, self.PWR_MGMT_1, 0x00)
+        time.sleep(0.1)
+        self._initialize_magnetometer()
+        self._calibrate_gyroscope()
+
+    def read(self) -> Optional[Dict[str, Tuple[float, float, float]]]:
+        if self._bus is None:
+            return None
+        try:
+            data = self._bus.read_i2c_block_data(self._address, self.ACCEL_XOUT_H, 14)
+            ax_raw = self._bytes_to_int16(data[0], data[1])
+            ay_raw = self._bytes_to_int16(data[2], data[3])
+            az_raw = self._bytes_to_int16(data[4], data[5])
+            gx_raw = self._bytes_to_int16(data[8], data[9])
+            gy_raw = self._bytes_to_int16(data[10], data[11])
+            gz_raw = self._bytes_to_int16(data[12], data[13])
+
+            accel_scale = 9.80665 / self.ACCEL_SCALE
+            ax = ax_raw * accel_scale
+            ay = ay_raw * accel_scale
+            az = az_raw * accel_scale
+
+            gyro_scale = math.radians(1.0) / self.GYRO_SCALE
+            gx = gx_raw * gyro_scale - self._gyro_offsets[0]
+            gy = gy_raw * gyro_scale - self._gyro_offsets[1]
+            gz = gz_raw * gyro_scale - self._gyro_offsets[2]
+
+            return {
+                "accelerometer": (ax, ay, az),
+                "gyroscope": (gx, gy, gz),
+            }
+        except OSError as exc:
+            print(f"IMU read error: {exc}")
+            return None
+
+    def close(self) -> None:
+        if self._bus is not None:
+            self._bus.close()
+            self._bus = None
+
+    def _initialize_magnetometer(self) -> None:
+        if self._bus is None:
+            return
+        try:
+            self._bus.write_byte_data(self._address, self.INT_PIN_CFG, 0x02)
+            time.sleep(0.01)
+            mag_id = self._bus.read_byte_data(self.AK8963_ADDRESS, self.AK8963_WHO_AM_I)
+            if mag_id != 0x48:
+                return
+            self._bus.write_byte_data(self.AK8963_ADDRESS, self.AK8963_CNTL1, 0x16)
+            time.sleep(0.01)
+            self._magnetometer_enabled = True
+        except OSError:
+            self._magnetometer_enabled = False
+
+    def _calibrate_gyroscope(self, samples: int = 100) -> None:
+        if self._bus is None:
+            return
+        sum_x = 0.0
+        sum_y = 0.0
+        sum_z = 0.0
+        gyro_scale = math.radians(1.0) / self.GYRO_SCALE
+        for _ in range(samples):
+            data = self._bus.read_i2c_block_data(self._address, self.GYRO_XOUT_H, 6)
+            gx_raw = self._bytes_to_int16(data[0], data[1])
+            gy_raw = self._bytes_to_int16(data[2], data[3])
+            gz_raw = self._bytes_to_int16(data[4], data[5])
+            sum_x += gx_raw * gyro_scale
+            sum_y += gy_raw * gyro_scale
+            sum_z += gz_raw * gyro_scale
+            time.sleep(0.01)
+        self._gyro_offsets = (sum_x / samples, sum_y / samples, sum_z / samples)
+
+    @staticmethod
+    def _bytes_to_int16(high: int, low: int) -> int:
+        value = (high << 8) | low
+        if value >= 0x8000:
+            value = -((65535 - value) + 1)
+        return value
+
+
+class IMUFusion:
+    def __init__(self, heading_alpha: float, position_alpha: float) -> None:
+        self._heading_alpha = min(0.999, max(0.0, heading_alpha))
+        self._position_alpha = min(0.999, max(0.0, position_alpha))
+        self.x = 0.0
+        self.y = 0.0
+        self.psi = 0.0
+        self._vx_imu = 0.0
+        self._vy_imu = 0.0
+        self._last_odom: Optional[Tuple[float, float, float]] = None
+
+    def reset(self, x: float, y: float, psi: float) -> None:
+        self.x = x
+        self.y = y
+        self.psi = psi
+        self._vx_imu = 0.0
+        self._vy_imu = 0.0
+        self._last_odom = (x, y, psi)
+
+    def update(
+        self,
+        dt: float,
+        odom_x: float,
+        odom_y: float,
+        odom_psi: float,
+        imu_data: Optional[Dict[str, Tuple[float, float, float]]],
+    ) -> Tuple[float, float, float]:
+        if self._last_odom is None:
+            self.reset(odom_x, odom_y, odom_psi)
+            return self.x, self.y, self.psi
+
+        if imu_data is None or dt <= 0.0:
+            self._last_odom = (odom_x, odom_y, odom_psi)
+            self.x = odom_x
+            self.y = odom_y
+            self.psi = odom_psi
+            self._vx_imu = 0.0
+            self._vy_imu = 0.0
+            return self.x, self.y, self.psi
+
+        gyro = imu_data["gyroscope"]
+        accel = imu_data["accelerometer"]
+
+        psi_pred = wrap_angle(self.psi + gyro[2] * dt)
+        psi_fused = wrap_angle(
+            (self._heading_alpha * psi_pred) + ((1.0 - self._heading_alpha) * odom_psi)
+        )
+
+        cos_psi = math.cos(psi_fused)
+        sin_psi = math.sin(psi_fused)
+        ax_world = (accel[0] * cos_psi) - (accel[1] * sin_psi)
+        ay_world = (accel[0] * sin_psi) + (accel[1] * cos_psi)
+
+        self._vx_imu += ax_world * dt
+        self._vy_imu += ay_world * dt
+
+        dx_odom = odom_x - self._last_odom[0]
+        dy_odom = odom_y - self._last_odom[1]
+        odom_vx = dx_odom / dt
+        odom_vy = dy_odom / dt
+
+        vx_blend = (self._position_alpha * self._vx_imu) + ((1.0 - self._position_alpha) * odom_vx)
+        vy_blend = (self._position_alpha * self._vy_imu) + ((1.0 - self._position_alpha) * odom_vy)
+
+        pred_x = self.x + vx_blend * dt
+        pred_y = self.y + vy_blend * dt
+        self.x = (self._position_alpha * pred_x) + ((1.0 - self._position_alpha) * odom_x)
+        self.y = (self._position_alpha * pred_y) + ((1.0 - self._position_alpha) * odom_y)
+        self.psi = psi_fused
+        self._last_odom = (odom_x, odom_y, odom_psi)
+        return self.x, self.y, self.psi
+
+    def current_state(self) -> Tuple[float, float, float]:
+        return self.x, self.y, self.psi
+
 class PoseController:
     """Outer-loop controller that computes (v, omega) for pose regulation."""
 
@@ -440,6 +642,7 @@ def run_triangle(
     ws_kd: float,
     setpoint_lp_tau_s: float = SETPOINT_LP_TAU_S_DEFAULT,
     setpoint_slew_radps2: float = SETPOINT_SLEW_RADPS2_DEFAULT,
+    imu_config: Optional[IMUConfig] = None,
 ) -> None:
     """Main control loop to execute the triangle path."""
     # Hardware init
@@ -449,6 +652,57 @@ def run_triangle(
     controller = MotorController(pwm, build_motor_configs())
     encoders = SideEncoderReader(ENCODER_CHANNELS, ENCODER_PULSES_PER_REV)
     odom = DifferentialOdometry(encoders, speed_lp_tau_s=SPEED_LP_TAU_S_DEFAULT)
+
+    imu_sensor: Optional[MPU9250Sensor] = None
+    imu_fusion: Optional[IMUFusion] = None
+    if imu_config is not None:
+        try:
+            imu_sensor = MPU9250Sensor(imu_config.bus, imu_config.address)
+            imu_sensor.initialize()
+            imu_fusion = IMUFusion(
+                heading_alpha=imu_config.heading_alpha,
+                position_alpha=imu_config.position_alpha,
+            )
+            imu_fusion.reset(odom.x, odom.y, odom.psi)
+            print("IMU fusion enabled")
+        except Exception as exc:
+            imu_sensor = None
+            imu_fusion = None
+            print(f"Warning: IMU initialization failed ({exc}); continuing without fusion")
+
+    imu_sensor: Optional[MPU9250Sensor] = None
+    imu_fusion: Optional[IMUFusion] = None
+    if imu_config is not None:
+        try:
+            imu_sensor = MPU9250Sensor(imu_config.bus, imu_config.address)
+            imu_sensor.initialize()
+            imu_fusion = IMUFusion(
+                heading_alpha=imu_config.heading_alpha,
+                position_alpha=imu_config.position_alpha,
+            )
+            imu_fusion.reset(odom.x, odom.y, odom.psi)
+            print("IMU fusion enabled")
+        except Exception as exc:
+            imu_sensor = None
+            imu_fusion = None
+            print(f"Warning: IMU initialization failed ({exc}); continuing without fusion")
+
+    imu_sensor: Optional[MPU9250Sensor] = None
+    imu_fusion: Optional[IMUFusion] = None
+    if imu_config is not None:
+        try:
+            imu_sensor = MPU9250Sensor(imu_config.bus, imu_config.address)
+            imu_sensor.initialize()
+            imu_fusion = IMUFusion(
+                heading_alpha=imu_config.heading_alpha,
+                position_alpha=imu_config.position_alpha,
+            )
+            imu_fusion.reset(odom.x, odom.y, odom.psi)
+            print("IMU fusion enabled")
+        except Exception as exc:
+            imu_sensor = None
+            imu_fusion = None
+            print(f"Warning: IMU initialization failed ({exc}); continuing without fusion")
 
     # Setpoint shapers for desired wheel speeds
     sp_left = SetpointShaper(slew_rate_radps2=setpoint_slew_radps2, lp_tau_s=setpoint_lp_tau_s)
@@ -492,7 +746,12 @@ def run_triangle(
                 last_ts = now
 
                 # Update odometry and measured wheel speeds
-                x, y, psi, omega_l_meas, omega_r_meas = odom.update(dt)
+                odom_x, odom_y, odom_psi, omega_l_meas, omega_r_meas = odom.update(dt)
+                if imu_fusion is not None:
+                    imu_payload = imu_sensor.read() if imu_sensor is not None else None
+                    x, y, psi = imu_fusion.update(dt, odom_x, odom_y, odom_psi, imu_payload)
+                else:
+                    x, y, psi = odom_x, odom_y, odom_psi
 
                 # Outer loop
                 v_cmd, w_cmd, dist, heading_err = pose_ctrl.compute_to_waypoint(
@@ -557,7 +816,12 @@ def run_triangle(
                 dt = now - last_ts
                 last_ts = now
 
-                x, y, psi, omega_l_meas, omega_r_meas = odom.update(dt)
+                odom_x, odom_y, odom_psi, omega_l_meas, omega_r_meas = odom.update(dt)
+                if imu_fusion is not None:
+                    imu_payload = imu_sensor.read() if imu_sensor is not None else None
+                    x, y, psi = imu_fusion.update(dt, odom_x, odom_y, odom_psi, imu_payload)
+                else:
+                    x, y, psi = odom_x, odom_y, odom_psi
                 v_cmd, w_cmd = pose_ctrl.compute_rotate_to(psi, target_psi, dt)
 
                 # Map to wheel speeds (v=0)
@@ -622,6 +886,11 @@ def run_triangle(
             pass
         try:
             encoders.close()
+        except Exception:
+            pass
+        try:
+            if imu_sensor is not None:
+                imu_sensor.close()
         except Exception:
             pass
         try:
@@ -704,6 +973,7 @@ def run_line(
     ws_kd: float,
     setpoint_lp_tau_s: float = SETPOINT_LP_TAU_S_DEFAULT,
     setpoint_slew_radps2: float = SETPOINT_SLEW_RADPS2_DEFAULT,
+    imu_config: Optional[IMUConfig] = None,
 ) -> None:
     """Main control loop to execute a straight line path (no rotations)."""
     # Hardware init
@@ -713,6 +983,23 @@ def run_line(
     controller = MotorController(pwm, build_motor_configs())
     encoders = SideEncoderReader(ENCODER_CHANNELS, ENCODER_PULSES_PER_REV)
     odom = DifferentialOdometry(encoders, speed_lp_tau_s=SPEED_LP_TAU_S_DEFAULT)
+
+    imu_sensor: Optional[MPU9250Sensor] = None
+    imu_fusion: Optional[IMUFusion] = None
+    if imu_config is not None:
+        try:
+            imu_sensor = MPU9250Sensor(imu_config.bus, imu_config.address)
+            imu_sensor.initialize()
+            imu_fusion = IMUFusion(
+                heading_alpha=imu_config.heading_alpha,
+                position_alpha=imu_config.position_alpha,
+            )
+            imu_fusion.reset(odom.x, odom.y, odom.psi)
+            print("IMU fusion enabled")
+        except Exception as exc:
+            imu_sensor = None
+            imu_fusion = None
+            print(f"Warning: IMU initialization failed ({exc}); continuing without fusion")
 
     # Setpoint shapers for desired wheel speeds
     sp_left = SetpointShaper(slew_rate_radps2=setpoint_slew_radps2, lp_tau_s=setpoint_lp_tau_s)
@@ -756,7 +1043,12 @@ def run_line(
                 last_ts = now
 
                 # Update odometry and measured wheel speeds
-                x, y, psi, omega_l_meas, omega_r_meas = odom.update(dt)
+                odom_x, odom_y, odom_psi, omega_l_meas, omega_r_meas = odom.update(dt)
+                if imu_fusion is not None:
+                    imu_payload = imu_sensor.read() if imu_sensor is not None else None
+                    x, y, psi = imu_fusion.update(dt, odom_x, odom_y, odom_psi, imu_payload)
+                else:
+                    x, y, psi = odom_x, odom_y, odom_psi
 
                 # Outer loop
                 v_cmd, w_cmd, dist, heading_err = pose_ctrl.compute_to_waypoint(
@@ -824,6 +1116,11 @@ def run_line(
             pass
         try:
             encoders.close()
+        except Exception:
+            pass
+        try:
+            if imu_sensor is not None:
+                imu_sensor.close()
         except Exception:
             pass
         try:
@@ -945,6 +1242,35 @@ def main() -> None:
         default=ROTATE_HOLD_TIME_S_DEFAULT,
         help="Hold time within angle tolerance during rotation (s)",
     )
+    parser.add_argument(
+        "--enable-imu",
+        action="store_true",
+        help="Enable MPU9250-based IMU fusion with differential odometry",
+    )
+    parser.add_argument(
+        "--imu-bus",
+        type=int,
+        default=1,
+        help="I2C bus index for the MPU9250 when IMU fusion is enabled",
+    )
+    parser.add_argument(
+        "--imu-address",
+        type=lambda x: int(x, 0),
+        default=0x68,
+        help="I2C address for the MPU9250 (hex or decimal)",
+    )
+    parser.add_argument(
+        "--imu-heading-alpha",
+        type=float,
+        default=0.98,
+        help="Complementary filter weight for gyro heading vs odometry",
+    )
+    parser.add_argument(
+        "--imu-position-alpha",
+        type=float,
+        default=0.9,
+        help="Complementary filter weight for IMU acceleration vs odometry",
+    )
 
     args = parser.parse_args()
 
@@ -965,12 +1291,26 @@ def main() -> None:
         f"Setpoint shaping: tau={args.sp_lp_tau:.2f}s, slew={args.sp_slew:.1f} rad/s^2"
     )
     print(f"Track width: {TRACK_WIDTH_M:.3f} m, Wheel diameter: {WHEEL_DIAMETER_M:.4f} m")
+    if args.enable_imu:
+        print(
+            f"IMU fusion enabled (bus={args.imu_bus}, address=0x{args.imu_address:02X}, "
+            f"heading_alpha={args.imu_heading_alpha:.2f}, position_alpha={args.imu_position_alpha:.2f})"
+        )
     print("=" * 60 + "\n")
 
     # Apply runtime tuning knobs
     SPEED_LP_TAU_S_DEFAULT = max(0.01, float(args.speed_lp_tau))
     HEADING_MOVE_GATE_DEG_DEFAULT = float(args.heading_gate)
     ROTATE_HOLD_TIME_S_DEFAULT = max(0.0, float(args.rotate_hold))
+
+    imu_config: Optional[IMUConfig] = None
+    if args.enable_imu:
+        imu_config = IMUConfig(
+            bus=args.imu_bus,
+            address=args.imu_address,
+            heading_alpha=args.imu_heading_alpha,
+            position_alpha=args.imu_position_alpha,
+        )
 
     if args.mode == "triangle":
         run_triangle(
@@ -988,6 +1328,7 @@ def main() -> None:
             ws_kd=args.ws_kd,
             setpoint_lp_tau_s=args.sp_lp_tau,
             setpoint_slew_radps2=args.sp_slew,
+            imu_config=imu_config,
         )
     else:
         run_line(
@@ -1005,6 +1346,7 @@ def main() -> None:
             ws_kd=args.ws_kd,
             setpoint_lp_tau_s=args.sp_lp_tau,
             setpoint_slew_radps2=args.sp_slew,
+            imu_config=imu_config,
         )
 
 
