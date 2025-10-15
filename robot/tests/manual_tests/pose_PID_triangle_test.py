@@ -59,7 +59,7 @@ RIGHT_MOTOR_INDICES: Tuple[int, int] = (2, 3)
 
 # Physical dimensions
 WHEEL_DIAMETER_M: float = 0.1524
-TRACK_WIDTH_M: float = 0.661
+TRACK_WIDTH_M: float = 0.300
 
 # Encoder configuration
 ENCODER_PULSES_PER_REV: int = 400
