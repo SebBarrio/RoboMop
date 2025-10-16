@@ -21,22 +21,27 @@ Modes:
 from __future__ import annotations
 
 import argparse
+import json
 import math
 import os
+import socket
+import sys
+import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Dict, Optional, Sequence, Tuple
+from pathlib import Path
+from typing import Optional, Sequence, Tuple
 
-try:
-    from smbus2 import SMBus
-except ImportError:  # pragma: no cover - hardware dependency
-    SMBus = None
+# Add src to path for IMU imports
+sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 import board
 import busio
 from adafruit_pca9685 import PCA9685
 from gpiozero import RotaryEncoder
+
+from sensors.imu import MPU9250, ImuSample
 
 # Use non-interactive backend for headless plotting
 import matplotlib
@@ -400,121 +405,128 @@ class DifferentialOdometry:
         return self.x, self.y, self.psi, self._omega_filt_l, self._omega_filt_r
 
 
-class MPU9250Sensor:
-    """Minimal MPU9250 reader for sensor fusion."""
 
-    PWR_MGMT_1 = 0x6B
-    ACCEL_XOUT_H = 0x3B
-    GYRO_XOUT_H = 0x43
-    WHO_AM_I = 0x75
-    INT_PIN_CFG = 0x37
 
-    AK8963_ADDRESS = 0x0C
-    AK8963_WHO_AM_I = 0x00
-    AK8963_CNTL1 = 0x0A
-    AK8963_ST1 = 0x02
-    AK8963_XOUT_L = 0x03
+class IMUSocketServer:
+    """Broadcasts IMU data over TCP socket for external visualization."""
 
-    ACCEL_SCALE = 16384.0
-    GYRO_SCALE = 131.0
+    def __init__(self, host: str = "0.0.0.0", port: int = 9250) -> None:
+        self.host = host
+        self.port = port
+        self.server_socket: Optional[socket.socket] = None
+        self.client_socket: Optional[socket.socket] = None
+        self.running = False
+        self.accept_thread: Optional[threading.Thread] = None
+        self._lock = threading.Lock()
 
-    def __init__(self, bus: int, address: int) -> None:
-        if SMBus is None:
-            raise RuntimeError("smbus2 library not available; install smbus2 to enable IMU support")
-        self._bus_num = bus
-        self._address = address
-        self._bus: Optional[Any] = None
-        self._gyro_offsets = (0.0, 0.0, 0.0)
-        self._magnetometer_enabled = False
-
-    def initialize(self) -> None:
-        self._bus = SMBus(self._bus_num)
-        who_am_i = self._bus.read_byte_data(self._address, self.WHO_AM_I)
-        if who_am_i not in (0x71, 0x73):
-            print(f"Warning: Unexpected MPU9250 WHO_AM_I value 0x{who_am_i:02x}")
-
-        self._bus.write_byte_data(self._address, self.PWR_MGMT_1, 0x00)
-        time.sleep(0.1)
-        self._initialize_magnetometer()
-        self._calibrate_gyroscope()
-
-    def read(self) -> Optional[Dict[str, Tuple[float, float, float]]]:
-        if self._bus is None:
-            return None
+    def start(self) -> bool:
+        """Start the socket server."""
         try:
-            data = self._bus.read_i2c_block_data(self._address, self.ACCEL_XOUT_H, 14)
-            ax_raw = self._bytes_to_int16(data[0], data[1])
-            ay_raw = self._bytes_to_int16(data[2], data[3])
-            az_raw = self._bytes_to_int16(data[4], data[5])
-            gx_raw = self._bytes_to_int16(data[8], data[9])
-            gy_raw = self._bytes_to_int16(data[10], data[11])
-            gz_raw = self._bytes_to_int16(data[12], data[13])
+            self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            self.server_socket.bind((self.host, self.port))
+            self.server_socket.listen(1)
+            self.server_socket.settimeout(1.0)
+            self.running = True
+            
+            # Start accept thread
+            self.accept_thread = threading.Thread(target=self._accept_loop, daemon=True)
+            self.accept_thread.start()
+            
+            print(f"IMU socket server listening on {self.host}:{self.port}")
+            return True
+        except Exception as exc:
+            print(f"Failed to start IMU socket server: {exc}")
+            return False
 
-            accel_scale = 9.80665 / self.ACCEL_SCALE
-            ax = ax_raw * accel_scale
-            ay = ay_raw * accel_scale
-            az = az_raw * accel_scale
+    def _accept_loop(self) -> None:
+        """Accept client connections in background thread."""
+        while self.running:
+            try:
+                client, addr = self.server_socket.accept()
+                with self._lock:
+                    if self.client_socket is not None:
+                        try:
+                            self.client_socket.close()
+                        except Exception:
+                            pass
+                    self.client_socket = client
+                    self.client_socket.settimeout(1.0)
+                print(f"IMU visualizer connected from {addr}")
+            except socket.timeout:
+                continue
+            except Exception as exc:
+                if self.running:
+                    print(f"Accept error: {exc}")
+                break
 
-            gyro_scale = math.radians(1.0) / self.GYRO_SCALE
-            gx = gx_raw * gyro_scale - self._gyro_offsets[0]
-            gy = gy_raw * gyro_scale - self._gyro_offsets[1]
-            gz = gz_raw * gyro_scale - self._gyro_offsets[2]
-
-            return {
-                "accelerometer": (ax, ay, az),
-                "gyroscope": (gx, gy, gz),
-            }
-        except OSError as exc:
-            print(f"IMU read error: {exc}")
-            return None
-
-    def close(self) -> None:
-        if self._bus is not None:
-            self._bus.close()
-            self._bus = None
-
-    def _initialize_magnetometer(self) -> None:
-        if self._bus is None:
-            return
-        try:
-            self._bus.write_byte_data(self._address, self.INT_PIN_CFG, 0x02)
-            time.sleep(0.01)
-            mag_id = self._bus.read_byte_data(self.AK8963_ADDRESS, self.AK8963_WHO_AM_I)
-            if mag_id != 0x48:
+    def send_sample(self, sample: ImuSample) -> None:
+        """Send an IMU sample to connected client."""
+        with self._lock:
+            if self.client_socket is None:
                 return
-            self._bus.write_byte_data(self.AK8963_ADDRESS, self.AK8963_CNTL1, 0x16)
-            time.sleep(0.01)
-            self._magnetometer_enabled = True
-        except OSError:
-            self._magnetometer_enabled = False
+            
+            try:
+                # Convert ImuSample to dict format expected by visualizer
+                data = {
+                    "timestamp": sample.timestamp_s,
+                    "accelerometer": {
+                        "x": sample.acceleration_m_s2.x,
+                        "y": sample.acceleration_m_s2.y,
+                        "z": sample.acceleration_m_s2.z,
+                    },
+                    "gyroscope": {
+                        "x": math.degrees(sample.angular_velocity_rad_s.x),
+                        "y": math.degrees(sample.angular_velocity_rad_s.y),
+                        "z": math.degrees(sample.angular_velocity_rad_s.z),
+                    },
+                    "temperature": sample.temperature_c,
+                }
+                
+                # Add magnetometer if available
+                if sample.magnetic_field_uT is not None:
+                    data["magnetometer"] = {
+                        "x": sample.magnetic_field_uT.x,
+                        "y": sample.magnetic_field_uT.y,
+                        "z": sample.magnetic_field_uT.z,
+                    }
+                
+                # Send as JSON line
+                json_str = json.dumps(data) + "\n"
+                self.client_socket.sendall(json_str.encode("utf-8"))
+            except (BrokenPipeError, ConnectionResetError):
+                # Client disconnected
+                self.client_socket = None
+            except Exception:
+                # Silently ignore send errors
+                pass
 
-    def _calibrate_gyroscope(self, samples: int = 100) -> None:
-        if self._bus is None:
-            return
-        sum_x = 0.0
-        sum_y = 0.0
-        sum_z = 0.0
-        gyro_scale = math.radians(1.0) / self.GYRO_SCALE
-        for _ in range(samples):
-            data = self._bus.read_i2c_block_data(self._address, self.GYRO_XOUT_H, 6)
-            gx_raw = self._bytes_to_int16(data[0], data[1])
-            gy_raw = self._bytes_to_int16(data[2], data[3])
-            gz_raw = self._bytes_to_int16(data[4], data[5])
-            sum_x += gx_raw * gyro_scale
-            sum_y += gy_raw * gyro_scale
-            sum_z += gz_raw * gyro_scale
-            time.sleep(0.01)
-        self._gyro_offsets = (sum_x / samples, sum_y / samples, sum_z / samples)
-
-    @staticmethod
-    def _bytes_to_int16(high: int, low: int) -> int:
-        value = (high << 8) | low
-        if value >= 0x8000:
-            value = -((65535 - value) + 1)
-        return value
+    def stop(self) -> None:
+        """Stop the socket server."""
+        self.running = False
+        
+        with self._lock:
+            if self.client_socket is not None:
+                try:
+                    self.client_socket.close()
+                except Exception:
+                    pass
+                self.client_socket = None
+        
+        if self.server_socket is not None:
+            try:
+                self.server_socket.close()
+            except Exception:
+                pass
+            self.server_socket = None
+        
+        if self.accept_thread is not None:
+            self.accept_thread.join(timeout=2.0)
 
 
 class IMUFusion:
+    """Fuses odometry with IMU data for improved pose estimation."""
+
     def __init__(self, heading_alpha: float, position_alpha: float) -> None:
         self._heading_alpha = min(0.999, max(0.0, heading_alpha))
         self._position_alpha = min(0.999, max(0.0, position_alpha))
@@ -539,13 +551,23 @@ class IMUFusion:
         odom_x: float,
         odom_y: float,
         odom_psi: float,
-        imu_data: Optional[Dict[str, Tuple[float, float, float]]],
+        imu_sample: Optional[ImuSample],
     ) -> Tuple[float, float, float]:
+        """Update fused pose estimate.
+        
+        Args:
+            dt: Time step in seconds
+            odom_x, odom_y, odom_psi: Odometry-based pose
+            imu_sample: IMU sample from MPU9250, or None if unavailable
+            
+        Returns:
+            Tuple of (x, y, psi) fused pose estimate
+        """
         if self._last_odom is None:
             self.reset(odom_x, odom_y, odom_psi)
             return self.x, self.y, self.psi
 
-        if imu_data is None or dt <= 0.0:
+        if imu_sample is None or dt <= 0.0:
             self._last_odom = (odom_x, odom_y, odom_psi)
             self.x = odom_x
             self.y = odom_y
@@ -554,30 +576,38 @@ class IMUFusion:
             self._vy_imu = 0.0
             return self.x, self.y, self.psi
 
-        gyro = imu_data["gyroscope"]
-        accel = imu_data["accelerometer"]
+        # Extract IMU data from sample
+        gyro_z = imu_sample.angular_velocity_rad_s.z
+        accel_x = imu_sample.acceleration_m_s2.x
+        accel_y = imu_sample.acceleration_m_s2.y
 
-        psi_pred = wrap_angle(self.psi + gyro[2] * dt)
+        # Fuse heading using gyro integration and odometry
+        psi_pred = wrap_angle(self.psi + gyro_z * dt)
         psi_fused = wrap_angle(
             (self._heading_alpha * psi_pred) + ((1.0 - self._heading_alpha) * odom_psi)
         )
 
+        # Transform acceleration to world frame
         cos_psi = math.cos(psi_fused)
         sin_psi = math.sin(psi_fused)
-        ax_world = (accel[0] * cos_psi) - (accel[1] * sin_psi)
-        ay_world = (accel[0] * sin_psi) + (accel[1] * cos_psi)
+        ax_world = (accel_x * cos_psi) - (accel_y * sin_psi)
+        ay_world = (accel_x * sin_psi) + (accel_y * cos_psi)
 
+        # Integrate acceleration for IMU-based velocity
         self._vx_imu += ax_world * dt
         self._vy_imu += ay_world * dt
 
+        # Compute odometry velocity
         dx_odom = odom_x - self._last_odom[0]
         dy_odom = odom_y - self._last_odom[1]
         odom_vx = dx_odom / dt
         odom_vy = dy_odom / dt
 
+        # Blend IMU and odometry velocities
         vx_blend = (self._position_alpha * self._vx_imu) + ((1.0 - self._position_alpha) * odom_vx)
         vy_blend = (self._position_alpha * self._vy_imu) + ((1.0 - self._position_alpha) * odom_vy)
 
+        # Predict position and fuse with odometry
         pred_x = self.x + vx_blend * dt
         pred_y = self.y + vy_blend * dt
         self.x = (self._position_alpha * pred_x) + ((1.0 - self._position_alpha) * odom_x)
@@ -679,6 +709,8 @@ def run_triangle(
     setpoint_lp_tau_s: float = SETPOINT_LP_TAU_S_DEFAULT,
     setpoint_slew_radps2: float = SETPOINT_SLEW_RADPS2_DEFAULT,
     imu_config: Optional[IMUConfig] = None,
+    imu_socket_port: Optional[int] = None,
+    imu_calibration_samples: int = 100,
 ) -> None:
     """Main control loop to execute the triangle path."""
     # Hardware init
@@ -689,55 +721,63 @@ def run_triangle(
     encoders = SideEncoderReader(ENCODER_CHANNELS, ENCODER_PULSES_PER_REV)
     odom = DifferentialOdometry(encoders, speed_lp_tau_s=SPEED_LP_TAU_S_DEFAULT)
 
-    imu_sensor: Optional[MPU9250Sensor] = None
+    imu_sensor: Optional[MPU9250] = None
     imu_fusion: Optional[IMUFusion] = None
+    imu_socket_server: Optional[IMUSocketServer] = None
+    
     if imu_config is not None:
         try:
-            imu_sensor = MPU9250Sensor(imu_config.bus, imu_config.address)
+            imu_sensor = MPU9250(
+                bus=imu_config.bus,
+                address=imu_config.address,
+                sample_rate_hz=50.0,  # Match control loop rate
+                filter_alpha=imu_config.heading_alpha,
+            )
             imu_sensor.initialize()
+            
+            # Start socket server if requested
+            if imu_socket_port is not None:
+                imu_socket_server = IMUSocketServer(port=imu_socket_port)
+                imu_socket_server.start()
+            
+            # Calibration period: collect samples while stationary
+            print(f"\n{'=' * 60}")
+            print("⚠️  IMU CALIBRATION PHASE")
+            print(f"{'=' * 60}")
+            print(f"Collecting {imu_calibration_samples} samples for stabilization...")
+            print("KEEP THE ROBOT COMPLETELY STILL during calibration!")
+            print(f"{'=' * 60}\n")
+            
+            calibration_start = time.monotonic()
+            for sample_idx in range(imu_calibration_samples):
+                sample = imu_sensor.read_sample()
+                if imu_socket_server is not None:
+                    imu_socket_server.send_sample(sample)
+                
+                # Progress indicator
+                if (sample_idx + 1) % 20 == 0:
+                    elapsed = time.monotonic() - calibration_start
+                    progress = (sample_idx + 1) / imu_calibration_samples * 100
+                    print(f"  Calibration: {sample_idx + 1}/{imu_calibration_samples} "
+                          f"({progress:.0f}%) - {elapsed:.1f}s elapsed")
+                
+                time.sleep(0.02)  # 50 Hz
+            
+            print(f"\n✓ IMU calibration complete ({time.monotonic() - calibration_start:.1f}s)")
+            print(f"{'=' * 60}\n")
+            
             imu_fusion = IMUFusion(
                 heading_alpha=imu_config.heading_alpha,
                 position_alpha=imu_config.position_alpha,
             )
             imu_fusion.reset(odom.x, odom.y, odom.psi)
-            print("IMU fusion enabled")
+            print("IMU fusion enabled\n")
         except Exception as exc:
             imu_sensor = None
             imu_fusion = None
-            print(f"Warning: IMU initialization failed ({exc}); continuing without fusion")
-
-    imu_sensor: Optional[MPU9250Sensor] = None
-    imu_fusion: Optional[IMUFusion] = None
-    if imu_config is not None:
-        try:
-            imu_sensor = MPU9250Sensor(imu_config.bus, imu_config.address)
-            imu_sensor.initialize()
-            imu_fusion = IMUFusion(
-                heading_alpha=imu_config.heading_alpha,
-                position_alpha=imu_config.position_alpha,
-            )
-            imu_fusion.reset(odom.x, odom.y, odom.psi)
-            print("IMU fusion enabled")
-        except Exception as exc:
-            imu_sensor = None
-            imu_fusion = None
-            print(f"Warning: IMU initialization failed ({exc}); continuing without fusion")
-
-    imu_sensor: Optional[MPU9250Sensor] = None
-    imu_fusion: Optional[IMUFusion] = None
-    if imu_config is not None:
-        try:
-            imu_sensor = MPU9250Sensor(imu_config.bus, imu_config.address)
-            imu_sensor.initialize()
-            imu_fusion = IMUFusion(
-                heading_alpha=imu_config.heading_alpha,
-                position_alpha=imu_config.position_alpha,
-            )
-            imu_fusion.reset(odom.x, odom.y, odom.psi)
-            print("IMU fusion enabled")
-        except Exception as exc:
-            imu_sensor = None
-            imu_fusion = None
+            if imu_socket_server is not None:
+                imu_socket_server.stop()
+                imu_socket_server = None
             print(f"Warning: IMU initialization failed ({exc}); continuing without fusion")
 
     # Setpoint shapers for desired wheel speeds
@@ -784,8 +824,10 @@ def run_triangle(
                 # Update odometry and measured wheel speeds
                 odom_x, odom_y, odom_psi, omega_l_meas, omega_r_meas = odom.update(dt)
                 if imu_fusion is not None:
-                    imu_payload = imu_sensor.read() if imu_sensor is not None else None
-                    x, y, psi = imu_fusion.update(dt, odom_x, odom_y, odom_psi, imu_payload)
+                    imu_sample = imu_sensor.read_sample() if imu_sensor is not None else None
+                    if imu_sample is not None and imu_socket_server is not None:
+                        imu_socket_server.send_sample(imu_sample)
+                    x, y, psi = imu_fusion.update(dt, odom_x, odom_y, odom_psi, imu_sample)
                 else:
                     x, y, psi = odom_x, odom_y, odom_psi
 
@@ -853,8 +895,8 @@ def run_triangle(
 
                 odom_x, odom_y, odom_psi, omega_l_meas, omega_r_meas = odom.update(dt)
                 if imu_fusion is not None:
-                    imu_payload = imu_sensor.read() if imu_sensor is not None else None
-                    x, y, psi = imu_fusion.update(dt, odom_x, odom_y, odom_psi, imu_payload)
+                    imu_sample = imu_sensor.read_sample() if imu_sensor is not None else None
+                    x, y, psi = imu_fusion.update(dt, odom_x, odom_y, odom_psi, imu_sample)
                 else:
                     x, y, psi = odom_x, odom_y, odom_psi
                 v_cmd, w_cmd = pose_ctrl.compute_rotate_to(psi, target_psi, dt)
@@ -923,8 +965,13 @@ def run_triangle(
         except Exception:
             pass
         try:
-            if imu_sensor is not None:
-                imu_sensor.close()
+            if imu_sensor is not None and hasattr(imu_sensor, '_bus') and imu_sensor._bus is not None:
+                imu_sensor._bus.close()
+        except Exception:
+            pass
+        try:
+            if imu_socket_server is not None:
+                imu_socket_server.stop()
         except Exception:
             pass
         try:
@@ -1008,6 +1055,8 @@ def run_line(
     setpoint_lp_tau_s: float = SETPOINT_LP_TAU_S_DEFAULT,
     setpoint_slew_radps2: float = SETPOINT_SLEW_RADPS2_DEFAULT,
     imu_config: Optional[IMUConfig] = None,
+    imu_socket_port: Optional[int] = None,
+    imu_calibration_samples: int = 100,
 ) -> None:
     """Main control loop to execute a straight line path (no rotations)."""
     # Hardware init
@@ -1018,21 +1067,63 @@ def run_line(
     encoders = SideEncoderReader(ENCODER_CHANNELS, ENCODER_PULSES_PER_REV)
     odom = DifferentialOdometry(encoders, speed_lp_tau_s=SPEED_LP_TAU_S_DEFAULT)
 
-    imu_sensor: Optional[MPU9250Sensor] = None
+    imu_sensor: Optional[MPU9250] = None
     imu_fusion: Optional[IMUFusion] = None
+    imu_socket_server: Optional[IMUSocketServer] = None
+    
     if imu_config is not None:
         try:
-            imu_sensor = MPU9250Sensor(imu_config.bus, imu_config.address)
+            imu_sensor = MPU9250(
+                bus=imu_config.bus,
+                address=imu_config.address,
+                sample_rate_hz=50.0,  # Match control loop rate
+                filter_alpha=imu_config.heading_alpha,
+            )
             imu_sensor.initialize()
+            
+            # Start socket server if requested
+            if imu_socket_port is not None:
+                imu_socket_server = IMUSocketServer(port=imu_socket_port)
+                imu_socket_server.start()
+            
+            # Calibration period: collect samples while stationary
+            print(f"\n{'=' * 60}")
+            print("⚠️  IMU CALIBRATION PHASE")
+            print(f"{'=' * 60}")
+            print(f"Collecting {imu_calibration_samples} samples for stabilization...")
+            print("KEEP THE ROBOT COMPLETELY STILL during calibration!")
+            print(f"{'=' * 60}\n")
+            
+            calibration_start = time.monotonic()
+            for sample_idx in range(imu_calibration_samples):
+                sample = imu_sensor.read_sample()
+                if imu_socket_server is not None:
+                    imu_socket_server.send_sample(sample)
+                
+                # Progress indicator
+                if (sample_idx + 1) % 20 == 0:
+                    elapsed = time.monotonic() - calibration_start
+                    progress = (sample_idx + 1) / imu_calibration_samples * 100
+                    print(f"  Calibration: {sample_idx + 1}/{imu_calibration_samples} "
+                          f"({progress:.0f}%) - {elapsed:.1f}s elapsed")
+                
+                time.sleep(0.02)  # 50 Hz
+            
+            print(f"\n✓ IMU calibration complete ({time.monotonic() - calibration_start:.1f}s)")
+            print(f"{'=' * 60}\n")
+            
             imu_fusion = IMUFusion(
                 heading_alpha=imu_config.heading_alpha,
                 position_alpha=imu_config.position_alpha,
             )
             imu_fusion.reset(odom.x, odom.y, odom.psi)
-            print("IMU fusion enabled")
+            print("IMU fusion enabled\n")
         except Exception as exc:
             imu_sensor = None
             imu_fusion = None
+            if imu_socket_server is not None:
+                imu_socket_server.stop()
+                imu_socket_server = None
             print(f"Warning: IMU initialization failed ({exc}); continuing without fusion")
 
     # Setpoint shapers for desired wheel speeds
@@ -1079,8 +1170,10 @@ def run_line(
                 # Update odometry and measured wheel speeds
                 odom_x, odom_y, odom_psi, omega_l_meas, omega_r_meas = odom.update(dt)
                 if imu_fusion is not None:
-                    imu_payload = imu_sensor.read() if imu_sensor is not None else None
-                    x, y, psi = imu_fusion.update(dt, odom_x, odom_y, odom_psi, imu_payload)
+                    imu_sample = imu_sensor.read_sample() if imu_sensor is not None else None
+                    if imu_sample is not None and imu_socket_server is not None:
+                        imu_socket_server.send_sample(imu_sample)
+                    x, y, psi = imu_fusion.update(dt, odom_x, odom_y, odom_psi, imu_sample)
                 else:
                     x, y, psi = odom_x, odom_y, odom_psi
 
@@ -1152,8 +1245,13 @@ def run_line(
         except Exception:
             pass
         try:
-            if imu_sensor is not None:
-                imu_sensor.close()
+            if imu_sensor is not None and hasattr(imu_sensor, '_bus') and imu_sensor._bus is not None:
+                imu_sensor._bus.close()
+        except Exception:
+            pass
+        try:
+            if imu_socket_server is not None:
+                imu_socket_server.stop()
         except Exception:
             pass
         try:
@@ -1304,6 +1402,18 @@ def main() -> None:
         default=0.9,
         help="Complementary filter weight for IMU acceleration vs odometry",
     )
+    parser.add_argument(
+        "--imu-socket-port",
+        type=int,
+        default=None,
+        help="Enable IMU data socket server on specified port (e.g., 9250) for visualization",
+    )
+    parser.add_argument(
+        "--imu-calibration-samples",
+        type=int,
+        default=100,
+        help="Number of IMU samples to collect during calibration phase (default: 100)",
+    )
 
     args = parser.parse_args()
 
@@ -1329,6 +1439,10 @@ def main() -> None:
             f"IMU fusion enabled (bus={args.imu_bus}, address=0x{args.imu_address:02X}, "
             f"heading_alpha={args.imu_heading_alpha:.2f}, position_alpha={args.imu_position_alpha:.2f})"
         )
+        if args.imu_socket_port is not None:
+            print(f"IMU socket server: enabled on port {args.imu_socket_port}")
+            print(f"  Connect visualizer: python mpu9250_visualizer.py --port {args.imu_socket_port}")
+        print(f"IMU calibration samples: {args.imu_calibration_samples}")
     print("=" * 60 + "\n")
 
     # Apply runtime tuning knobs
@@ -1362,6 +1476,8 @@ def main() -> None:
             setpoint_lp_tau_s=args.sp_lp_tau,
             setpoint_slew_radps2=args.sp_slew,
             imu_config=imu_config,
+            imu_socket_port=args.imu_socket_port,
+            imu_calibration_samples=args.imu_calibration_samples,
         )
     else:
         run_line(
@@ -1380,6 +1496,8 @@ def main() -> None:
             setpoint_lp_tau_s=args.sp_lp_tau,
             setpoint_slew_radps2=args.sp_slew,
             imu_config=imu_config,
+            imu_socket_port=args.imu_socket_port,
+            imu_calibration_samples=args.imu_calibration_samples,
         )
 
 
