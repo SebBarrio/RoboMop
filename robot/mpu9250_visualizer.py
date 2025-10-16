@@ -148,11 +148,19 @@ class IMUVisualizer:
         # Orientation state (quaternion)
         self.orientation = Rotation.from_quat([0, 0, 0, 1])
         
+        # Initialization state
+        self.orientation_initialized = False
+        self.reference_orientation = None  # Store initial orientation as reference zero
+        self.init_buffer = []
+        self.init_samples_needed = 100  # Collect 100 samples (~2 seconds at 50Hz)
+        
         # Gyroscope integration
         self.last_timestamp = None
         
         # Complementary filter parameters
         self.alpha = 0.98  # Weight for gyroscope (0.98 = 98% gyro, 2% accel)
+        self.init_alpha = 0.5  # Higher accel weight during initialization (faster convergence)
+        self.convergence_frames = 100  # Continue converging for 100 frames after init
         
         # Memory management
         self.history_seconds = history_seconds
@@ -240,6 +248,46 @@ class IMUVisualizer:
             data['gyroscope']['z']
         ])
         
+        # Initialize orientation from first accelerometer readings
+        if not self.orientation_initialized:
+            self.init_buffer.append(accel)
+            
+            if len(self.init_buffer) >= self.init_samples_needed:
+                # Average the accelerometer readings for robust initialization
+                avg_accel = np.mean(self.init_buffer, axis=0)
+                accel_norm = np.linalg.norm(avg_accel)
+                
+                if accel_norm > 0.1:
+                    avg_accel_normalized = avg_accel / accel_norm
+                    
+                    # Calculate initial orientation from accelerometer
+                    # Gravity vector in world frame (pointing down)
+                    gravity = np.array([0, 0, -1])
+                    
+                    # Find rotation that aligns gravity with measured acceleration
+                    v = np.cross(gravity, avg_accel_normalized)
+                    s = np.linalg.norm(v)
+                    c = np.dot(gravity, avg_accel_normalized)
+                    
+                    if s > 1e-6:
+                        # Rodrigues' rotation formula
+                        v_skew = np.array([
+                            [0, -v[2], v[1]],
+                            [v[2], 0, -v[0]],
+                            [-v[1], v[0], 0]
+                        ])
+                        R = np.eye(3) + v_skew + v_skew @ v_skew * ((1 - c) / (s ** 2))
+                        self.orientation = Rotation.from_matrix(R)
+                    
+                    # Save this as the reference orientation (zero point)
+                    self.reference_orientation = self.orientation
+                    self.orientation_initialized = True
+                    self.last_timestamp = timestamp
+                    print(f"✓ Orientation initialized from {self.init_samples_needed} samples")
+                    print(f"  Display will show orientation relative to initial position")
+                    
+            return
+        
         # Convert gyro from degrees/s to radians/s
         gyro_rad = np.radians(gyro)
         
@@ -259,41 +307,46 @@ class IMUVisualizer:
         rotation_delta = Rotation.from_rotvec(gyro_rad * dt)
         gyro_orientation = self.orientation * rotation_delta
         
-        # Compute orientation from accelerometer (correction step)
+        # Compute tilt correction from accelerometer (ONLY pitch and roll, NOT yaw)
         accel_norm = np.linalg.norm(accel)
-        if accel_norm > 0:
+        if accel_norm > 0.5:  # Only apply correction if acceleration is reasonable
             accel_normalized = accel / accel_norm
             
-            # Calculate tilt from accelerometer
-            # Assuming Z-axis should point up (opposite to gravity)
-            gravity = np.array([0, 0, -1])
+            # Use adaptive alpha during convergence phase
+            frames_since_init = self.frame_count - self.init_samples_needed
+            if frames_since_init < self.convergence_frames:
+                current_alpha = self.init_alpha
+            else:
+                current_alpha = self.alpha
             
-            # Find rotation that aligns gravity with measured acceleration
-            v = np.cross(gravity, accel_normalized)
-            s = np.linalg.norm(v)
-            c = np.dot(gravity, accel_normalized)
+            # Extract current orientation's Z-axis (up direction)
+            current_up = gyro_orientation.as_matrix()[:, 2]
             
-            if s > 1e-6:  # Avoid division by zero
-                # Rodrigues' rotation formula
-                v_skew = np.array([
-                    [0, -v[2], v[1]],
-                    [v[2], 0, -v[0]],
-                    [-v[1], v[0], 0]
-                ])
-                R = np.eye(3) + v_skew + v_skew @ v_skew * ((1 - c) / (s ** 2))
-                accel_orientation = Rotation.from_matrix(R)
+            # Calculate tilt error (difference between measured and expected gravity)
+            # Measured gravity direction (inverted because accel measures opposite of gravity)
+            measured_up = -accel_normalized
+            
+            # Compute correction axis and angle (only for tilt, preserves heading)
+            correction_axis = np.cross(current_up, measured_up)
+            correction_axis_norm = np.linalg.norm(correction_axis)
+            
+            if correction_axis_norm > 1e-6:
+                # Normalize correction axis
+                correction_axis = correction_axis / correction_axis_norm
                 
-                # Complementary filter
-                self.orientation = Rotation.from_quat(
-                    self.alpha * gyro_orientation.as_quat() +
-                    (1 - self.alpha) * accel_orientation.as_quat()
-                )
-                self.orientation = Rotation.from_quat(
-                    self.orientation.as_quat() / np.linalg.norm(self.orientation.as_quat())
-                )
+                # Correction angle (small for stability)
+                correction_angle = np.arcsin(min(1.0, correction_axis_norm))
+                
+                # Scale correction by accelerometer weight
+                correction_angle *= (1 - current_alpha)
+                
+                # Apply tilt correction
+                tilt_correction = Rotation.from_rotvec(correction_axis * correction_angle)
+                self.orientation = tilt_correction * gyro_orientation
             else:
                 self.orientation = gyro_orientation
         else:
+            # If acceleration is too high/low (motion), trust gyro only
             self.orientation = gyro_orientation
 
     def update_plot(self, frame):
@@ -319,10 +372,34 @@ class IMUVisualizer:
         
         # Update 3D orientation plot
         self.ax.cla()
-        self.setup_3d_plot()
+        self.ax.set_xlim([-1, 1])
+        self.ax.set_ylim([-1, 1])
+        self.ax.set_zlim([-1, 1])
+        self.ax.set_xlabel('X')
+        self.ax.set_ylabel('Y')
+        self.ax.set_zlabel('Z')
+        
+        # Dynamic title showing initialization/convergence status
+        if not self.orientation_initialized:
+            progress = len(self.init_buffer)
+            self.ax.set_title(f'IMU Orientation [Initializing: {progress}/{self.init_samples_needed}]')
+        else:
+            frames_since_init = self.frame_count - self.init_samples_needed
+            if frames_since_init < self.convergence_frames:
+                remaining = self.convergence_frames - frames_since_init
+                self.ax.set_title(f'IMU Orientation - Relative [Converging: {remaining} frames]')
+            else:
+                self.ax.set_title('IMU Orientation - Relative to Start Position')
+        
+        # Calculate relative orientation (rotation from reference to current)
+        # This makes the display always start at identity (zero rotation)
+        if self.reference_orientation is not None:
+            relative_orientation = self.reference_orientation.inv() * self.orientation
+        else:
+            relative_orientation = self.orientation
         
         # Get rotation matrix
-        R = self.orientation.as_matrix()
+        R = relative_orientation.as_matrix()
         
         # Transform and plot axes
         origin = np.array([0, 0, 0])
@@ -472,6 +549,10 @@ def main():
         return
     
     print(f"Receiving data... (showing last {history_seconds} seconds)")
+    print("")
+    print("⚠️  IMPORTANT: Keep sensor STILL for first 2 seconds during initialization!")
+    print("   The initial position will be set as the reference (0,0,0)")
+    print("")
     print("Close window to exit.")
     
     try:
