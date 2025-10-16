@@ -135,6 +135,42 @@ def wrap_angle(angle_rad: float) -> float:
     return a - math.pi
 
 
+def forward_kinematics(
+    omega_left_rad_s: float,
+    omega_right_rad_s: float,
+    track_width_m: float,
+    wheel_radius_m: float,
+) -> Tuple[float, float]:
+    """Compute body linear and angular velocity from wheel angular speeds.
+
+    Returns (v_bx, omega_bz).
+    """
+    v_left = wheel_radius_m * omega_left_rad_s
+    v_right = wheel_radius_m * omega_right_rad_s
+    v_bx = 0.5 * (v_right + v_left)
+    omega_bz = (v_right - v_left) / track_width_m
+    return v_bx, omega_bz
+
+
+def inverse_kinematics(
+    v_bx_m_s: float,
+    omega_bz_rad_s: float,
+    track_width_m: float,
+    wheel_radius_m: float,
+) -> Tuple[float, float]:
+    """Compute wheel angular speeds from body linear and angular velocity.
+
+    Implements the differential-drive model:
+      v_left  = v_bx - (omega_bz * w / 2)
+      v_right = v_bx + (omega_bz * w / 2)
+      omega   = v / r
+    Returns (omega_left, omega_right) in rad/s.
+    """
+    v_left = v_bx_m_s - (omega_bz_rad_s * (track_width_m / 2.0))
+    v_right = v_bx_m_s + (omega_bz_rad_s * (track_width_m / 2.0))
+    return (v_left / wheel_radius_m, v_right / wheel_radius_m)
+
+
 @dataclass(frozen=True)
 class MotorConfig:
     index: int
@@ -762,12 +798,11 @@ def run_triangle(
                 if abs(math.degrees(heading_err)) > HEADING_MOVE_GATE_DEG_DEFAULT:
                     v_cmd = 0.0
 
-                # Map to wheel angular speeds
-                v_l = v_cmd - (w_cmd * (TRACK_WIDTH_M / 2.0))
-                v_r = v_cmd + (w_cmd * (TRACK_WIDTH_M / 2.0))
+                # Inverse kinematics -> desired wheel angular speeds (rad/s)
                 r = WHEEL_DIAMETER_M / 2.0
-                omega_l_des_raw = v_l / r
-                omega_r_des_raw = v_r / r
+                omega_l_des_raw, omega_r_des_raw = inverse_kinematics(
+                    v_cmd, w_cmd, TRACK_WIDTH_M, r
+                )
 
                 # Shape desired wheel speeds
                 omega_l_des = sp_left.shape(omega_l_des_raw, dt)
@@ -824,12 +859,11 @@ def run_triangle(
                     x, y, psi = odom_x, odom_y, odom_psi
                 v_cmd, w_cmd = pose_ctrl.compute_rotate_to(psi, target_psi, dt)
 
-                # Map to wheel speeds (v=0)
-                v_l = -w_cmd * (TRACK_WIDTH_M / 2.0)
-                v_r = w_cmd * (TRACK_WIDTH_M / 2.0)
+                # Inverse kinematics for pure rotation (v=0)
                 r = WHEEL_DIAMETER_M / 2.0
-                omega_l_des_raw = v_l / r
-                omega_r_des_raw = v_r / r
+                omega_l_des_raw, omega_r_des_raw = inverse_kinematics(
+                    0.0, w_cmd, TRACK_WIDTH_M, r
+                )
 
                 # Shape desired wheel speeds for rotation as well
                 omega_l_des = sp_left.shape(omega_l_des_raw, dt)
@@ -1059,12 +1093,11 @@ def run_line(
                 if abs(math.degrees(heading_err)) > HEADING_MOVE_GATE_DEG_DEFAULT:
                     v_cmd = 0.0
 
-                # Map to wheel angular speeds
-                v_l = v_cmd - (w_cmd * (TRACK_WIDTH_M / 2.0))
-                v_r = v_cmd + (w_cmd * (TRACK_WIDTH_M / 2.0))
+                # Inverse kinematics -> desired wheel angular speeds (rad/s)
                 r = WHEEL_DIAMETER_M / 2.0
-                omega_l_des_raw = v_l / r
-                omega_r_des_raw = v_r / r
+                omega_l_des_raw, omega_r_des_raw = inverse_kinematics(
+                    v_cmd, w_cmd, TRACK_WIDTH_M, r
+                )
 
                 # Shape desired wheel speeds
                 omega_l_des = sp_left.shape(omega_l_des_raw, dt)
