@@ -320,7 +320,7 @@ class MPU9250SocketSender:
             gyro_z = self.gyro_filtered_z
             
             # Apply deadband to gyroscope (suppress very small noise values)
-            deadband = 0.05  # degrees/s
+            deadband = 0.5  # degrees/s
             if abs(gyro_x) < deadband:
                 gyro_x = 0.0
             if abs(gyro_y) < deadband:

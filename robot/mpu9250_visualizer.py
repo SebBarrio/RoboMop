@@ -7,7 +7,7 @@ Requirements:
     pip install matplotlib numpy scipy
 
 Usage:
-    python mpu9250_visualizer.py [--host HOST] [--port PORT]
+    python mpu9250_visualizer.py [--host HOST] [--port PORT] [--history SECONDS]
 """
 
 import socket
@@ -15,6 +15,7 @@ import json
 import argparse
 import threading
 import time
+import gc
 from queue import Queue, Empty
 from typing import Optional, Dict, Any
 
@@ -40,7 +41,7 @@ class IMUDataReceiver:
         self.port = port
         self.socket = None
         self.running = False
-        self.data_queue = Queue(maxsize=100)
+        self.data_queue = Queue(maxsize=50)  # Reduced from 100 to prevent memory buildup
         self.receive_thread = None
 
     def connect(self) -> bool:
@@ -134,12 +135,13 @@ class IMUDataReceiver:
 class IMUVisualizer:
     """3D visualization of IMU orientation."""
 
-    def __init__(self, receiver: IMUDataReceiver):
+    def __init__(self, receiver: IMUDataReceiver, history_seconds: float = 10.0):
         """
         Initialize the visualizer.
 
         Args:
             receiver: IMUDataReceiver instance
+            history_seconds: Number of seconds of data to keep in history
         """
         self.receiver = receiver
         
@@ -152,6 +154,10 @@ class IMUVisualizer:
         # Complementary filter parameters
         self.alpha = 0.98  # Weight for gyroscope (0.98 = 98% gyro, 2% accel)
         
+        # Memory management
+        self.history_seconds = history_seconds
+        self.frame_count = 0
+        
         # Setup plot
         self.fig = plt.figure(figsize=(12, 10))
         self.ax = self.fig.add_subplot(221, projection='3d')
@@ -159,8 +165,7 @@ class IMUVisualizer:
         self.ax_gyro = self.fig.add_subplot(223)
         self.ax_mag = self.fig.add_subplot(224)
         
-        # Data buffers for plots
-        self.max_history = 200
+        # Data buffers for plots (using fixed-size deques for efficient memory management)
         self.accel_history = {'x': [], 'y': [], 'z': [], 't': []}
         self.gyro_history = {'x': [], 'y': [], 'z': [], 't': []}
         self.mag_history = {'x': [], 'y': [], 'z': [], 't': []}
@@ -171,6 +176,11 @@ class IMUVisualizer:
         
         # Initialize 2D plots
         self.setup_2d_plots()
+        
+        # Line objects for efficient updating (avoid recreating on each frame)
+        self.accel_lines = None
+        self.gyro_lines = None
+        self.mag_lines = None
 
     def setup_3d_plot(self):
         """Setup the 3D orientation plot."""
@@ -293,6 +303,11 @@ class IMUVisualizer:
         Args:
             frame: Frame number (unused)
         """
+        # Periodic garbage collection (every 100 frames = ~2 seconds at 50Hz)
+        self.frame_count += 1
+        if self.frame_count % 100 == 0:
+            gc.collect()
+        
         # Get latest data
         data = self.receiver.get_latest_data()
         
@@ -351,15 +366,28 @@ class IMUVisualizer:
             self.mag_history['z'].append(0.0)
             self.mag_history['t'].append(current_time)
         
-        # Trim history
+        # Trim history based on time window (keeps only recent data)
+        cutoff_time = current_time - self.history_seconds
         for hist in [self.accel_history, self.gyro_history, self.mag_history]:
-            if len(hist['t']) > self.max_history:
+            # Find first index where time > cutoff_time
+            times = hist['t']
+            if times and times[0] < cutoff_time:
+                # Binary search for efficiency
+                start_idx = 0
+                for i, t in enumerate(times):
+                    if t >= cutoff_time:
+                        start_idx = i
+                        break
+                
+                # Trim all arrays
                 for key in hist:
-                    hist[key] = hist[key][-self.max_history:]
+                    hist[key] = hist[key][start_idx:]
         
         # Update 2D plots
         self.ax_accel.cla()
-        self.ax_accel.set_title('Accelerometer (m/s²)')
+        # Add data point count to title for memory monitoring
+        num_points = len(self.accel_history['t'])
+        self.ax_accel.set_title(f'Accelerometer (m/s²) - {num_points} points')
         self.ax_accel.set_xlabel('Time (s)')
         self.ax_accel.set_ylabel('Acceleration')
         self.ax_accel.grid(True)
@@ -421,8 +449,19 @@ def main():
         default=9250,
         help='Server port number (default: 9250)'
     )
+    parser.add_argument(
+        '--history',
+        type=float,
+        default=10.0,
+        help='Number of seconds of data to display (default: 10.0, max: 30.0)'
+    )
 
     args = parser.parse_args()
+    
+    # Clamp history to reasonable values (1-30 seconds)
+    history_seconds = max(1.0, min(30.0, args.history))
+    if history_seconds != args.history:
+        print(f"Warning: History clamped to {history_seconds} seconds (valid range: 1-30)")
 
     # Create receiver
     receiver = IMUDataReceiver(args.host, args.port)
@@ -432,11 +471,12 @@ def main():
         print("Failed to start receiver")
         return
     
-    print("Receiving data... Close window to exit.")
+    print(f"Receiving data... (showing last {history_seconds} seconds)")
+    print("Close window to exit.")
     
     try:
         # Create and run visualizer
-        visualizer = IMUVisualizer(receiver)
+        visualizer = IMUVisualizer(receiver, history_seconds=history_seconds)
         visualizer.run()
         
     except KeyboardInterrupt:
