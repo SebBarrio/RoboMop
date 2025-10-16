@@ -1,19 +1,22 @@
 #!/usr/bin/env python3
 """
-MPU9250 Sensor Data Socket Sender
-Reads accelerometer, gyroscope, magnetometer, and temperature data from MPU9250
+MPU9250/MPU6500 Sensor Data Socket Sender
+Reads accelerometer, gyroscope, magnetometer, and temperature data from MPU9250/MPU6500
 and sends it over a TCP socket connection.
 
 Features:
     - Automatic gyroscope calibration to reduce drift
-    - Magnetometer support (AK8963)
+    - Magnetometer support (AK8963) on MPU9250/9255
+    - Hardware DLPF (41Hz bandwidth) for noise reduction
+    - Software exponential moving average filter
+    - Gyroscope deadband to suppress drift
     - Direct I2C communication using smbus2
 
 Requirements:
     pip install smbus2
 
 Usage:
-    python mpu9250_socket_sender.py [--host HOST] [--port PORT] [--rate HZ]
+    python mpu9250_socket_sender.py [--host HOST] [--port PORT] [--rate HZ] [--filter ALPHA]
 """
 
 import socket
@@ -34,7 +37,7 @@ except ImportError:
 class MPU9250SocketSender:
     """Reads MPU9250 data and sends it over TCP socket."""
     
-    # MPU9250 Registers
+    # MPU9250/MPU6500 Registers
     PWR_MGMT_1 = 0x6B
     ACCEL_XOUT_H = 0x3B
     GYRO_XOUT_H = 0x43
@@ -42,6 +45,10 @@ class MPU9250SocketSender:
     WHO_AM_I = 0x75
     INT_PIN_CFG = 0x37
     USER_CTRL = 0x6A
+    CONFIG = 0x1A  # DLPF configuration
+    GYRO_CONFIG = 0x1B
+    ACCEL_CONFIG = 0x1C
+    ACCEL_CONFIG2 = 0x1D
     
     # AK8963 (Magnetometer) Registers
     AK8963_ADDRESS = 0x0C
@@ -82,6 +89,16 @@ class MPU9250SocketSender:
         self.gyro_offset_x = 0.0
         self.gyro_offset_y = 0.0
         self.gyro_offset_z = 0.0
+        
+        # Software low-pass filter (exponential moving average)
+        self.filter_alpha = 0.5  # 0 = no filtering, 1 = no smoothing
+        self.gyro_filtered_x = 0.0
+        self.gyro_filtered_y = 0.0
+        self.gyro_filtered_z = 0.0
+        self.accel_filtered_x = 0.0
+        self.accel_filtered_y = 0.0
+        self.accel_filtered_z = 0.0
+        self.filter_initialized = False
 
     def initialize_sensor(self) -> bool:
         """
@@ -98,22 +115,43 @@ class MPU9250SocketSender:
             
             # Check WHO_AM_I register
             who_am_i = self.bus.read_byte_data(self.mpu_address, self.WHO_AM_I)
-            if who_am_i not in [0x71, 0x73]:  # MPU9250/MPU9255
-                print(f"Warning: Unexpected WHO_AM_I value: 0x{who_am_i:02x} (expected 0x71 or 0x73)")
+            sensor_types = {
+                0x70: "MPU6500",
+                0x71: "MPU9250",
+                0x73: "MPU9255"
+            }
+            sensor_name = sensor_types.get(who_am_i, f"Unknown (0x{who_am_i:02x})")
+            print(f"Detected sensor: {sensor_name}")
             
-            # Wake up MPU9250 (clear sleep bit)
+            if who_am_i not in sensor_types:
+                print(f"Warning: Unexpected WHO_AM_I value: 0x{who_am_i:02x}")
+            
+            # Wake up sensor (clear sleep bit)
             self.bus.write_byte_data(self.mpu_address, self.PWR_MGMT_1, 0x00)
             time.sleep(0.1)  # Wait for sensor to wake up
             
-            # Try to initialize magnetometer
-            self._initialize_magnetometer()
+            # Configure Digital Low Pass Filter (DLPF) for gyroscope
+            # DLPF_CFG = 3: Bandwidth 41Hz, Delay 5.9ms (reduces noise significantly)
+            self.bus.write_byte_data(self.mpu_address, self.CONFIG, 0x03)
+            
+            # Configure accelerometer low-pass filter
+            # A_DLPF_CFG = 3: Bandwidth 41Hz (accel)
+            self.bus.write_byte_data(self.mpu_address, self.ACCEL_CONFIG2, 0x03)
+            
+            time.sleep(0.01)
+            
+            # Try to initialize magnetometer (only on MPU9250/9255)
+            if who_am_i in [0x71, 0x73]:
+                self._initialize_magnetometer()
+            else:
+                print("Magnetometer not available on this sensor model")
             
             # Calibrate gyroscope to reduce drift
-            print("Calibrating gyroscope... Keep sensor still!")
-            self._calibrate_gyroscope()
+            print("Calibrating gyroscope... Keep sensor still for 3 seconds!")
+            self._calibrate_gyroscope(samples=300)  # More samples for better calibration
             
             mag_status = "with magnetometer" if self.magnetometer_enabled else "accel/gyro only"
-            print(f"MPU9250 initialized successfully ({mag_status})")
+            print(f"{sensor_name} initialized successfully ({mag_status})")
             return True
             
         except OSError as e:
@@ -253,6 +291,42 @@ class MPU9250SocketSender:
             gyro_x = (gyro_x_raw / self.GYRO_SCALE) - self.gyro_offset_x  # degrees/s
             gyro_y = (gyro_y_raw / self.GYRO_SCALE) - self.gyro_offset_y
             gyro_z = (gyro_z_raw / self.GYRO_SCALE) - self.gyro_offset_z
+            
+            # Apply software low-pass filter (exponential moving average)
+            if not self.filter_initialized:
+                # Initialize filter with first reading
+                self.accel_filtered_x = accel_x
+                self.accel_filtered_y = accel_y
+                self.accel_filtered_z = accel_z
+                self.gyro_filtered_x = gyro_x
+                self.gyro_filtered_y = gyro_y
+                self.gyro_filtered_z = gyro_z
+                self.filter_initialized = True
+            else:
+                # Apply exponential moving average: filtered = alpha * new + (1-alpha) * old
+                self.accel_filtered_x = self.filter_alpha * accel_x + (1 - self.filter_alpha) * self.accel_filtered_x
+                self.accel_filtered_y = self.filter_alpha * accel_y + (1 - self.filter_alpha) * self.accel_filtered_y
+                self.accel_filtered_z = self.filter_alpha * accel_z + (1 - self.filter_alpha) * self.accel_filtered_z
+                self.gyro_filtered_x = self.filter_alpha * gyro_x + (1 - self.filter_alpha) * self.gyro_filtered_x
+                self.gyro_filtered_y = self.filter_alpha * gyro_y + (1 - self.filter_alpha) * self.gyro_filtered_y
+                self.gyro_filtered_z = self.filter_alpha * gyro_z + (1 - self.filter_alpha) * self.gyro_filtered_z
+            
+            # Use filtered values
+            accel_x = self.accel_filtered_x
+            accel_y = self.accel_filtered_y
+            accel_z = self.accel_filtered_z
+            gyro_x = self.gyro_filtered_x
+            gyro_y = self.gyro_filtered_y
+            gyro_z = self.gyro_filtered_z
+            
+            # Apply deadband to gyroscope (suppress very small noise values)
+            deadband = 0.05  # degrees/s
+            if abs(gyro_x) < deadband:
+                gyro_x = 0.0
+            if abs(gyro_y) < deadband:
+                gyro_y = 0.0
+            if abs(gyro_z) < deadband:
+                gyro_z = 0.0
             
             temp = (temp_raw / self.TEMP_SCALE) + self.TEMP_OFFSET  # °C
             
@@ -462,6 +536,12 @@ def main():
         default=0x68,
         help='I2C address of MPU9250: 0x68 or 0x69 (default: 0x68)'
     )
+    parser.add_argument(
+        '--filter',
+        type=float,
+        default=0.5,
+        help='Software filter alpha (0.0-1.0): 0=max smoothing, 1=no filtering (default: 0.5)'
+    )
 
     args = parser.parse_args()
 
@@ -471,6 +551,9 @@ def main():
         i2c_bus=args.i2c_bus,
         mpu_address=args.address
     )
+    
+    # Set filter alpha
+    sender.filter_alpha = max(0.0, min(1.0, args.filter))  # Clamp to [0, 1]
     
     sender.run(rate_hz=args.rate)
 
