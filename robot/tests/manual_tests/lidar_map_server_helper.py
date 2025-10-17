@@ -18,10 +18,6 @@ import matplotlib.animation as animation
 import numpy as np
  
 
-
- 
-
-
 class LiveVisualizer:
     """Real-time dark-themed visualization of lidar scans."""
 
