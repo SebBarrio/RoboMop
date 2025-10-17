@@ -43,6 +43,8 @@ class IMUDataReceiver:
         self.running = False
         self.data_queue = Queue(maxsize=50)  # Reduced from 100 to prevent memory buildup
         self.receive_thread = None
+        self._send_lock = threading.Lock()
+        self._last_status: Optional[str] = None
 
     def connect(self) -> bool:
         """
@@ -55,6 +57,7 @@ class IMUDataReceiver:
             self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.socket.connect((self.host, self.port))
             print(f"Connected to {self.host}:{self.port}")
+            self.send_status("not_ready")
             return True
             
         except Exception as e:
@@ -131,6 +134,20 @@ class IMUDataReceiver:
         except Empty:
             return None
 
+    def send_status(self, state: str) -> None:
+        """Send a status update to the server if changed."""
+        if self.socket is None:
+            return
+        if self._last_status == state:
+            return
+        message = json.dumps({"type": "status", "state": state}) + "\n"
+        try:
+            with self._send_lock:
+                self.socket.sendall(message.encode("utf-8"))
+            self._last_status = state
+        except Exception as exc:
+            print(f"Error sending status update: {exc}")
+
 
 class IMUVisualizer:
     """3D visualization of IMU orientation."""
@@ -165,6 +182,9 @@ class IMUVisualizer:
         # Memory management
         self.history_seconds = history_seconds
         self.frame_count = 0
+
+        # Ready state reporting
+        self._ready_sent = False
         
         # Setup plot
         self.fig = plt.figure(figsize=(12, 10))
@@ -369,6 +389,17 @@ class IMUVisualizer:
         
         # Update orientation estimate
         self.update_orientation(data)
+
+        # Determine readiness state
+        if not self.orientation_initialized:
+            self.receiver.send_status("not_ready")
+        else:
+            frames_since_init = self.frame_count - self.init_samples_needed
+            if frames_since_init < self.convergence_frames:
+                self.receiver.send_status("not_ready")
+            elif not self._ready_sent:
+                self.receiver.send_status("ready")
+                self._ready_sent = True
         
         # Update 3D orientation plot
         self.ax.cla()

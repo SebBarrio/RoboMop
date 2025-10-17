@@ -418,6 +418,9 @@ class IMUSocketServer:
         self.running = False
         self.accept_thread: Optional[threading.Thread] = None
         self._lock = threading.Lock()
+        self._listener_thread: Optional[threading.Thread] = None
+        self._connection_event = threading.Event()
+        self._ready_event = threading.Event()
 
     def start(self) -> bool:
         """Start the socket server."""
@@ -444,14 +447,25 @@ class IMUSocketServer:
         while self.running:
             try:
                 client, addr = self.server_socket.accept()
+                previous_socket: Optional[socket.socket] = None
+                previous_listener: Optional[threading.Thread] = None
                 with self._lock:
-                    if self.client_socket is not None:
-                        try:
-                            self.client_socket.close()
-                        except Exception:
-                            pass
+                    previous_socket = self.client_socket
+                    previous_listener = self._listener_thread
                     self.client_socket = client
                     self.client_socket.settimeout(1.0)
+                    self._listener_thread = threading.Thread(target=self._listen_loop, daemon=True)
+                    self._connection_event.set()
+                    self._ready_event.clear()
+                if previous_socket is not None:
+                    try:
+                        previous_socket.close()
+                    except Exception:
+                        pass
+                if previous_listener is not None and previous_listener.is_alive():
+                    previous_listener.join(timeout=0.5)
+                if self._listener_thread is not None:
+                    self._listener_thread.start()
                 print(f"IMU visualizer connected from {addr}")
             except socket.timeout:
                 continue
@@ -459,6 +473,65 @@ class IMUSocketServer:
                 if self.running:
                     print(f"Accept error: {exc}")
                 break
+
+    def _listen_loop(self) -> None:
+        buffer = ""
+        while self.running:
+            with self._lock:
+                client = self.client_socket
+            if client is None:
+                break
+            try:
+                chunk = client.recv(4096)
+                if not chunk:
+                    break
+                buffer += chunk.decode("utf-8", errors="ignore")
+                while "\n" in buffer:
+                    line, buffer = buffer.split("\n", 1)
+                    payload = line.strip()
+                    if not payload:
+                        continue
+                    try:
+                        message = json.loads(payload)
+                    except json.JSONDecodeError:
+                        continue
+                    self._handle_message(message)
+            except socket.timeout:
+                continue
+            except Exception as exc:
+                if self.running:
+                    print(f"IMU visualizer recv error: {exc}")
+                break
+
+        with self._lock:
+            client = self.client_socket
+            if client is not None:
+                try:
+                    client.close()
+                except Exception:
+                    pass
+            if self.client_socket is client:
+                self.client_socket = None
+                self._connection_event.clear()
+                self._ready_event.clear()
+
+    def _handle_message(self, message: dict) -> None:
+        msg_type = message.get("type")
+        if msg_type == "status":
+            state = message.get("state")
+            if state == "ready":
+                self._ready_event.set()
+            elif state == "not_ready":
+                self._ready_event.clear()
+
+    def wait_for_connection(self, timeout: Optional[float] = None) -> bool:
+        return self._connection_event.wait(timeout)
+
+    def wait_for_ready(self, timeout: Optional[float] = None) -> bool:
+        return self._ready_event.wait(timeout)
+
+    def is_ready(self) -> bool:
+        return self._ready_event.is_set()
 
     def send_sample(self, sample: ImuSample) -> None:
         """Send an IMU sample to connected client."""
@@ -522,6 +595,55 @@ class IMUSocketServer:
         
         if self.accept_thread is not None:
             self.accept_thread.join(timeout=2.0)
+        if self._listener_thread is not None:
+            self._listener_thread.join(timeout=2.0)
+            self._listener_thread = None
+
+
+def wait_for_visualizer_ready(
+    imu_socket_server: Optional[IMUSocketServer],
+    imu_sensor: Optional[MPU9250],
+    check_interval_s: float = CONTROL_INTERVAL_S,
+) -> None:
+    """Block until the external visualizer reports ready status."""
+
+    if imu_socket_server is None:
+        return
+
+    print("Waiting for IMU visualizer connection and readiness...")
+    connection_announced = False
+    state_message: Optional[str] = None
+    read_error_logged = False
+
+    while True:
+        if not imu_socket_server.wait_for_connection(timeout=1.0):
+            if state_message != "waiting_connection":
+                print("  Waiting for visualizer to connect...")
+                state_message = "waiting_connection"
+            continue
+
+        if not connection_announced:
+            print("  Visualizer connected. Awaiting ready signal...")
+            connection_announced = True
+            state_message = None
+
+        if imu_socket_server.wait_for_ready(timeout=check_interval_s):
+            print("  Visualizer ready. Resuming motion.\n")
+            return
+
+        if state_message != "waiting_ready":
+            print("  Visualizer not ready yet; waiting for calibration/convergence...")
+            state_message = "waiting_ready"
+
+        if imu_sensor is not None:
+            try:
+                sample = imu_sensor.read_sample()
+                imu_socket_server.send_sample(sample)
+            except Exception as exc:
+                if not read_error_logged:
+                    print(f"  Warning: failed to poll IMU while waiting ({exc})")
+                    read_error_logged = True
+
 
 
 class IMUFusion:
@@ -779,6 +901,9 @@ def run_triangle(
                 imu_socket_server.stop()
                 imu_socket_server = None
             print(f"Warning: IMU initialization failed ({exc}); continuing without fusion")
+
+    if imu_socket_server is not None:
+        wait_for_visualizer_ready(imu_socket_server, imu_sensor)
 
     # Setpoint shapers for desired wheel speeds
     sp_left = SetpointShaper(slew_rate_radps2=setpoint_slew_radps2, lp_tau_s=setpoint_lp_tau_s)
@@ -1125,6 +1250,9 @@ def run_line(
                 imu_socket_server.stop()
                 imu_socket_server = None
             print(f"Warning: IMU initialization failed ({exc}); continuing without fusion")
+
+    if imu_socket_server is not None:
+        wait_for_visualizer_ready(imu_socket_server, imu_sensor)
 
     # Setpoint shapers for desired wheel speeds
     sp_left = SetpointShaper(slew_rate_radps2=setpoint_slew_radps2, lp_tau_s=setpoint_lp_tau_s)
