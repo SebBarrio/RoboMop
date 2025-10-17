@@ -53,6 +53,7 @@ def collect_scans(lidar: RPLidarProtocol):
     current_scan: ScanType = []
     last_angle: float | None = None
     buffer = bytearray()
+    synced = False
 
     while True:
         try:
@@ -103,6 +104,15 @@ def collect_scans(lidar: RPLidarProtocol):
 
                 del buffer[:5]
 
+                valid_measurement = distance > 0 and quality > 0
+
+                if not synced:
+                    if start_flag and valid_measurement:
+                        synced = True
+                        current_scan = [(quality, angle, distance)]
+                    last_angle = angle
+                    continue
+
                 # Detect new scan either by start flag or by angle wrap-around
                 new_scan = False
                 if start_flag and current_scan:
@@ -119,7 +129,7 @@ def collect_scans(lidar: RPLidarProtocol):
                     yield current_scan
                     current_scan = []
 
-                if distance > 0 and quality > 0:
+                if valid_measurement:
                     current_scan.append((quality, angle, distance))
 
                 last_angle = angle
