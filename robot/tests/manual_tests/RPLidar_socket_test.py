@@ -13,6 +13,7 @@ from typing import Dict, List, Sequence, Tuple
 from RPLidarProtocol import RPLidarProtocol
 
 ScanType = List[Tuple[int, float, float]]  # (quality, angle, distance)
+MIN_MEASUREMENTS_PER_SCAN = 180
 
 
 def encode_scan_payload(scan: ScanType, scan_number: int) -> bytes:
@@ -54,6 +55,7 @@ def collect_scans(lidar: RPLidarProtocol):
     last_angle: float | None = None
     buffer = bytearray()
     synced = False
+    sample_count = 0
 
     while True:
         try:
@@ -104,7 +106,8 @@ def collect_scans(lidar: RPLidarProtocol):
 
                 del buffer[:5]
 
-                valid_measurement = distance > 0 and quality > 0
+                sample_count += 1
+                valid_measurement = distance > 0
 
                 if not synced:
                     if start_flag and valid_measurement:
@@ -113,11 +116,9 @@ def collect_scans(lidar: RPLidarProtocol):
                     last_angle = angle
                     continue
 
-                # Detect new scan either by start flag or by angle wrap-around
+                # Detect new scan by angle wrap-around only once synced
                 new_scan = False
-                if start_flag and current_scan:
-                    new_scan = True
-                elif (
+                if (
                     last_angle is not None
                     and last_angle > 300.0
                     and angle < 60.0
@@ -126,8 +127,23 @@ def collect_scans(lidar: RPLidarProtocol):
                     new_scan = True
 
                 if new_scan:
-                    yield current_scan
-                    current_scan = []
+                    measurements = len(current_scan)
+                    if measurements < MIN_MEASUREMENTS_PER_SCAN:
+                        logging.debug(
+                            "Discarding partial scan with %d raw samples, %d filtered measurements",
+                            sample_count,
+                            measurements,
+                        )
+                        current_scan = []
+                    else:
+                        logging.debug(
+                            "Completed scan with %d raw samples, %d filtered measurements",
+                            sample_count,
+                            measurements,
+                        )
+                        yield current_scan
+                        current_scan = []
+                    sample_count = 0
 
                 if valid_measurement:
                     current_scan.append((quality, angle, distance))
