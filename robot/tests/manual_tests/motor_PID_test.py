@@ -34,9 +34,9 @@ import numpy as np
 # MOTOR_CHANNELS: PCA9685 PWM channels for each motor (forward_channel, reverse_channel)
 # Motor 0: channels (0, 1) -> L_PWM=0, R_PWM=1
 # Motor 1: channels (2, 3) -> L_PWM=2, R_PWM=3
-# Motor 2: channels (4, 5) -> L_PWM=4, R_PWM=5
-# Motor 3: channels (6, 7) -> L_PWM=6, R_PWM=7
-MOTOR_CHANNELS: Sequence[tuple[int, int]] = ((0, 1), (2, 3), (4, 5), (6, 7))
+# Motor 2: channels (5, 4) -> L_PWM=5, R_PWM=4 (intentional inversion)
+# Motor 3: channels (7, 6) -> L_PWM=7, R_PWM=6 (intentional inversion)
+MOTOR_CHANNELS: Sequence[tuple[int, int]] = ((0, 1), (2, 3), (5, 4), (7, 6))
 
 # ENCODER_CHANNELS: GPIO pins for quadrature encoders (pinA, pinB)
 # Encoder 0: pins (5, 6) -> encoderA=5, encoderB=6 (shared by motors 2,3)
