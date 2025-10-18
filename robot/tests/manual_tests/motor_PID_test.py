@@ -21,6 +21,8 @@ import busio
 from adafruit_pca9685 import PCA9685
 from gpiozero import RotaryEncoder
 
+from control.pwm_controller import MotorChannelConfig, MotorController
+
 # Use non-interactive backend for headless plotting
 import matplotlib
 
@@ -85,13 +87,6 @@ SPEED_LP_TAU_S: float = 0.04
 
 
 @dataclass(frozen=True)
-class MotorConfig:
-    index: int
-    forward_channel: int
-    reverse_channel: int
-
-
-@dataclass(frozen=True)
 class EncoderConfig:
     index: int
     pin_a: int
@@ -117,39 +112,6 @@ class PIDController:
         derivative = (error - self._prev_error) / dt if dt > 0 else 0.0
         self._prev_error = error
         return (self._kp * error) + (self._ki * self._integrator) + (self._kd * derivative)
-
-
-class MotorController:
-    def __init__(self, pwm_board: PCA9685, motor_configs: Sequence[MotorConfig]) -> None:
-        self._pwm_board = pwm_board
-        self._configs = tuple(motor_configs)
-        self._motors = {config.index: config for config in self._configs}
-
-    @property
-    def motor_configs(self) -> tuple[MotorConfig, ...]:
-        return self._configs
-
-    def set_voltage(self, motor_index: int, voltage_command: float) -> None:
-        """Command motor voltage using H-bridge via PWM (linearized mapping).
-
-        Maps commanded voltage in [-SUPPLY_VOLTAGE, SUPPLY_VOLTAGE] to PWM duty on
-        forward/reverse channels. Positive voltage is forward.
-        """
-        config = self._motors[motor_index]
-        v_cmd = max(-SUPPLY_VOLTAGE, min(voltage_command, SUPPLY_VOLTAGE))
-        duty = abs(v_cmd) / SUPPLY_VOLTAGE
-        level = int(PWM_MIN + (PWM_MAX - PWM_MIN) * duty)
-        if v_cmd >= 0:
-            self._pwm_board.channels[config.forward_channel].duty_cycle = level
-            self._pwm_board.channels[config.reverse_channel].duty_cycle = PWM_MIN
-        else:
-            self._pwm_board.channels[config.forward_channel].duty_cycle = PWM_MIN
-            self._pwm_board.channels[config.reverse_channel].duty_cycle = level
-
-    def stop_all(self) -> None:
-        for config in self._motors.values():
-            self._pwm_board.channels[config.forward_channel].duty_cycle = PWM_MIN
-            self._pwm_board.channels[config.reverse_channel].duty_cycle = PWM_MIN
 
 
 class EncoderReader:
@@ -429,7 +391,7 @@ class MotorTestRig:
 
 def build_motor_configs() -> list[MotorConfig]:
     return [
-        MotorConfig(index=idx, forward_channel=channels[0], reverse_channel=channels[1])
+        MotorChannelConfig(index=idx, forward_channel=channels[0], reverse_channel=channels[1])
         for idx, channels in enumerate(MOTOR_CHANNELS)
     ]
 
@@ -474,7 +436,7 @@ def main() -> None:
     i2c = busio.I2C(board.SCL, board.SDA)
     pwm = PCA9685(i2c)
     pwm.frequency = PWM_FREQUENCY
-    controller = MotorController(pwm, build_motor_configs())
+    controller = MotorController(pwm, build_motor_configs(), supply_voltage=SUPPLY_VOLTAGE)
     encoders = EncoderReader(build_encoder_configs(), ENCODER_PULSES_PER_REV)
     rig = MotorTestRig(
         controller,
