@@ -7,7 +7,7 @@ setpoint vs actual speed and position for verification.
 """
 
 from __future__ import annotations
-
+import sys
 import argparse
 import time
 from dataclasses import dataclass
@@ -15,12 +15,12 @@ import math
 import os
 from datetime import datetime
 from typing import Callable, Sequence
-
+from pathlib import Path
 import board
 import busio
 from adafruit_pca9685 import PCA9685
 from gpiozero import RotaryEncoder
-
+sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 from control.pwm_controller import MotorChannelConfig, MotorController
 
 # Use non-interactive backend for headless plotting
