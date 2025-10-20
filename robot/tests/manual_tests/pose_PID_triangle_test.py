@@ -263,7 +263,7 @@ class SetpointShaper:
         return self._y
 
 
-class MotorController:
+class MotorDriver:
     """Drives individual motors and provides side-level control convenience."""
 
     def __init__(self, pwm_board: PCA9685, motor_configs: Sequence[MotorConfig]) -> None:
@@ -839,7 +839,7 @@ def run_triangle(
     i2c = busio.I2C(board.SCL, board.SDA)
     pwm = PCA9685(i2c)
     pwm.frequency = PWM_FREQUENCY
-    controller = MotorController(pwm, build_motor_configs())
+    controller = MotorDriver(pwm, build_motor_configs())
     encoders = SideEncoderReader(ENCODER_CHANNELS, ENCODER_PULSES_PER_REV)
     odom = DifferentialOdometry(encoders, speed_lp_tau_s=SPEED_LP_TAU_S_DEFAULT)
 
@@ -1188,7 +1188,7 @@ def run_line(
     i2c = busio.I2C(board.SCL, board.SDA)
     pwm = PCA9685(i2c)
     pwm.frequency = PWM_FREQUENCY
-    controller = MotorController(pwm, build_motor_configs())
+    controller = MotorDriver(pwm, build_motor_configs())
     encoders = SideEncoderReader(ENCODER_CHANNELS, ENCODER_PULSES_PER_REV)
     odom = DifferentialOdometry(encoders, speed_lp_tau_s=SPEED_LP_TAU_S_DEFAULT)
 

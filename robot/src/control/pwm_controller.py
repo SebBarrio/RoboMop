@@ -24,7 +24,7 @@ class MotorChannelConfig:
     reverse_channel: int
 
 
-class MotorController:
+class MotorDriver:
     """Drives differential motors by commanding voltages via PCA9685 PWM."""
 
     def __init__(

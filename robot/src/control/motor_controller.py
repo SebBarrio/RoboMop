@@ -45,7 +45,7 @@ class PIDSettings:
 
 
 @dataclass(slots=True)
-class MotorVelocityControllerConfig:
+class MotorControllerConfig:
     """Configuration required to execute the motor velocity control loop."""
 
     motor_to_encoder: Mapping[int, int]
@@ -88,14 +88,14 @@ class MotorState:
     last_reading: EncoderReading | None = None
 
 
-class MotorVelocityController:
+class MotorController:
     """Runs a velocity PID loop using encoder feedback at a fixed cadence."""
 
     def __init__(
         self,
         driver: MotorVoltageDriver,
         encoder_feedback: EncoderFeedback,
-        config: MotorVelocityControllerConfig,
+        config: MotorControllerConfig,
     ) -> None:
         self._driver = driver
         self._feedback = encoder_feedback

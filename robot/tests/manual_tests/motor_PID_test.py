@@ -20,7 +20,7 @@ import board
 import busio
 from adafruit_pca9685 import PCA9685
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
-from control.pwm_controller import MotorChannelConfig, MotorController
+from control.pwm_controller import MotorChannelConfig, MotorDriver
 from sensors.encoders import EncoderReading, QuadratureEncoder, GpioZeroEncoderHardware
 
 # Use non-interactive backend for headless plotting
@@ -173,7 +173,7 @@ class QuadratureEncoderFeedback:
 class MotorTestRig:
     def __init__(
         self,
-        controller: MotorController,
+        controller: MotorDriver,
         feedback_provider: Callable[[int, float], tuple[float, float]],
         setpoint_amplitude_rad_per_s: float = SETPOINT_AMPLITUDE_RAD_PER_S,
         kp: float = SPEED_KP,
@@ -384,7 +384,7 @@ class MotorTestRig:
         print(f"Plot saved to {out_path}")
 
 
-def build_motor_configs() -> list[MotorConfig]:
+def build_motor_configs() -> list[MotorChannelConfig]:
     return [
         MotorChannelConfig(index=idx, forward_channel=channels[0], reverse_channel=channels[1])
         for idx, channels in enumerate(MOTOR_CHANNELS)
@@ -431,7 +431,7 @@ def main() -> None:
     i2c = busio.I2C(board.SCL, board.SDA)
     pwm = PCA9685(i2c)
     pwm.frequency = PWM_FREQUENCY
-    controller = MotorController(pwm, build_motor_configs(), supply_voltage=SUPPLY_VOLTAGE)
+    controller = MotorDriver(pwm, build_motor_configs(), supply_voltage=SUPPLY_VOLTAGE)
     encoder_feedback = QuadratureEncoderFeedback(build_encoder_configs(), ENCODER_PULSES_PER_REV)
     rig = MotorTestRig(
         controller,

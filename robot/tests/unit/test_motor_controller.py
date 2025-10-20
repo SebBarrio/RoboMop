@@ -10,8 +10,8 @@ import pytest
 from src.control.motor_controller import (
     EncoderFeedback,
     MotorChannelConfig,
-    MotorVelocityController,
-    MotorVelocityControllerConfig,
+    MotorController,
+    MotorControllerConfig,
     PIDSettings,
 )
 from src.sensors.encoders import EncoderReading
@@ -52,8 +52,8 @@ class StubEncoderFeedback(EncoderFeedback):
         self._readings[encoder_index] = reading
 
 
-def _config(loop_interval: float = 0.01) -> MotorVelocityControllerConfig:
-    return MotorVelocityControllerConfig(
+def _config(loop_interval: float = 0.01) -> MotorControllerConfig:
+    return MotorControllerConfig(
         motor_to_encoder={0: 0},
         gear_ratio=8.45,
         rotor_inertia=0.001085,
@@ -82,7 +82,7 @@ def test_update_combines_feedforward_and_pid() -> None:
     driver = DummyDriver()
     feedback = StubEncoderFeedback({0: _reading(velocity=0.8)})
     cfg = _config()
-    controller = MotorVelocityController(driver, feedback, cfg)
+    controller = MotorController(driver, feedback, cfg)
 
     controller.set_velocity_targets({0: 1.0})
     controller.update()
@@ -103,7 +103,7 @@ def test_update_combines_feedforward_and_pid() -> None:
 def test_command_voltage_is_clamped_to_supply() -> None:
     driver = DummyDriver()
     feedback = StubEncoderFeedback({0: _reading(velocity=0.0)})
-    controller = MotorVelocityController(driver, feedback, _config())
+    controller = MotorController(driver, feedback, _config())
 
     controller.set_velocity_targets({0: 50.0})
     controller.update()
@@ -114,7 +114,7 @@ def test_command_voltage_is_clamped_to_supply() -> None:
 def test_stop_all_resets_state_and_calls_driver() -> None:
     driver = DummyDriver()
     feedback = StubEncoderFeedback({0: _reading(velocity=1.0)})
-    controller = MotorVelocityController(driver, feedback, _config())
+    controller = MotorController(driver, feedback, _config())
 
     controller.set_velocity_targets({0: 1.0})
     controller.update()
@@ -130,7 +130,7 @@ def test_stop_all_resets_state_and_calls_driver() -> None:
 def test_setting_target_for_unknown_motor_raises() -> None:
     driver = DummyDriver()
     feedback = StubEncoderFeedback({0: _reading(velocity=0.0)})
-    controller = MotorVelocityController(driver, feedback, _config())
+    controller = MotorController(driver, feedback, _config())
 
     with pytest.raises(KeyError):
         controller.set_velocity_targets({1: 1.0})
@@ -139,7 +139,7 @@ def test_setting_target_for_unknown_motor_raises() -> None:
 def test_negative_dt_is_rejected() -> None:
     driver = DummyDriver()
     feedback = StubEncoderFeedback({0: _reading(velocity=0.0)})
-    controller = MotorVelocityController(driver, feedback, _config())
+    controller = MotorController(driver, feedback, _config())
 
     controller.set_velocity_targets({0: 1.0})
     with pytest.raises(ValueError):

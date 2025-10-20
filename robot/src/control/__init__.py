@@ -3,18 +3,18 @@
 from __future__ import annotations
 
 __all__ = [
-    "MotorController",
+    "MotorDriver",
     "MotorChannelConfig",
-    "MotorVelocityController",
-    "MotorVelocityControllerConfig",
+    "MotorController",
+    "MotorControllerConfig",
     "PIDSettings",
     "PIDController",
 ]
 
-from .pwm_controller import MotorChannelConfig, MotorController
+from .pwm_controller import MotorChannelConfig, MotorDriver
 from .pid import PIDController
 from .motor_controller import (
-    MotorVelocityController,
-    MotorVelocityControllerConfig,
+    MotorController,
+    MotorControllerConfig,
     PIDSettings,
 )
