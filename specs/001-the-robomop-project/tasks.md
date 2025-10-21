@@ -150,7 +150,7 @@
 
 ### Robot - SLAM and Navigation
 
-- [ ] **T081** Occupancy grid implementation in robot/src/slam/occupancy_grid.py (2D grid, update methods, 5cm resolution)
+- [x] **T081** Occupancy grid implementation in robot/src/slam/occupancy_grid.py (2D grid, update methods, 5cm resolution)
 - [ ] **T082** Particle filter localization in robot/src/slam/particle_filter.py (100-500 particles, resampling)
 - [ ] **T083** SLAM module integration in robot/src/slam/slam_manager.py (sensor fusion, map building)
 - [ ] **T084** A* pathfinding algorithm in robot/src/navigation/astar.py (frontier selection, obstacle avoidance)
@@ -240,7 +240,7 @@
 
 ### Unit Tests
 
-- [ ] **T128** [P] Unit tests for SLAM grid operations in robot/tests/unit/test_occupancy_grid.py
+- [x] **T128** [P] Unit tests for SLAM grid operations in robot/tests/unit/test_occupancy_grid.py
 - [ ] **T129** [P] Unit tests for A* pathfinding in robot/tests/unit/test_astar.py
 - [ ] **T130** [P] Unit tests for coverage planner in robot/tests/unit/test_coverage_planner.py
 - [ ] **T131** [P] Unit tests for PID controller in robot/tests/unit/test_pid.py
