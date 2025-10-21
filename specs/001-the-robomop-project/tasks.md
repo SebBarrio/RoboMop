@@ -161,7 +161,7 @@
 
 - [x] **T087** [P] PID controller implementation in robot/src/control/pid.py (tunable gains, anti-windup)
 - [x] **T088** Motor controller in robot/src/control/motor_controller.py (velocity control, encoder feedback, 100 Hz)
-- [ ] **T089** Robot velocity controller in robot/src/control/robot_controller.py (differential drive kinematics)
+- [x] **T089** Robot velocity controller in robot/src/control/robot_controller.py (differential drive kinematics)
 - [ ] **T090** Safety controller in robot/src/control/safety.py (e-stop, cliff detection, collision avoidance)
 - [ ] **T090a** [P] Battery monitor with return-to-start behavior in robot/src/control/battery_manager.py (implements FR-045 low battery handling)
 

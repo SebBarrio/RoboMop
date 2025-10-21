@@ -9,6 +9,8 @@ __all__ = [
     "MotorControllerConfig",
     "PIDSettings",
     "PIDController",
+    "Pose2D",
+    "RobotController",
 ]
 
 from .pwm_controller import MotorChannelConfig, MotorDriver
@@ -18,3 +20,4 @@ from .motor_controller import (
     MotorControllerConfig,
     PIDSettings,
 )
+from .robot_controller import Pose2D, RobotController
