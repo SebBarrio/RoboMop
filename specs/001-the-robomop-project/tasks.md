@@ -153,7 +153,7 @@
 - [x] **T081** Occupancy grid implementation in robot/src/slam/occupancy_grid.py (2D grid, update methods, 5cm resolution)
 - [x] **T082** Particle filter localization in robot/src/slam/particle_filter.py (100-500 particles, resampling)
 - [x] **T083** SLAM module integration in robot/src/slam/slam_manager.py (sensor fusion, map building)
-- [ ] **T084** A* pathfinding algorithm in robot/src/navigation/astar.py (frontier selection, obstacle avoidance)
+- [x] **T084** A* pathfinding algorithm in robot/src/navigation/astar.py (frontier selection, obstacle avoidance)
 - [ ] **T085** Coverage path planner in robot/src/navigation/coverage_planner.py (boustrophedon pattern, 10% overlap)
 - [ ] **T086** Path executor in robot/src/navigation/path_executor.py (waypoint tracking, position control)
 
