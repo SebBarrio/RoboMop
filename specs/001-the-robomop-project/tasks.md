@@ -133,11 +133,11 @@
 
 ### Backend - WebSocket Handlers
 
-- [ ] **T071** WebSocket connection handler in backend/src/websocket/ConnectionHandler.ts (auth, heartbeat, disconnect)
-- [ ] **T072** Robot event handlers in backend/src/websocket/RobotEventHandler.ts (state, map-update, sensor-data, session events)
-- [ ] **T073** Command handlers in backend/src/websocket/CommandHandler.ts (move, set-mode, e-stop, set-speed)
-- [ ] **T074** Frontend event handlers in backend/src/websocket/FrontendEventHandler.ts (subscribe, ui:command, zone operations)
-- [ ] **T074a** Command conflict validation service in backend/src/services/CommandValidationService.ts (prevent conflicting commands per FR-039)
+- [X] **T071** WebSocket connection handler in backend/src/websocket/ConnectionHandler.ts (auth, heartbeat, disconnect)
+- [X] **T072** Robot event handlers in backend/src/websocket/RobotEventHandler.ts (state, map-update, sensor-data, session events)
+- [X] **T073** Command handlers in backend/src/websocket/CommandHandler.ts (move, set-mode, e-stop, set-speed)
+- [X] **T074** Frontend event handlers in backend/src/websocket/FrontendEventHandler.ts (subscribe, ui:command, zone operations)
+- [X] **T074a** Command conflict validation service in backend/src/services/CommandValidationService.ts (prevent conflicting commands per FR-039)
 
 ### Robot - Hardware Interfaces
 

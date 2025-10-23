@@ -1,10 +1,12 @@
 import "reflect-metadata";
+import http, { type Server as HttpServer } from "node:http";
 import express from "express";
 import cors from "cors";
 
 import { initializeDataSource } from "./config/database.js";
 import apiRoutes from "./api/routes/index.js";
 import { errorHandler } from "./api/middleware/errorHandler.js";
+import { initializeWebSocketServer } from "./websocket/index.js";
 
 const app = express();
 
@@ -20,12 +22,20 @@ app.get("/health", (_req, res) => {
 
 app.use(errorHandler);
 
+export function createHttpServer(): HttpServer {
+  const httpServer = http.createServer(app);
+  initializeWebSocketServer(httpServer);
+  return httpServer;
+}
+
 const port = Number(process.env.PORT ?? 3000);
 
 if (process.env.NODE_ENV !== "test") {
   initializeDataSource()
     .then(() => {
-      app.listen(port, () => {
+      const httpServer = createHttpServer();
+
+      httpServer.listen(port, () => {
         console.log(`Backend listening on port ${port}`);
       });
     })

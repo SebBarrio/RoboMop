@@ -1,18 +1,17 @@
-import { createServer } from "http";
 import type { AddressInfo } from "net";
 import request from "supertest";
 import { io as createClient, Socket } from "socket.io-client";
 
-import app from "../../src/server";
+import app, { createHttpServer } from "../../src/server";
 
 jest.setTimeout(15000);
 
 describe("Integration Scenario 1: Robot registration and connection", () => {
-  let httpServer: ReturnType<typeof createServer>;
+  let httpServer: ReturnType<typeof createHttpServer>;
   let baseUrl: string;
 
   beforeAll(async () => {
-    httpServer = createServer(app);
+    httpServer = createHttpServer();
 
     await new Promise<void>((resolve) => {
       httpServer.listen(() => {

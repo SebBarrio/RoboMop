@@ -1,9 +1,7 @@
-import http from "node:http";
-
 import request, { type SuperTest, type Test } from "supertest";
 import { io, type Socket } from "socket.io-client";
 
-import app from "../../../src/server";
+import app, { createHttpServer } from "../../../src/server";
 
 type StartServerResult = {
   url: string;
@@ -12,11 +10,15 @@ type StartServerResult = {
 };
 
 export const startTestServer = async (): Promise<StartServerResult> => {
-  const httpServer = http.createServer(app);
+  const httpServer = createHttpServer();
 
-  await new Promise<void>((resolve) => {
-    httpServer.listen(0, resolve);
+  console.log("before listen");
+  await new Promise<void>((resolve, reject) => {
+    httpServer.once("listening", resolve);
+    httpServer.once("error", reject);
+    httpServer.listen(0);
   });
+  console.log("server listening");
 
   const address = httpServer.address();
 
@@ -69,6 +71,7 @@ export const connectSocketClient = async (
     reconnection: false
   });
 
+  console.log("connecting socket", url, options.auth);
   await new Promise<void>((resolve, reject) => {
     socket.on("connect", () => resolve());
     socket.on("connect_error", (error) => reject(error));
@@ -101,7 +104,9 @@ export const emitWithAck = async <TResponse>(
       reject(new Error(`Timed out waiting for ack on ${event}`));
     }, timeoutMs);
 
+    console.log("emit event", event);
     socket.timeout(timeoutMs).emit(event, payload, (error: Error | null, response: TResponse) => {
+      console.log("emit ack callback executed", event, error);
       clearTimeout(timeout);
       if (error) {
         reject(error);
