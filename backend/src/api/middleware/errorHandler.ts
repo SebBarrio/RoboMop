@@ -14,11 +14,9 @@ export function errorHandler(
 
   if (error instanceof ServiceError) {
     res.status(error.statusCode).json({
-      error: {
-        code: error.code,
-        message: error.message,
-        details: error.details
-      }
+      error: error.message,
+      code: error.code,
+      details: error.details ?? null
     });
     return;
   }
@@ -26,9 +24,7 @@ export function errorHandler(
   console.error("Unhandled error:", error);
   
   res.status(500).json({
-    error: {
-      code: "INTERNAL_ERROR",
-      message: "An unexpected error occurred"
-    }
+    error: "An unexpected error occurred",
+    code: "INTERNAL_ERROR"
   });
 }

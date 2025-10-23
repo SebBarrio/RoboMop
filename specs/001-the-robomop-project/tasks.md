@@ -125,11 +125,11 @@
 
 ### Backend - API Routes
 
-- [ ] **T066** Robot endpoints in backend/src/api/routes/robots.ts (GET, POST, PATCH /robots, /robots/:id, /robots/:id/state, /robots/:id/command)
-- [ ] **T067** Map endpoints in backend/src/api/routes/maps.ts (GET, POST, PATCH, DELETE /maps, /maps/:id, /maps/:id/data)
-- [ ] **T068** Zone endpoints in backend/src/api/routes/zones.ts (GET, POST, PATCH, DELETE /zones/:id, /maps/:id/zones)
-- [ ] **T069** Session endpoints in backend/src/api/routes/sessions.ts (GET, POST, PATCH /sessions, /sessions/:id)
-- [ ] **T070** Log endpoints in backend/src/api/routes/logs.ts (GET, DELETE /logs with filtering)
+- [X] **T066** Robot endpoints in backend/src/api/routes/robots.ts (GET, POST, PATCH /robots, /robots/:id, /robots/:id/state, /robots/:id/command)
+- [X] **T067** Map endpoints in backend/src/api/routes/maps.ts (GET, POST, PATCH, DELETE /maps, /maps/:id, /maps/:id/data)
+- [X] **T068** Zone endpoints in backend/src/api/routes/zones.ts (GET, POST, PATCH, DELETE /zones/:id, /maps/:id/zones)
+- [X] **T069** Session endpoints in backend/src/api/routes/sessions.ts (GET, POST, PATCH /sessions, /sessions/:id)
+- [X] **T070** Log endpoints in backend/src/api/routes/logs.ts (GET, DELETE /logs with filtering)
 
 ### Backend - WebSocket Handlers
 

@@ -3,6 +3,7 @@ import type { Config } from "jest";
 const config: Config = {
   preset: "ts-jest",
   testEnvironment: "node",
+  setupFilesAfterEnv: ["<rootDir>/tests/setup/jest.setup.ts"],
   roots: ["<rootDir>/tests"],
   moduleFileExtensions: ["ts", "js", "json"],
   collectCoverageFrom: ["src/**/*.ts"],

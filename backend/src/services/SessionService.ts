@@ -145,7 +145,7 @@ export class SessionService {
   private async ensureMapBelongsToRobot(mapId: string, robotId: string): Promise<void> {
     const map = await this.mapRepository.findOne({ where: { id: mapId } });
     if (!map) {
-      throw new DependencyError(`Map with id '${mapId}' does not exist`);
+      throw new NotFoundError(`Map with id '${mapId}' not found`);
     }
 
     if (map.robotId !== robotId) {

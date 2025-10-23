@@ -152,8 +152,9 @@ router.patch("/:mapId/data", (req: Request, res: Response, next: NextFunction) =
 });
 
 router.get("/:mapId/zones", (req: Request, res: Response, next: NextFunction) => {
-  void zoneService
-    .list({ mapId: req.params.mapId })
+  void mapService
+    .getById(req.params.mapId)
+    .then(() => zoneService.list({ mapId: req.params.mapId }))
     .then((zones) => {
       res.status(200).json(zones);
     })
@@ -162,14 +163,17 @@ router.get("/:mapId/zones", (req: Request, res: Response, next: NextFunction) =>
 
 router.post("/:mapId/zones", (req: Request, res: Response, next: NextFunction) => {
   const { name, geometry } = req.body as ZoneCreateBody;
-  void zoneService
-    .create({
-      mapId: req.params.mapId,
-      name,
-      geometry
-    })
+  void mapService
+    .getById(req.params.mapId)
+    .then(() =>
+      zoneService.create({
+        mapId: req.params.mapId,
+        name,
+        geometry
+      })
+    )
     .then((zone) => {
-      res.status(201).json(zone);
+      res.status(201).location(`/api/v1/zones/${zone.id}`).json(zone);
     })
     .catch(next);
 });

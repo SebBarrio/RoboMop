@@ -137,19 +137,11 @@ export class MapService {
   }
 
   async replaceData(id: string, data: Buffer): Promise<Map> {
-    if (!Buffer.isBuffer(data)) {
-      throw new ValidationError("Map data must be provided as a Buffer");
+    if (!Buffer.isBuffer(data) || data.length === 0) {
+      throw new ValidationError("Map data must be provided as a non-empty Buffer");
     }
 
     const map = await this.getById(id);
-
-    const expectedLength = map.width * map.height;
-    if (data.length !== expectedLength) {
-      throw new ValidationError("Map data length does not match map dimensions", {
-        expected: expectedLength,
-        actual: data.length
-      });
-    }
 
     map.data = Buffer.from(data);
 
@@ -166,9 +158,17 @@ export class MapService {
     }
 
     const map = await this.getById(id);
-    const buffer = Buffer.from(map.data);
     const width = map.width;
     const height = map.height;
+    const expectedLength = width * height;
+
+    let buffer = Buffer.from(map.data);
+
+    if (buffer.length < expectedLength) {
+      const expanded = Buffer.alloc(expectedLength, 0);
+      buffer.copy(expanded);
+      buffer = expanded;
+    }
 
     for (const update of updates) {
       this.validateCellUpdate(update, width, height);
