@@ -155,7 +155,7 @@
 - [x] **T083** SLAM module integration in robot/src/slam/slam_manager.py (sensor fusion, map building)
 - [x] **T084** A* pathfinding algorithm in robot/src/navigation/astar.py (frontier selection, obstacle avoidance)
 - [x] **T085** Coverage path planner in robot/src/navigation/coverage_planner.py (boustrophedon pattern, 10% overlap)
-- [ ] **T086** Path executor in robot/src/navigation/path_executor.py (waypoint tracking, position control)
+- [X] **T086** Path executor in robot/src/navigation/path_executor.py (waypoint tracking, position control)
 
 ### Robot - Control Systems
 
