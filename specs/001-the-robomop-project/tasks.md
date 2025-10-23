@@ -154,7 +154,7 @@
 - [x] **T082** Particle filter localization in robot/src/slam/particle_filter.py (100-500 particles, resampling)
 - [x] **T083** SLAM module integration in robot/src/slam/slam_manager.py (sensor fusion, map building)
 - [x] **T084** A* pathfinding algorithm in robot/src/navigation/astar.py (frontier selection, obstacle avoidance)
-- [ ] **T085** Coverage path planner in robot/src/navigation/coverage_planner.py (boustrophedon pattern, 10% overlap)
+- [x] **T085** Coverage path planner in robot/src/navigation/coverage_planner.py (boustrophedon pattern, 10% overlap)
 - [ ] **T086** Path executor in robot/src/navigation/path_executor.py (waypoint tracking, position control)
 
 ### Robot - Control Systems
@@ -242,7 +242,7 @@
 
 - [x] **T128** [P] Unit tests for SLAM grid operations in robot/tests/unit/test_occupancy_grid.py
 - [ ] **T129** [P] Unit tests for A* pathfinding in robot/tests/unit/test_astar.py
-- [ ] **T130** [P] Unit tests for coverage planner in robot/tests/unit/test_coverage_planner.py
+- [x] **T130** [P] Unit tests for coverage planner in robot/tests/unit/test_coverage_planner.py
 - [ ] **T131** [P] Unit tests for PID controller in robot/tests/unit/test_pid.py
 - [ ] **T132** [P] Unit tests for backend services in backend/tests/unit/services/*.test.ts
 - [ ] **T133** [P] Unit tests for frontend components in frontend/tests/unit/components/*.test.tsx
