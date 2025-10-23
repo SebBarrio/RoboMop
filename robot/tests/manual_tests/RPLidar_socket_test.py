@@ -13,6 +13,7 @@ from typing import Dict, List, Sequence, Tuple
 from RPLidarProtocol import RPLidarProtocol
 
 ScanType = List[Tuple[int, float, float]]  # (quality, angle, distance)
+MIN_MEASUREMENTS_PER_SCAN = 180
 
 
 def encode_scan_payload(scan: ScanType, scan_number: int) -> bytes:
@@ -52,43 +53,109 @@ def collect_scans(lidar: RPLidarProtocol):
     """
     current_scan: ScanType = []
     last_angle: float | None = None
+    buffer = bytearray()
+    synced = False
+    sample_count = 0
 
     while True:
         try:
-            if not lidar.ser or lidar.ser.in_waiting < 5:
+            if not lidar.ser:
                 time.sleep(0.001)
                 continue
 
-            raw = lidar.ser.read(5)
+            if len(buffer) < 5:
+                waiting = lidar.ser.in_waiting
+                if waiting:
+                    chunk = lidar.ser.read(waiting)
+                    if chunk:
+                        buffer.extend(chunk)
+                        # Try to parse immediately if we now have enough data
+                        if len(buffer) < 5:
+                            continue
+                else:
+                    time.sleep(0.001)
+                    continue
 
-            # Validate header: bit0 = S (start), bit1 = !S must be complementary
-            s_bit = raw[0] & 0x01
-            not_s_bit = (raw[0] >> 1) & 0x01
-            header_ok = (s_bit ^ not_s_bit) == 1
-            if not header_ok:
-                # Drop this chunk to resync; next reads will realign
+            while len(buffer) >= 5:
+                first_byte = buffer[0]
+
+                # Validate header: bit0 = S (start), bit1 = !S must be complementary
+                header_bits = first_byte & 0x03
+                if header_bits not in (0x01, 0x02):
+                    del buffer[0]
+                    continue
+
+                s_bit = header_bits & 0x01
+                not_s_bit = (header_bits >> 1) & 0x01
+                if s_bit == not_s_bit:
+                    del buffer[0]
+                    continue
+
+                # Angle check bit (spec requires this to be 1)
+                if (buffer[1] & 0x01) != 1:
+                    del buffer[0]
+                    continue
+
+                if len(buffer) < 5:
+                    break
+
+                quality = (first_byte >> 2) & 0x3F
+                angle = ((((buffer[2] << 8) | buffer[1]) >> 1) & 0x7FFF) / 64.0
+                distance = ((buffer[4] << 8) | buffer[3]) / 4.0
+                start_flag = s_bit == 1
+
+                del buffer[:5]
+
+                sample_count += 1
+                valid_measurement = distance > 0
+
+                if not synced:
+                    if start_flag and valid_measurement:
+                        synced = True
+                        current_scan = [(quality, angle, distance)]
+                    last_angle = angle
+                    continue
+
+                # Detect new scan by angle wrap-around only once synced
+                new_scan = False
+                if (
+                    last_angle is not None
+                    and last_angle > 300.0
+                    and angle < 60.0
+                    and current_scan
+                ):
+                    new_scan = True
+
+                if new_scan:
+                    measurements = len(current_scan)
+                    if measurements < MIN_MEASUREMENTS_PER_SCAN:
+                        logging.debug(
+                            "Discarding partial scan with %d raw samples, %d filtered measurements",
+                            sample_count,
+                            measurements,
+                        )
+                        current_scan = []
+                    else:
+                        logging.debug(
+                            "Completed scan with %d raw samples, %d filtered measurements",
+                            sample_count,
+                            measurements,
+                        )
+                        yield current_scan
+                        current_scan = []
+                    sample_count = 0
+
+                if valid_measurement:
+                    current_scan.append((quality, angle, distance))
+
+                last_angle = angle
+
+                # Continue parsing remaining buffer without sleeping
+                # so fall through to while loop condition
                 continue
 
-            start_flag = s_bit == 1
-            quality = (raw[0] >> 2) & 0x3F
-            angle = ((((raw[2] << 8) | raw[1]) >> 1) & 0x7FFF) / 64.0
-            distance = ((raw[4] << 8) | raw[3]) / 4.0
-
-            # Detect new scan either by start flag or by angle wrap-around
-            new_scan = False
-            if start_flag and current_scan:
-                new_scan = True
-            elif last_angle is not None and last_angle > 300.0 and angle < 60.0 and current_scan:
-                new_scan = True
-
-            if new_scan:
-                yield current_scan
-                current_scan = []
-
-            if distance > 0 and quality > 0:
-                current_scan.append((quality, angle, distance))
-
-            last_angle = angle
+            # If we exit the inner while because buffer < 5, loop back to read more
+            continue
 
         except Exception as exc:
             logging.error("Measurement error: %s", exc)

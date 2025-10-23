@@ -143,25 +143,25 @@
 
 - [x] **T075** [P] RPLIDAR S2L interface in robot/src/sensors/lidar.py (async scan acquisition, 10 Hz)
 - [x] **T076** [P] MPU9250 IMU interface in robot/src/sensors/imu.py (I2C communication, complementary filter, 100 Hz)
-- [ ] **T077** [P] Encoder interface in robot/src/sensors/encoders.py (quadrature decoding, velocity calculation)
+- [x] **T077** [P] Encoder interface in robot/src/sensors/encoders.py (quadrature decoding, velocity calculation)
 - [ ] **T078** [P] Ultrasonic sensor interface in robot/src/sensors/ultrasonic.py (HC-SR04, floor drop detection)
 - [ ] **T079** [P] Water level sensor interface in robot/src/sensors/water_level.py (4-point sensor reading)
-- [ ] **T080** [P] PCA9685 PWM interface in robot/src/control/pwm_controller.py (I2C motor control)
+- [x] **T080** [P] PCA9685 PWM interface in robot/src/control/pwm_controller.py (I2C motor control)
 
 ### Robot - SLAM and Navigation
 
-- [ ] **T081** Occupancy grid implementation in robot/src/slam/occupancy_grid.py (2D grid, update methods, 5cm resolution)
-- [ ] **T082** Particle filter localization in robot/src/slam/particle_filter.py (100-500 particles, resampling)
-- [ ] **T083** SLAM module integration in robot/src/slam/slam_manager.py (sensor fusion, map building)
-- [ ] **T084** A* pathfinding algorithm in robot/src/navigation/astar.py (frontier selection, obstacle avoidance)
-- [ ] **T085** Coverage path planner in robot/src/navigation/coverage_planner.py (boustrophedon pattern, 10% overlap)
+- [x] **T081** Occupancy grid implementation in robot/src/slam/occupancy_grid.py (2D grid, update methods, 5cm resolution)
+- [x] **T082** Particle filter localization in robot/src/slam/particle_filter.py (100-500 particles, resampling)
+- [x] **T083** SLAM module integration in robot/src/slam/slam_manager.py (sensor fusion, map building)
+- [x] **T084** A* pathfinding algorithm in robot/src/navigation/astar.py (frontier selection, obstacle avoidance)
+- [x] **T085** Coverage path planner in robot/src/navigation/coverage_planner.py (boustrophedon pattern, 10% overlap)
 - [ ] **T086** Path executor in robot/src/navigation/path_executor.py (waypoint tracking, position control)
 
 ### Robot - Control Systems
 
-- [ ] **T087** [P] PID controller implementation in robot/src/control/pid.py (tunable gains, anti-windup)
-- [ ] **T088** Motor controller in robot/src/control/motor_controller.py (velocity control, encoder feedback, 100 Hz)
-- [ ] **T089** Robot velocity controller in robot/src/control/robot_controller.py (differential drive kinematics)
+- [x] **T087** [P] PID controller implementation in robot/src/control/pid.py (tunable gains, anti-windup)
+- [x] **T088** Motor controller in robot/src/control/motor_controller.py (velocity control, encoder feedback, 100 Hz)
+- [x] **T089** Robot velocity controller in robot/src/control/robot_controller.py (differential drive kinematics)
 - [ ] **T090** Safety controller in robot/src/control/safety.py (e-stop, cliff detection, collision avoidance)
 - [ ] **T090a** [P] Battery monitor with return-to-start behavior in robot/src/control/battery_manager.py (implements FR-045 low battery handling)
 
@@ -240,9 +240,9 @@
 
 ### Unit Tests
 
-- [ ] **T128** [P] Unit tests for SLAM grid operations in robot/tests/unit/test_occupancy_grid.py
+- [x] **T128** [P] Unit tests for SLAM grid operations in robot/tests/unit/test_occupancy_grid.py
 - [ ] **T129** [P] Unit tests for A* pathfinding in robot/tests/unit/test_astar.py
-- [ ] **T130** [P] Unit tests for coverage planner in robot/tests/unit/test_coverage_planner.py
+- [x] **T130** [P] Unit tests for coverage planner in robot/tests/unit/test_coverage_planner.py
 - [ ] **T131** [P] Unit tests for PID controller in robot/tests/unit/test_pid.py
 - [ ] **T132** [P] Unit tests for backend services in backend/tests/unit/services/*.test.ts
 - [ ] **T133** [P] Unit tests for frontend components in frontend/tests/unit/components/*.test.tsx

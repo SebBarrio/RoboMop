@@ -35,7 +35,7 @@ export class Map {
   @JoinColumn({ name: "robotId" })
   robot!: Robot;
 
-  @Column({ length: 100, nullable: true })
+  @Column({ type: "varchar", length: 100, nullable: true })
   name!: string | null;
 
   @Column({ type: "float" })
@@ -50,7 +50,7 @@ export class Map {
   @Column(() => Origin)
   origin!: Origin;
 
-  @Column()
+  @Column({ type: "blob" })
   data!: Buffer;
 
   @Column({ type: "simple-json", nullable: true })

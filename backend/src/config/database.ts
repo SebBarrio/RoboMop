@@ -5,18 +5,25 @@ import type { SqliteConnectionOptions } from "typeorm/driver/sqlite/SqliteConnec
 import path from "node:path";
 import dotenv from "dotenv";
 
+import { Robot } from "../models/Robot.js";
+import { RobotState } from "../models/RobotState.js";
+import { Map } from "../models/Map.js";
+import { RestrictedZone } from "../models/RestrictedZone.js";
+import { Session } from "../models/Session.js";
+import { Log } from "../models/Log.js";
+
 dotenv.config();
 
 const rootDir = path.resolve(__dirname, "..", "..");
 
+const isTestEnv = process.env.NODE_ENV === "test";
+
 const baseOptions = {
-  entities: [path.join(rootDir, "src/models/**/*.{ts,js}")],
-  migrations: [path.join(rootDir, "src/migrations/*.{ts,js}")],
-  synchronize: false,
+  entities: [Robot, RobotState, Map, RestrictedZone, Session, Log],
+  migrations: [],
+  synchronize: isTestEnv,
   logging: process.env.TYPEORM_LOGGING === "true"
 } satisfies Pick<DataSourceOptions, "entities" | "migrations" | "synchronize" | "logging">;
-
-const isTestEnv = process.env.NODE_ENV === "test";
 
 const sqliteOptions: SqliteConnectionOptions = {
   type: "sqlite",
@@ -34,5 +41,13 @@ const postgresOptions: PostgresConnectionOptions = {
 const selectedOptions = process.env.DATABASE_URL && !isTestEnv ? postgresOptions : sqliteOptions;
 
 export const AppDataSource = new DataSource(selectedOptions);
+
+export const initializeDataSource = async (): Promise<DataSource> => {
+  if (AppDataSource.isInitialized) {
+    return AppDataSource;
+  }
+
+  return AppDataSource.initialize();
+};
 
 export default AppDataSource;

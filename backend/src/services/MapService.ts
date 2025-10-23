@@ -142,8 +142,8 @@ export class MapService {
     }
 
     const map = await this.getById(id);
-    const expectedLength = map.width * map.height;
 
+    const expectedLength = map.width * map.height;
     if (data.length !== expectedLength) {
       throw new ValidationError("Map data length does not match map dimensions", {
         expected: expectedLength,

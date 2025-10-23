@@ -7,7 +7,7 @@ setpoint vs actual speed and position for verification.
 """
 
 from __future__ import annotations
-
+import sys
 import argparse
 import time
 from dataclasses import dataclass
@@ -15,11 +15,13 @@ import math
 import os
 from datetime import datetime
 from typing import Callable, Sequence
-
+from pathlib import Path
 import board
 import busio
 from adafruit_pca9685 import PCA9685
-from gpiozero import RotaryEncoder
+sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
+from control.pwm_controller import MotorChannelConfig, MotorDriver
+from sensors.encoders import EncoderReading, QuadratureEncoder, GpioZeroEncoderHardware
 
 # Use non-interactive backend for headless plotting
 import matplotlib
@@ -32,9 +34,9 @@ import numpy as np
 # MOTOR_CHANNELS: PCA9685 PWM channels for each motor (forward_channel, reverse_channel)
 # Motor 0: channels (0, 1) -> L_PWM=0, R_PWM=1
 # Motor 1: channels (2, 3) -> L_PWM=2, R_PWM=3
-# Motor 2: channels (4, 5) -> L_PWM=4, R_PWM=5
-# Motor 3: channels (6, 7) -> L_PWM=6, R_PWM=7
-MOTOR_CHANNELS: Sequence[tuple[int, int]] = ((0, 1), (2, 3), (4, 5), (6, 7))
+# Motor 2: channels (5, 4) -> L_PWM=5, R_PWM=4 (intentional inversion)
+# Motor 3: channels (7, 6) -> L_PWM=7, R_PWM=6 (intentional inversion)
+MOTOR_CHANNELS: Sequence[tuple[int, int]] = ((0, 1), (2, 3), (5, 4), (7, 6))
 
 # ENCODER_CHANNELS: GPIO pins for quadrature encoders (pinA, pinB)
 # Encoder 0: pins (5, 6) -> encoderA=5, encoderB=6 (shared by motors 2,3)
@@ -85,13 +87,6 @@ SPEED_LP_TAU_S: float = 0.04
 
 
 @dataclass(frozen=True)
-class MotorConfig:
-    index: int
-    forward_channel: int
-    reverse_channel: int
-
-
-@dataclass(frozen=True)
 class EncoderConfig:
     index: int
     pin_a: int
@@ -119,94 +114,56 @@ class PIDController:
         return (self._kp * error) + (self._ki * self._integrator) + (self._kd * derivative)
 
 
-class MotorController:
-    def __init__(self, pwm_board: PCA9685, motor_configs: Sequence[MotorConfig]) -> None:
-        self._pwm_board = pwm_board
-        self._configs = tuple(motor_configs)
-        self._motors = {config.index: config for config in self._configs}
-
-    @property
-    def motor_configs(self) -> tuple[MotorConfig, ...]:
-        return self._configs
-
-    def set_voltage(self, motor_index: int, voltage_command: float) -> None:
-        """Command motor voltage using H-bridge via PWM (linearized mapping).
-
-        Maps commanded voltage in [-SUPPLY_VOLTAGE, SUPPLY_VOLTAGE] to PWM duty on
-        forward/reverse channels. Positive voltage is forward.
-        """
-        config = self._motors[motor_index]
-        v_cmd = max(-SUPPLY_VOLTAGE, min(voltage_command, SUPPLY_VOLTAGE))
-        duty = abs(v_cmd) / SUPPLY_VOLTAGE
-        level = int(PWM_MIN + (PWM_MAX - PWM_MIN) * duty)
-        if v_cmd >= 0:
-            self._pwm_board.channels[config.forward_channel].duty_cycle = level
-            self._pwm_board.channels[config.reverse_channel].duty_cycle = PWM_MIN
-        else:
-            self._pwm_board.channels[config.forward_channel].duty_cycle = PWM_MIN
-            self._pwm_board.channels[config.reverse_channel].duty_cycle = level
-
-    def stop_all(self) -> None:
-        for config in self._motors.values():
-            self._pwm_board.channels[config.forward_channel].duty_cycle = PWM_MIN
-            self._pwm_board.channels[config.reverse_channel].duty_cycle = PWM_MIN
-
-
-class EncoderReader:
+class QuadratureEncoderFeedback:
     def __init__(
         self,
         encoder_configs: Sequence[EncoderConfig],
         pulses_per_rev: int,
     ) -> None:
-        self._ppr = float(pulses_per_rev)
+        if pulses_per_rev <= 0:
+            raise ValueError("pulses_per_rev must be positive")
+
+        gear_ratio = 1.0 if ENCODER_ON_OUTPUT_SHAFT else GEAR_RATIO
+        cutoff_hz = 1.0 / (2.0 * math.pi * SPEED_LP_TAU_S) if SPEED_LP_TAU_S > 0.0 else None
+
         self._encoders = {
-            config.index: RotaryEncoder(config.pin_a, config.pin_b, max_steps=0)
+            config.index: QuadratureEncoder(
+                hardware=GpioZeroEncoderHardware(config.pin_a, config.pin_b, max_steps=0),
+                counts_per_revolution=pulses_per_rev,
+                gear_ratio=gear_ratio,
+                velocity_cutoff_hz=cutoff_hz,
+                min_dt=0.001,
+            )
             for config in encoder_configs
         }
-        # Track last counts per motor (not per encoder) since motors share encoders
-        self._last_counts_per_motor = {motor_idx: 0 for motor_idx in MOTOR_TO_ENCODER_MAP.keys()}
-        self._zero_counts = {idx: enc.steps for idx, enc in self._encoders.items()}
-        # Per-motor filtered speed storage (rad/s)
-        self._omega_filtered_per_motor = {motor_idx: 0.0 for motor_idx in MOTOR_TO_ENCODER_MAP.keys()}
+        self._motor_to_encoder = MOTOR_TO_ENCODER_MAP
+        self._seen_motors: set[int] = set()
+        self._cached_readings: dict[int, EncoderReading] = {}
+        self.zero()
 
-    def read_state(self, motor_index: int, dt: float) -> tuple[float, float]:
-        """Return (omega_out_rad_per_s, theta_out_rad)."""
-        # Use minimum dt threshold to prevent division by very small values
-        MIN_DT = 0.001  # 1ms minimum
-        if dt < MIN_DT:
-            return 0.0, 0.0
-        
-        encoder_index = MOTOR_TO_ENCODER_MAP[motor_index]
-        encoder = self._encoders[encoder_index]
-        steps = encoder.steps
-        
-        # Use per-motor last counts to handle multiple motors sharing one encoder
-        delta_steps = steps - self._last_counts_per_motor[motor_index]
-        self._last_counts_per_motor[motor_index] = steps
+    def _refresh_cache(self) -> None:
+        self._cached_readings = {
+            idx: encoder.read()
+            for idx, encoder in self._encoders.items()
+        }
 
-        # Total angle from zero (radians)
-        total_steps = steps - self._zero_counts[encoder_index]
-        rotations_total = total_steps / self._ppr
-        theta_measured_rad = rotations_total * 2.0 * math.pi
-        # Incremental speed (radians per second)
-        rotations = delta_steps / self._ppr
-        omega_measured_rad_per_s = (rotations * 2.0 * math.pi) / dt
-
-        if ENCODER_ON_OUTPUT_SHAFT:
-            theta_out = theta_measured_rad
-            omega_raw_out = omega_measured_rad_per_s
+    def __call__(self, motor_index: int, _: float) -> tuple[float, float]:
+        # Reset cache on first motor call or after each full cycle through motors
+        if not self._seen_motors or len(self._seen_motors) == len(self._motor_to_encoder):
+            self._refresh_cache()
+            self._seen_motors = {motor_index}
         else:
-            # Encoders on motor shaft -> convert to output shaft via gear ratio
-            theta_out = theta_measured_rad / GEAR_RATIO
-            omega_raw_out = omega_measured_rad_per_s / GEAR_RATIO
+            self._seen_motors.add(motor_index)
 
-        # Low-pass filter the measured speed to reduce quantization noise
-        alpha = dt / (SPEED_LP_TAU_S + dt)
-        omega_prev = self._omega_filtered_per_motor[motor_index]
-        omega_out = omega_prev + alpha * (omega_raw_out - omega_prev)
-        self._omega_filtered_per_motor[motor_index] = omega_out
+        encoder_index = self._motor_to_encoder[motor_index]
+        reading = self._cached_readings[encoder_index]
+        return reading.velocity_rad_s, reading.position_rad
 
-        return omega_out, theta_out
+    def zero(self) -> None:
+        for encoder in self._encoders.values():
+            encoder.zero()
+        self._cached_readings = {}
+        self._seen_motors.clear()
 
     def close(self) -> None:
         for encoder in self._encoders.values():
@@ -216,7 +173,7 @@ class EncoderReader:
 class MotorTestRig:
     def __init__(
         self,
-        controller: MotorController,
+        controller: MotorDriver,
         feedback_provider: Callable[[int, float], tuple[float, float]],
         setpoint_amplitude_rad_per_s: float = SETPOINT_AMPLITUDE_RAD_PER_S,
         kp: float = SPEED_KP,
@@ -427,9 +384,9 @@ class MotorTestRig:
         print(f"Plot saved to {out_path}")
 
 
-def build_motor_configs() -> list[MotorConfig]:
+def build_motor_configs() -> list[MotorChannelConfig]:
     return [
-        MotorConfig(index=idx, forward_channel=channels[0], reverse_channel=channels[1])
+        MotorChannelConfig(index=idx, forward_channel=channels[0], reverse_channel=channels[1])
         for idx, channels in enumerate(MOTOR_CHANNELS)
     ]
 
@@ -474,11 +431,11 @@ def main() -> None:
     i2c = busio.I2C(board.SCL, board.SDA)
     pwm = PCA9685(i2c)
     pwm.frequency = PWM_FREQUENCY
-    controller = MotorController(pwm, build_motor_configs())
-    encoders = EncoderReader(build_encoder_configs(), ENCODER_PULSES_PER_REV)
+    controller = MotorDriver(pwm, build_motor_configs(), supply_voltage=SUPPLY_VOLTAGE)
+    encoder_feedback = QuadratureEncoderFeedback(build_encoder_configs(), ENCODER_PULSES_PER_REV)
     rig = MotorTestRig(
         controller,
-        encoders.read_state,
+        encoder_feedback,
         setpoint_amplitude_rad_per_s=args.setpoint,
         kp=args.kp,
         ki=args.ki,
@@ -499,7 +456,7 @@ def main() -> None:
         rig.run(TEST_DURATION, CONTROL_INTERVAL)
     finally:
         controller.stop_all()
-        encoders.close()
+        encoder_feedback.close()
         pwm.deinit()
 
 

@@ -7,10 +7,42 @@ import math
 import threading
 import time
 from dataclasses import dataclass
-from typing import AsyncIterator, Callable, Optional, Protocol
+from typing import AsyncIterator, Callable, Optional
+
+try:
+    from smbus2 import SMBus
+except ImportError:
+    SMBus = None  # type: ignore
 
 
 GRAVITY = 9.80665
+
+# MPU9250/MPU6500 Registers and constants (subset)
+PWR_MGMT_1 = 0x6B
+ACCEL_XOUT_H = 0x3B
+GYRO_XOUT_H = 0x43
+TEMP_OUT_H = 0x41
+WHO_AM_I = 0x75
+INT_PIN_CFG = 0x37
+USER_CTRL = 0x6A
+CONFIG = 0x1A            # DLPF configuration
+GYRO_CONFIG = 0x1B       # Scale, not changed here (use defaults)
+ACCEL_CONFIG = 0x1C
+ACCEL_CONFIG2 = 0x1D     # Accel DLPF
+
+# AK8963 (Magnetometer) Registers
+AK8963_ADDRESS = 0x0C
+AK8963_WHO_AM_I = 0x00
+AK8963_CNTL1 = 0x0A
+AK8963_ST1 = 0x02
+AK8963_XOUT_L = 0x03
+
+# Scale factors for default full-scale settings (±2g accel, ±250°/s gyro, 16-bit mag)
+ACCEL_SCALE = 16384.0  # LSB/g for ±2g
+GYRO_SCALE = 131.0     # LSB/(°/s) for ±250°/s
+TEMP_OFFSET = 21.0
+TEMP_SCALE = 333.87
+MAG_SCALE = 4912.0 / 32760.0  # μT per LSB
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,63 +75,9 @@ class ImuSample:
     timestamp_s: float
 
 
-class MPU9250RegisterIO(Protocol):
-    """Minimal protocol for MPU9250 register access."""
-
-    def write(self, register: int, data: bytes) -> None:  # pragma: no cover - protocol definition
-        ...
-
-    def read(self, register: int, length: int) -> bytes:  # pragma: no cover - protocol definition
-        ...
-
-    def write_mag(self, register: int, data: bytes) -> None:  # pragma: no cover - protocol definition
-        ...
-
-    def read_mag(self, register: int, length: int) -> bytes:  # pragma: no cover - protocol definition
-        ...
-
-
-class _I2CRegisterIO:
-    """Adapter around ``adafruit_bus_device.i2c_device.I2CDevice``."""
-
-    def __init__(
-        self,
-        i2c: object,
-        address: int,
-        magnetometer_address: int,
-        i2c_device_cls: Optional[type] = None,
-    ) -> None:
-        if i2c_device_cls is None:
-            from adafruit_bus_device.i2c_device import I2CDevice  # type: ignore
-
-            i2c_device_cls = I2CDevice
-        self._device = i2c_device_cls(i2c, address)
-        self._mag_device = i2c_device_cls(i2c, magnetometer_address)
-
-    def write(self, register: int, data: bytes) -> None:
-        payload = bytes([register]) + bytes(data)
-        with self._device as device:
-            device.write(payload)
-
-    def read(self, register: int, length: int) -> bytes:
-        buffer = bytearray(length)
-        with self._device as device:
-            device.write_then_readinto(bytes([register]), buffer)
-        return bytes(buffer)
-
-    def write_mag(self, register: int, data: bytes) -> None:
-        payload = bytes([register]) + bytes(data)
-        with self._mag_device as device:
-            device.write(payload)
-
-    def read_mag(self, register: int, length: int) -> bytes:
-        buffer = bytearray(length)
-        with self._mag_device as device:
-            device.write_then_readinto(bytes([register]), buffer)
-        return bytes(buffer)
-
-
 class _ComplementaryFilter:
+    """Complementary filter for sensor fusion."""
+
     def __init__(self, sample_rate_hz: float, alpha: float) -> None:
         if not 0.0 < alpha < 1.0:
             raise ValueError("alpha must be between 0 and 1")
@@ -109,6 +87,11 @@ class _ComplementaryFilter:
         self._roll = 0.0
         self._pitch = 0.0
         self._yaw = 0.0
+
+    def set_alpha(self, alpha: float) -> None:
+        if not 0.0 < alpha < 1.0:
+            raise ValueError("alpha must be between 0 and 1")
+        self._alpha = alpha
 
     def update(
         self,
@@ -151,58 +134,58 @@ class _ComplementaryFilter:
 
 
 class MPU9250:
-    """High-level IMU interface providing calibrated samples at 100 Hz."""
-
-    # Register map
-    SMPLRT_DIV = 0x19
-    CONFIG = 0x1A
-    GYRO_CONFIG = 0x1B
-    ACCEL_CONFIG = 0x1C
-    ACCEL_CONFIG2 = 0x1D
-    INT_PIN_CFG = 0x37
-    INT_ENABLE = 0x38
-    ACCEL_XOUT_H = 0x3B
-    TEMP_OUT_H = 0x41
-    GYRO_XOUT_H = 0x43
-    USER_CTRL = 0x6A
-    PWR_MGMT_1 = 0x6B
-    PWR_MGMT_2 = 0x6C
-
-    AK8963_ST1 = 0x02
-    AK8963_HXL = 0x03
-    AK8963_ST2 = 0x09
-    AK8963_CNTL1 = 0x0A
-    AK8963_ASAX = 0x10
-
-    DEFAULT_ADDRESS = 0x68
-    DEFAULT_MAG_ADDRESS = 0x0C
+    """High-level IMU interface providing calibrated samples using direct I2C (smbus2)."""
 
     def __init__(
         self,
         i2c: Optional[object] = None,
         *,
-        register_io: Optional[MPU9250RegisterIO] = None,
-        i2c_device_cls: Optional[type] = None,
+        bus: int = 1,
+        address: int = 0x68,
         sample_rate_hz: float = 100.0,
         filter_alpha: float = 0.98,
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
-        if register_io is None:
-            if i2c is None:
-                raise ValueError("Either register_io or i2c must be provided")
-            register_io = _I2CRegisterIO(i2c, self.DEFAULT_ADDRESS, self.DEFAULT_MAG_ADDRESS, i2c_device_cls)
+        if SMBus is None:
+            raise ImportError(
+                "smbus2 library not found. Install with: pip install smbus2"
+            )
 
-        self._io = register_io
         self._sample_rate_hz = sample_rate_hz
         self._filter_alpha = filter_alpha
         self._sleep = sleep
 
-        self._accel_scale = GRAVITY / 8192.0  # ±4g full-scale
-        self._gyro_scale = (math.pi / 180.0) / 65.5  # ±500 °/s
-        self._mag_scale = 0.15  # µT per LSB in 16-bit mode
+        # I2C bus and addressing
+        self._bus_num = bus
+        self._mpu_address = address
+        self._bus: Optional[SMBus] = None
+        self._magnetometer_enabled = False
 
+        # Gyroscope calibration offsets (deg/s)
+        self._gyro_offset_x = 0.0
+        self._gyro_offset_y = 0.0
+        self._gyro_offset_z = 0.0
+
+        # Software low-pass filter (EMA) state
+        self._filter_initialized = False
+        self._ema_alpha = 0.5  # 0 = max smoothing, 1 = no smoothing
+        self._accel_fx = 0.0
+        self._accel_fy = 0.0
+        self._accel_fz = 0.0
+        self._gyro_fx = 0.0
+        self._gyro_fy = 0.0
+        self._gyro_fz = 0.0
+        self._gyro_deadband = 0.5  # deg/s
+
+        # Orientation filter and init/reference logic
         self._filter = _ComplementaryFilter(sample_rate_hz, filter_alpha)
-        self._mag_adjust = Vector3(1.0, 1.0, 1.0)
+        self._orientation_initialized = False
+        self._init_buffer: list[Vector3] = []
+        self._init_samples_needed = 100
+        self._reference_orientation: Optional[Orientation] = None
+        self._frame_count = 0
+        self._init_alpha = 0.5
+        self._convergence_frames = 100
 
         self._initialized = False
         self._lock = threading.Lock()
@@ -220,24 +203,65 @@ class MPU9250:
         await self.stop()
 
     def initialize(self) -> None:
+        """Initialize the sensor and I2C bus, configure registers, and calibrate gyro."""
         if self._initialized:
             return
-        self._reset()
-        self._configure()
-        self._configure_magnetometer()
+
+        # Open SMBus
+        self._bus = SMBus(self._bus_num)
+
+        # WHO_AM_I check (non-fatal if unexpected)
+        try:
+            who_am_i = self._bus.read_byte_data(self._mpu_address, WHO_AM_I)
+            _ = who_am_i  # silence unused
+        except Exception:
+            pass
+
+        # Wake device and configure DLPF for gyro and accel
+        self._bus.write_byte_data(self._mpu_address, PWR_MGMT_1, 0x00)
+        self._sleep(0.1)
+        self._bus.write_byte_data(self._mpu_address, CONFIG, 0x03)         # Gyro DLPF 41Hz
+        self._bus.write_byte_data(self._mpu_address, ACCEL_CONFIG2, 0x03)  # Accel DLPF 41Hz
+        self._sleep(0.01)
+
+        # Enable I2C bypass for direct AK8963 access and try to init magnetometer
+        try:
+            self._bus.write_byte_data(self._mpu_address, INT_PIN_CFG, 0x02)
+            self._sleep(0.01)
+            mag_id = self._bus.read_byte_data(AK8963_ADDRESS, AK8963_WHO_AM_I)
+            if mag_id == 0x48:
+                # 100Hz, 16-bit
+                self._bus.write_byte_data(AK8963_ADDRESS, AK8963_CNTL1, 0x16)
+                self._sleep(0.01)
+                self._magnetometer_enabled = True
+            else:
+                self._magnetometer_enabled = False
+        except Exception:
+            self._magnetometer_enabled = False
+
+        # Calibrate gyro while stationary
+        self.calibrate_gyroscope(samples=300)
+
+        # Reset EMA state
+        self._filter_initialized = False
+
         self._initialized = True
 
     async def start(self) -> None:
+        """Start async sampling."""
         if self._queue is not None:
             return
         self.initialize()
         self._loop = asyncio.get_running_loop()
         self._queue = asyncio.Queue(maxsize=512)
         self._stop_event.clear()
-        self._reader_thread = threading.Thread(target=self._reader_main, name="mpu9250-reader", daemon=True)
+        self._reader_thread = threading.Thread(
+            target=self._reader_main, name="mpu9250-reader", daemon=True
+        )
         self._reader_thread.start()
 
     async def stop(self) -> None:
+        """Stop async sampling."""
         if self._queue is None:
             return
         self._stop_event.set()
@@ -248,8 +272,16 @@ class MPU9250:
         self._queue = None
         self._loop = None
         self._reader_thread = None
+        # Close SMBus
+        if self._bus is not None:
+            try:
+                self._bus.close()
+            except Exception:
+                pass
+            self._bus = None
 
     async def iter_samples(self) -> AsyncIterator[ImuSample]:
+        """Iterate over samples asynchronously."""
         if self._queue is None:
             raise RuntimeError("iter_samples() requires an active start()")
         while True:
@@ -259,112 +291,124 @@ class MPU9250:
             yield sample
 
     def read_sample(self) -> ImuSample:
+        """Read a single IMU sample with orientation."""
         self.initialize()
         with self._lock:
-            accel_raw, gyro_raw, temperature_c = self._read_accel_gyro()
-            magnetic_field = self._read_magnetometer()
+            assert self._bus is not None
+            # Burst read accel(6), temp(2), gyro(6)
+            data_bytes = self._bus.read_i2c_block_data(self._mpu_address, ACCEL_XOUT_H, 14)
 
-            acceleration = Vector3(
-                accel_raw.x * self._accel_scale,
-                accel_raw.y * self._accel_scale,
-                accel_raw.z * self._accel_scale,
-            )
-            angular_velocity = Vector3(
-                gyro_raw.x * self._gyro_scale,
-                gyro_raw.y * self._gyro_scale,
-                gyro_raw.z * self._gyro_scale,
-            )
+            # Parse raw values
+            ax_raw = _bytes_to_int16(data_bytes[0], data_bytes[1])
+            ay_raw = _bytes_to_int16(data_bytes[2], data_bytes[3])
+            az_raw = _bytes_to_int16(data_bytes[4], data_bytes[5])
+            temp_raw = _bytes_to_int16(data_bytes[6], data_bytes[7])
+            gx_raw = _bytes_to_int16(data_bytes[8], data_bytes[9])
+            gy_raw = _bytes_to_int16(data_bytes[10], data_bytes[11])
+            gz_raw = _bytes_to_int16(data_bytes[12], data_bytes[13])
 
-            magnetic_vector: Optional[Vector3]
-            if magnetic_field is not None:
-                magnetic_vector = Vector3(
-                    magnetic_field.x * self._mag_scale * self._mag_adjust.x,
-                    magnetic_field.y * self._mag_scale * self._mag_adjust.y,
-                    magnetic_field.z * self._mag_scale * self._mag_adjust.z,
-                )
+            # Convert to physical units
+            ax = (ax_raw / ACCEL_SCALE) * GRAVITY
+            ay = (ay_raw / ACCEL_SCALE) * GRAVITY
+            az = (az_raw / ACCEL_SCALE) * GRAVITY
+
+            gx = (gx_raw / GYRO_SCALE) - self._gyro_offset_x  # deg/s
+            gy = (gy_raw / GYRO_SCALE) - self._gyro_offset_y
+            gz = (gz_raw / GYRO_SCALE) - self._gyro_offset_z
+
+            # EMA smoothing
+            if not self._filter_initialized:
+                self._accel_fx, self._accel_fy, self._accel_fz = ax, ay, az
+                self._gyro_fx, self._gyro_fy, self._gyro_fz = gx, gy, gz
+                self._filter_initialized = True
             else:
-                magnetic_vector = None
+                a = self._ema_alpha
+                self._accel_fx = a * ax + (1 - a) * self._accel_fx
+                self._accel_fy = a * ay + (1 - a) * self._accel_fy
+                self._accel_fz = a * az + (1 - a) * self._accel_fz
+                self._gyro_fx = a * gx + (1 - a) * self._gyro_fx
+                self._gyro_fy = a * gy + (1 - a) * self._gyro_fy
+                self._gyro_fz = a * gz + (1 - a) * self._gyro_fz
 
-            orientation = self._filter.update(acceleration, angular_velocity, magnetic_vector)
+            # Apply deadband to gyro (deg/s)
+            def _apply_deadband(v: float) -> float:
+                return 0.0 if abs(v) < self._gyro_deadband else v
+
+            gx_db = _apply_deadband(self._gyro_fx)
+            gy_db = _apply_deadband(self._gyro_fy)
+            gz_db = _apply_deadband(self._gyro_fz)
+
+            # Convert gyro to rad/s for filter
+            angular_velocity = Vector3(
+                math.radians(gx_db),
+                math.radians(gy_db),
+                math.radians(gz_db),
+            )
+
+            acceleration = Vector3(self._accel_fx, self._accel_fy, self._accel_fz)
+
+            # Magnetometer (optional)
+            magnetic_vector = self._read_magnetometer()
+
+            # Dynamic alpha during convergence
+            self._frame_count += 1
+            if not self._orientation_initialized:
+                # Initialization buffer with accelerometer only for initial tilt
+                self._init_buffer.append(acceleration)
+                if len(self._init_buffer) >= self._init_samples_needed:
+                    # Average acceleration and compute initial roll/pitch
+                    avg_ax = sum(v.x for v in self._init_buffer) / len(self._init_buffer)
+                    avg_ay = sum(v.y for v in self._init_buffer) / len(self._init_buffer)
+                    avg_az = sum(v.z for v in self._init_buffer) / len(self._init_buffer)
+                    acc_norm = math.sqrt(avg_ax * avg_ax + avg_ay * avg_ay + avg_az * avg_az)
+                    if acc_norm > 1e-3:
+                        ax_n, ay_n, az_n = avg_ax / acc_norm, avg_ay / acc_norm, avg_az / acc_norm
+                    else:
+                        ax_n, ay_n, az_n = 0.0, 0.0, -1.0
+                    init_roll = math.atan2(ay_n, az_n)
+                    init_pitch = math.atan2(-ax_n, math.sqrt(ay_n * ay_n + az_n * az_n))
+                    init_yaw = 0.0
+                    if magnetic_vector is not None:
+                        init_yaw = _compute_yaw(magnetic_vector, init_roll, init_pitch)
+                    # Seed filter state directly
+                    self._filter._initialized = True
+                    self._filter._roll = init_roll
+                    self._filter._pitch = init_pitch
+                    self._filter._yaw = init_yaw
+                    self._reference_orientation = Orientation(init_roll, init_pitch, init_yaw)
+                    self._orientation_initialized = True
+            # Set current alpha depending on convergence window
+            if self._orientation_initialized and (self._frame_count - self._init_samples_needed) < self._convergence_frames:
+                self._filter.set_alpha(self._init_alpha)
+            else:
+                self._filter.set_alpha(self._filter_alpha)
+
+            # Update complementary filter
+            orientation_abs = self._filter.update(acceleration, angular_velocity, magnetic_vector)
+
+            # Report orientation relative to reference
+            if self._reference_orientation is not None:
+                rel_roll = _wrap_angle(orientation_abs.roll - self._reference_orientation.roll)
+                rel_pitch = _wrap_angle(orientation_abs.pitch - self._reference_orientation.pitch)
+                rel_yaw = _wrap_angle(orientation_abs.yaw - self._reference_orientation.yaw)
+                orientation = Orientation(rel_roll, rel_pitch, rel_yaw)
+            else:
+                orientation = orientation_abs
+
+            temp_c = (temp_raw / TEMP_SCALE) + TEMP_OFFSET
             timestamp = time.perf_counter()
 
         return ImuSample(
             acceleration_m_s2=acceleration,
             angular_velocity_rad_s=angular_velocity,
             magnetic_field_uT=magnetic_vector,
-            temperature_c=temperature_c,
+            temperature_c=temp_c,
             orientation=orientation,
             timestamp_s=timestamp,
         )
 
-    def _reset(self) -> None:
-        self._io.write(self.PWR_MGMT_1, bytes([0x80]))
-        self._sleep(0.1)
-
-    def _configure(self) -> None:
-        self._io.write(self.PWR_MGMT_1, bytes([0x01]))
-        self._sleep(0.01)
-        self._io.write(self.PWR_MGMT_2, bytes([0x00]))
-        divider = max(0, min(255, int(max(4.0, 1000.0 / self._sample_rate_hz)) - 1))
-        self._io.write(self.SMPLRT_DIV, bytes([divider]))
-        self._io.write(self.CONFIG, bytes([0x03]))
-        self._io.write(self.GYRO_CONFIG, bytes([0x08]))  # ±500 °/s
-        self._io.write(self.ACCEL_CONFIG, bytes([0x08]))  # ±4 g
-        self._io.write(self.ACCEL_CONFIG2, bytes([0x03]))
-        self._io.write(self.USER_CTRL, bytes([0x00]))
-        self._io.write(self.INT_PIN_CFG, bytes([0x02]))  # BYPASS_EN to access AK8963 directly
-        self._io.write(self.INT_ENABLE, bytes([0x00]))
-        self._sleep(0.01)
-
-    def _configure_magnetometer(self) -> None:
-        try:
-            self._io.write_mag(self.AK8963_CNTL1, bytes([0x00]))
-            self._sleep(0.01)
-            self._io.write_mag(self.AK8963_CNTL1, bytes([0x0F]))  # Fuse ROM access
-            self._sleep(0.01)
-            asa = self._io.read_mag(self.AK8963_ASAX, 3)
-            self._mag_adjust = Vector3(
-                _asa_adjust(asa[0]),
-                _asa_adjust(asa[1]),
-                _asa_adjust(asa[2]),
-            )
-            self._io.write_mag(self.AK8963_CNTL1, bytes([0x00]))
-            self._sleep(0.01)
-        except OSError:
-            self._mag_adjust = Vector3(1.0, 1.0, 1.0)
-
-        self._io.write_mag(self.AK8963_CNTL1, bytes([0x16]))  # 16-bit, 100 Hz continuous
-        self._sleep(0.01)
-
-    def _read_accel_gyro(self) -> tuple[Vector3, Vector3, float]:
-        data = self._io.read(self.ACCEL_XOUT_H, 14)
-        ax = _int16_be(data[0], data[1])
-        ay = _int16_be(data[2], data[3])
-        az = _int16_be(data[4], data[5])
-        temp_raw = _int16_be(data[6], data[7])
-        gx = _int16_be(data[8], data[9])
-        gy = _int16_be(data[10], data[11])
-        gz = _int16_be(data[12], data[13])
-        temperature_c = (temp_raw / 333.87) + 21.0
-        return Vector3(ax, ay, az), Vector3(gx, gy, gz), temperature_c
-
-    def _read_magnetometer(self) -> Optional[Vector3]:
-        try:
-            status = self._io.read_mag(self.AK8963_ST1, 1)
-        except OSError:
-            return None
-        if not status or (status[0] & 0x01) == 0:
-            return None
-        data = self._io.read_mag(self.AK8963_HXL, 6)
-        status2 = self._io.read_mag(self.AK8963_ST2, 1)
-        if status2 and (status2[0] & 0x08):
-            return None
-        hx = _int16_le(data[0], data[1])
-        hy = _int16_le(data[2], data[3])
-        hz = _int16_le(data[4], data[5])
-        return Vector3(hx, hy, hz)
-
     def _reader_main(self) -> None:
+        """Background thread for continuous sampling."""
         assert self._queue is not None
         assert self._loop is not None
         interval = 1.0 / self._sample_rate_hz
@@ -385,27 +429,56 @@ class MPU9250:
             else:
                 next_deadline = time.perf_counter()
 
+    def calibrate_gyroscope(self, samples: int = 300) -> None:
+        """Calibrate gyroscope by averaging readings while stationary."""
+        assert self._bus is not None
+        sum_x = 0.0
+        sum_y = 0.0
+        sum_z = 0.0
+        count = max(1, samples)
+        for _ in range(count):
+            data = self._bus.read_i2c_block_data(self._mpu_address, GYRO_XOUT_H, 6)
+            gx_raw = _bytes_to_int16(data[0], data[1])
+            gy_raw = _bytes_to_int16(data[2], data[3])
+            gz_raw = _bytes_to_int16(data[4], data[5])
+            sum_x += gx_raw / GYRO_SCALE
+            sum_y += gy_raw / GYRO_SCALE
+            sum_z += gz_raw / GYRO_SCALE
+            self._sleep(0.01)
+        self._gyro_offset_x = sum_x / count
+        self._gyro_offset_y = sum_y / count
+        self._gyro_offset_z = sum_z / count
 
-def _asa_adjust(raw: int) -> float:
-    return ((raw - 128) / 256.0) + 1.0
-
-
-def _int16_be(msb: int, lsb: int) -> int:
-    value = (msb << 8) | lsb
-    return value - 0x10000 if value & 0x8000 else value
-
-
-def _int16_le(lsb: int, msb: int) -> int:
-    value = (msb << 8) | lsb
-    return value - 0x10000 if value & 0x8000 else value
+    def _read_magnetometer(self) -> Optional[Vector3]:
+        """Read AK8963 magnetometer if available and return in µT; else None."""
+        if not self._magnetometer_enabled or self._bus is None:
+            return None
+        try:
+            status = self._bus.read_byte_data(AK8963_ADDRESS, AK8963_ST1)
+            if (status & 0x01) == 0:
+                return None
+            mag_bytes = self._bus.read_i2c_block_data(AK8963_ADDRESS, AK8963_XOUT_L, 7)
+            if mag_bytes[6] & 0x08:
+                return None
+            mx_raw = _bytes_to_int16(mag_bytes[1], mag_bytes[0])
+            my_raw = _bytes_to_int16(mag_bytes[3], mag_bytes[2])
+            mz_raw = _bytes_to_int16(mag_bytes[5], mag_bytes[4])
+            mx = mx_raw * MAG_SCALE
+            my = my_raw * MAG_SCALE
+            mz = mz_raw * MAG_SCALE
+            return Vector3(mx, my, mz)
+        except Exception:
+            return None
 
 
 def _wrap_angle(angle: float) -> float:
+    """Wrap angle to [-π, π]."""
     wrapped = (angle + math.pi) % (2.0 * math.pi)
     return wrapped - math.pi
 
 
 def _compute_yaw(magnetic: Vector3, roll: float, pitch: float) -> float:
+    """Compute yaw from magnetometer reading compensated for tilt."""
     cos_roll = math.cos(roll)
     sin_roll = math.sin(roll)
     cos_pitch = math.cos(pitch)
@@ -415,3 +488,11 @@ def _compute_yaw(magnetic: Vector3, roll: float, pitch: float) -> float:
     x = mx * cos_pitch + mz * sin_pitch
     y = mx * sin_roll * sin_pitch + my * cos_roll - mz * sin_roll * cos_pitch
     return math.atan2(-y, x)
+
+
+def _bytes_to_int16(high_byte: int, low_byte: int) -> int:
+    """Convert two bytes to a signed 16-bit integer."""
+    value = (high_byte << 8) | low_byte
+    if value >= 0x8000:
+        value = -((65535 - value) + 1)
+    return value

@@ -111,8 +111,9 @@ class RPLidarProtocol:
                 
                 # Check sync bytes
                 if header[0] == SYNC_BYTE and header[1] == SYNC_BYTE2:
-                    # Parse data size (little-endian, 32-bit)
-                    data_size = struct.unpack('<I', header[2:6])[0]
+                    raw_size = struct.unpack('<I', header[2:6])[0]
+                    # The two most-significant bits encode response info.
+                    data_size = raw_size & 0x3FFFFFFF
                     data_type = header[6]
                     
                     print(f"Response descriptor: size={data_size}, type=0x{data_type:02X}")
