@@ -173,8 +173,8 @@
 
 ### Robot - Main Application
 
-- [ ] **T094** Main robot application in robot/src/main.py (initialization, mode management, graceful shutdown)
-- [ ] **T095** Configuration management in robot/src/config.py (YAML config loading, validation, defaults)
+- [x] **T094** Main robot application in robot/src/main.py (initialization, mode management, graceful shutdown)
+- [x] **T095** Configuration management in robot/src/config.py (YAML config loading, validation, defaults)
 
 ### Frontend - Components
 
