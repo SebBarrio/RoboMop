@@ -169,7 +169,7 @@
 
 - [X] **T091** WebSocket client in robot/src/communication/websocket_client.py (Socket.io client, auto-reconnect)
 - [X] **T092** State publisher in robot/src/communication/state_publisher.py (10 Hz state updates, 5 Hz map updates)
-- [ ] **T093** Command receiver in robot/src/communication/command_receiver.py (command dispatch, acknowledgement)
+- [X] **T093** Command receiver in robot/src/communication/command_receiver.py (command dispatch, acknowledgement)
 
 ### Robot - Main Application
 
