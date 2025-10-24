@@ -225,8 +225,8 @@
 
 - [x] **T121** Sensor fusion integration in robot/src/slam/sensor_fusion.py (EKF combining LIDAR, IMU, encoders)
 - [x] **T122** Hardware abstraction layer tests in robot/tests/integration/test_hardware_integration.py (verify all sensors readable)
-- [ ] **T123** SLAM loop integration in robot/src/main.py (LIDAR → SLAM update → position publish)
-- [ ] **T124** Navigation loop integration in robot/src/main.py (mode → path planning → execution)
+- [x] **T123** SLAM loop integration in robot/src/main.py (LIDAR → SLAM update → position publish)
+- [x] **T124** Navigation loop integration in robot/src/main.py (mode → path planning → execution)
 
 ### Frontend Integration
 

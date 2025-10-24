@@ -45,12 +45,72 @@ class RobotConfig:
 
 
 @dataclass(slots=True)
+class HardwareConfig:
+    """Hardware sensor configuration and parameters."""
+
+    lidar_port: str = "/dev/ttyUSB0"
+    lidar_baud_rate: int = 1_000_000
+    lidar_motor_pwm: int = 660
+    imu_i2c_bus: int = 1
+    imu_address: int = 0x68
+    ultrasonic_trigger_pin: int = 23
+    ultrasonic_echo_pin: int = 24
+    water_level_adc_channel: int = 0
+    encoder_left_pins: tuple[int, int] = (17, 18)
+    encoder_right_pins: tuple[int, int] = (22, 27)
+    encoder_counts_per_rev: int = 1440
+    wheel_diameter_m: float = 0.2
+
+
+@dataclass(slots=True)
+class SlamConfig:
+    """SLAM algorithm configuration parameters."""
+
+    grid_resolution: float = 0.05
+    grid_width: int = 2000
+    grid_height: int = 2000
+    grid_origin_x: float = -50.0
+    grid_origin_y: float = -50.0
+    particle_count: int = 200
+    resample_threshold: float = 0.5
+    max_lidar_range: float = 5.0
+    sensor_pose_x: float = 0.0
+    sensor_pose_y: float = 0.0
+    sensor_pose_theta: float = 0.0
+
+
+@dataclass(slots=True)
+class NavigationConfig:
+    """Navigation and path planning configuration."""
+
+    update_hz: float = 5.0
+    cleaning_width: float = 0.4
+    overlap_ratio: float = 0.1
+    obstacle_threshold: int = 200
+    inflation_radius: int = 2
+    path_tolerance: float = 0.05
+    heading_tolerance_deg: float = 5.0
+    track_width: float = 0.3
+    max_linear_speed: float = 0.5
+    max_angular_speed: float = 1.0
+    position_kp: float = 0.8
+    position_ki: float = 0.05
+    position_kd: float = 0.1
+    heading_kp: float = 2.0
+    heading_ki: float = 0.1
+    heading_kd: float = 0.2
+
+
+@dataclass(slots=True)
 class AppConfig:
     """Top-level configuration object used by the robot application."""
 
     websocket: WebSocketConfig
     publish: PublishConfig
     robot: RobotConfig
+    hardware: HardwareConfig
+    slam: SlamConfig
+    navigation: NavigationConfig
     log_level: str = "INFO"
     ack_timeout: float = 5.0
 
@@ -81,6 +141,9 @@ def load_config(
     websocket = _build_websocket_config(_get_section(data, "websocket"))
     publish = _build_publish_config(_get_section(data, "publish"))
     robot = _build_robot_config(_get_section(data, "robot"))
+    hardware = _build_hardware_config(_get_section(data, "hardware"))
+    slam = _build_slam_config(_get_section(data, "slam"))
+    navigation = _build_navigation_config(_get_section(data, "navigation"))
     log_level = _ensure_log_level(data.get("logLevel", "INFO"))
     ack_timeout = _ensure_positive_float(data.get("ackTimeout", 5.0), "ackTimeout")
 
@@ -88,6 +151,9 @@ def load_config(
         websocket=websocket,
         publish=publish,
         robot=robot,
+        hardware=hardware,
+        slam=slam,
+        navigation=navigation,
         log_level=log_level,
         ack_timeout=ack_timeout,
     )
@@ -117,6 +183,12 @@ def apply_overrides(config: AppConfig, overrides: Mapping[str, Any]) -> None:
             _apply_simple_overrides(config.robot, values)
             config.robot.mode = config.robot.mode.upper()
             config.robot.speed_multiplier = _ensure_speed_multiplier(config.robot.speed_multiplier)
+        elif section == "hardware" and isinstance(values, Mapping):
+            _apply_simple_overrides(config.hardware, values)
+        elif section == "slam" and isinstance(values, Mapping):
+            _apply_simple_overrides(config.slam, values)
+        elif section == "navigation" and isinstance(values, Mapping):
+            _apply_simple_overrides(config.navigation, values)
         elif section == "logLevel":
             config.log_level = _ensure_log_level(values)
         elif section == "ackTimeout":
@@ -130,6 +202,9 @@ def create_default_config() -> AppConfig:
         websocket=WebSocketConfig(),
         publish=PublishConfig(),
         robot=RobotConfig(),
+        hardware=HardwareConfig(),
+        slam=SlamConfig(),
+        navigation=NavigationConfig(),
     )
 
 
@@ -180,6 +255,38 @@ def _build_robot_config(section: Mapping[str, Any]) -> RobotConfig:
     mode = _ensure_non_empty_str(section.get("mode", "IDLE"), "robot.mode").upper()
     speed_multiplier = _ensure_speed_multiplier(section.get("speedMultiplier", 1.0))
     return RobotConfig(mode=mode, speed_multiplier=speed_multiplier)
+
+
+def _build_hardware_config(section: Mapping[str, Any]) -> HardwareConfig:
+    cfg = HardwareConfig()
+    _apply_simple_overrides(cfg, section)
+    return cfg
+
+
+def _build_slam_config(section: Mapping[str, Any]) -> SlamConfig:
+    cfg = SlamConfig()
+    _apply_simple_overrides(cfg, section)
+    if cfg.grid_resolution <= 0.0:
+        raise ConfigError("slam.grid_resolution must be positive")
+    if cfg.grid_width <= 0 or cfg.grid_height <= 0:
+        raise ConfigError("slam grid dimensions must be positive")
+    if cfg.particle_count < 1:
+        raise ConfigError("slam.particle_count must be at least 1")
+    return cfg
+
+
+def _build_navigation_config(section: Mapping[str, Any]) -> NavigationConfig:
+    cfg = NavigationConfig()
+    _apply_simple_overrides(cfg, section)
+    if cfg.update_hz <= 0.0:
+        raise ConfigError("navigation.update_hz must be positive")
+    if cfg.cleaning_width <= 0.0:
+        raise ConfigError("navigation.cleaning_width must be positive")
+    if not 0.0 <= cfg.overlap_ratio < 1.0:
+        raise ConfigError("navigation.overlap_ratio must be in [0.0, 1.0)")
+    if cfg.track_width <= 0.0:
+        raise ConfigError("navigation.track_width must be positive")
+    return cfg
 
 
 def _ensure_non_empty_str(value: Any, field: str) -> str:
@@ -284,8 +391,11 @@ def _normalize_map_hz(value: Any) -> float | None:
 __all__ = [
     "AppConfig",
     "ConfigError",
+    "HardwareConfig",
+    "NavigationConfig",
     "PublishConfig",
     "RobotConfig",
+    "SlamConfig",
     "WebSocketConfig",
     "apply_overrides",
     "create_default_config",
