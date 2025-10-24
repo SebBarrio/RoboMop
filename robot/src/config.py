@@ -116,9 +116,7 @@ def apply_overrides(config: AppConfig, overrides: Mapping[str, Any]) -> None:
         elif section == "robot" and isinstance(values, Mapping):
             _apply_simple_overrides(config.robot, values)
             config.robot.mode = config.robot.mode.upper()
-            config.robot.speed_multiplier = _ensure_speed_multiplier(
-                config.robot.speed_multiplier
-            )
+            config.robot.speed_multiplier = _ensure_speed_multiplier(config.robot.speed_multiplier)
         elif section == "logLevel":
             config.log_level = _ensure_log_level(values)
         elif section == "ackTimeout":
@@ -159,9 +157,7 @@ def _build_websocket_config(section: Mapping[str, Any]) -> WebSocketConfig:
     if "namespace" in section:
         cfg.namespace = _ensure_non_empty_str(section["namespace"], "websocket.namespace")
     if "socketioPath" in section:
-        cfg.socketio_path = _ensure_non_empty_str(
-            section["socketioPath"], "websocket.socketioPath"
-        )
+        cfg.socketio_path = _ensure_non_empty_str(section["socketioPath"], "websocket.socketioPath")
     if "socketio_path" in section:
         cfg.socketio_path = _ensure_non_empty_str(
             section["socketio_path"], "websocket.socketio_path"
@@ -269,9 +265,7 @@ def _normalize_key(key: str) -> str:
 
 def _import_yaml() -> Any:
     if yaml is None:
-        raise RuntimeError(
-            "PyYAML is required for YAML configuration support."
-        )
+        raise RuntimeError("PyYAML is required for YAML configuration support.")
     return yaml
 
 

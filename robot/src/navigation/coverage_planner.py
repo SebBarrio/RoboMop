@@ -98,9 +98,7 @@ class CoveragePlanner:
         mask = (array != OccupancyGrid.UNKNOWN_VALUE) & (array < self._obstacle_threshold)
         return mask
 
-    def _connected_components(
-        self, free_mask: np.ndarray
-    ) -> list[dict[str, object]]:
+    def _connected_components(self, free_mask: np.ndarray) -> list[dict[str, object]]:
         visited = np.zeros_like(free_mask, dtype=bool)
         components: list[dict[str, object]] = []
 
@@ -156,10 +154,7 @@ class CoveragePlanner:
             return []
 
         lane_rows = self._select_lane_rows(rows_with_free)
-        segments = {
-            row: self._row_segments(mask, row, min_col, max_col)
-            for row in lane_rows
-        }
+        segments = {row: self._row_segments(mask, row, min_col, max_col) for row in lane_rows}
 
         path: list[GridCell] = []
         direction = 1
@@ -245,9 +240,7 @@ class CoveragePlanner:
             segments.append((start, max_col))
         return segments
 
-    def _connect_cells(
-        self, mask: np.ndarray, start: GridCell, goal: GridCell
-    ) -> list[GridCell]:
+    def _connect_cells(self, mask: np.ndarray, start: GridCell, goal: GridCell) -> list[GridCell]:
         if start == goal:
             return [start]
 

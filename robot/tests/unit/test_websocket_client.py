@@ -33,7 +33,9 @@ class FakeAsyncClient:
         key = (namespace or "/", event)
         self.handlers[key] = handler
 
-    def off(self, event: str, handler: HandlerType | None = None, namespace: str | None = None) -> None:
+    def off(
+        self, event: str, handler: HandlerType | None = None, namespace: str | None = None
+    ) -> None:
         key = (namespace or "/", event)
         if key in self.handlers:
             del self.handlers[key]
@@ -95,7 +97,14 @@ class FakeAsyncClient:
         if asyncio.iscoroutine(result):
             await result
 
-    async def trigger(self, event: str, payload: Any | None = None, *, namespace: str | None = None, ack: Callable[[Any], None] | None = None) -> None:
+    async def trigger(
+        self,
+        event: str,
+        payload: Any | None = None,
+        *,
+        namespace: str | None = None,
+        ack: Callable[[Any], None] | None = None,
+    ) -> None:
         await self._trigger_event(event, payload, namespace, ack)
 
 
@@ -105,7 +114,9 @@ class ClientFactory:
 
     def install(self) -> None:
         FakeAsyncClient.instances.clear()
-        self.monkeypatch.setattr("src.communication.websocket_client.socketio.AsyncClient", FakeAsyncClient)
+        self.monkeypatch.setattr(
+            "src.communication.websocket_client.socketio.AsyncClient", FakeAsyncClient
+        )
 
     @property
     def instance(self) -> FakeAsyncClient:
@@ -124,7 +135,9 @@ def client_factory(monkeypatch: pytest.MonkeyPatch) -> ClientFactory:
 async def test_connect_supplies_authentication(client_factory: ClientFactory) -> None:
     from src.communication.websocket_client import ConnectionConfig, WebSocketClient
 
-    client = WebSocketClient(ConnectionConfig(url="http://localhost:3000", robot_id="robot-123", api_key="secret"))
+    client = WebSocketClient(
+        ConnectionConfig(url="http://localhost:3000", robot_id="robot-123", api_key="secret")
+    )
 
     await client.connect()
 
@@ -140,7 +153,9 @@ async def test_connect_supplies_authentication(client_factory: ClientFactory) ->
 async def test_emit_with_ack_uses_call_and_returns_payload(client_factory: ClientFactory) -> None:
     from src.communication.websocket_client import ConnectionConfig, WebSocketClient
 
-    client = WebSocketClient(ConnectionConfig(url="http://localhost:3000", robot_id="robot-456", api_key="secret"))
+    client = WebSocketClient(
+        ConnectionConfig(url="http://localhost:3000", robot_id="robot-456", api_key="secret")
+    )
 
     await client.connect()
 
@@ -159,7 +174,9 @@ async def test_emit_with_ack_uses_call_and_returns_payload(client_factory: Clien
 async def test_emit_without_ack_uses_emit(client_factory: ClientFactory) -> None:
     from src.communication.websocket_client import ConnectionConfig, WebSocketClient
 
-    client = WebSocketClient(ConnectionConfig(url="http://localhost:3000", robot_id="robot-789", api_key="secret"))
+    client = WebSocketClient(
+        ConnectionConfig(url="http://localhost:3000", robot_id="robot-789", api_key="secret")
+    )
 
     await client.connect()
 
@@ -176,7 +193,9 @@ async def test_emit_without_ack_uses_emit(client_factory: ClientFactory) -> None
 async def test_event_handler_invoked_and_ack_sent(client_factory: ClientFactory) -> None:
     from src.communication.websocket_client import ConnectionConfig, WebSocketClient
 
-    client = WebSocketClient(ConnectionConfig(url="http://localhost:3000", robot_id="robot-321", api_key="secret"))
+    client = WebSocketClient(
+        ConnectionConfig(url="http://localhost:3000", robot_id="robot-321", api_key="secret")
+    )
 
     await client.connect()
 
@@ -204,7 +223,9 @@ async def test_event_handler_invoked_and_ack_sent(client_factory: ClientFactory)
 async def test_disconnect_clears_connection_state(client_factory: ClientFactory) -> None:
     from src.communication.websocket_client import ConnectionConfig, WebSocketClient
 
-    client = WebSocketClient(ConnectionConfig(url="http://localhost:3000", robot_id="robot-000", api_key="secret"))
+    client = WebSocketClient(
+        ConnectionConfig(url="http://localhost:3000", robot_id="robot-000", api_key="secret")
+    )
 
     await client.connect()
     await client.disconnect()
@@ -214,7 +235,11 @@ async def test_disconnect_clears_connection_state(client_factory: ClientFactory)
 
 @pytest.mark.asyncio
 async def test_reconnect_options_passed_to_client(client_factory: ClientFactory) -> None:
-    from src.communication.websocket_client import ConnectionConfig, ReconnectOptions, WebSocketClient
+    from src.communication.websocket_client import (
+        ConnectionConfig,
+        ReconnectOptions,
+        WebSocketClient,
+    )
 
     options = ReconnectOptions(enabled=True, initial_delay=2.0, max_delay=10.0, attempts=5)
     client = WebSocketClient(

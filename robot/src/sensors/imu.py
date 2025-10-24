@@ -25,10 +25,10 @@ TEMP_OUT_H = 0x41
 WHO_AM_I = 0x75
 INT_PIN_CFG = 0x37
 USER_CTRL = 0x6A
-CONFIG = 0x1A            # DLPF configuration
-GYRO_CONFIG = 0x1B       # Scale, not changed here (use defaults)
+CONFIG = 0x1A  # DLPF configuration
+GYRO_CONFIG = 0x1B  # Scale, not changed here (use defaults)
 ACCEL_CONFIG = 0x1C
-ACCEL_CONFIG2 = 0x1D     # Accel DLPF
+ACCEL_CONFIG2 = 0x1D  # Accel DLPF
 
 # AK8963 (Magnetometer) Registers
 AK8963_ADDRESS = 0x0C
@@ -39,7 +39,7 @@ AK8963_XOUT_L = 0x03
 
 # Scale factors for default full-scale settings (±2g accel, ±250°/s gyro, 16-bit mag)
 ACCEL_SCALE = 16384.0  # LSB/g for ±2g
-GYRO_SCALE = 131.0     # LSB/(°/s) for ±250°/s
+GYRO_SCALE = 131.0  # LSB/(°/s) for ±250°/s
 TEMP_OFFSET = 21.0
 TEMP_SCALE = 333.87
 MAG_SCALE = 4912.0 / 32760.0  # μT per LSB
@@ -147,9 +147,7 @@ class MPU9250:
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         if SMBus is None:
-            raise ImportError(
-                "smbus2 library not found. Install with: pip install smbus2"
-            )
+            raise ImportError("smbus2 library not found. Install with: pip install smbus2")
 
         self._sample_rate_hz = sample_rate_hz
         self._filter_alpha = filter_alpha
@@ -220,7 +218,7 @@ class MPU9250:
         # Wake device and configure DLPF for gyro and accel
         self._bus.write_byte_data(self._mpu_address, PWR_MGMT_1, 0x00)
         self._sleep(0.1)
-        self._bus.write_byte_data(self._mpu_address, CONFIG, 0x03)         # Gyro DLPF 41Hz
+        self._bus.write_byte_data(self._mpu_address, CONFIG, 0x03)  # Gyro DLPF 41Hz
         self._bus.write_byte_data(self._mpu_address, ACCEL_CONFIG2, 0x03)  # Accel DLPF 41Hz
         self._sleep(0.01)
 
@@ -378,7 +376,10 @@ class MPU9250:
                     self._reference_orientation = Orientation(init_roll, init_pitch, init_yaw)
                     self._orientation_initialized = True
             # Set current alpha depending on convergence window
-            if self._orientation_initialized and (self._frame_count - self._init_samples_needed) < self._convergence_frames:
+            if (
+                self._orientation_initialized
+                and (self._frame_count - self._init_samples_needed) < self._convergence_frames
+            ):
                 self._filter.set_alpha(self._init_alpha)
             else:
                 self._filter.set_alpha(self._filter_alpha)

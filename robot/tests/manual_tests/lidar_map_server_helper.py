@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
- 
+
 import socket
 import struct
 import sys
@@ -16,7 +16,7 @@ from typing import Iterable, List, Sequence
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 import numpy as np
- 
+
 
 class LiveVisualizer:
     """Real-time dark-themed visualization of lidar scans."""
@@ -30,19 +30,19 @@ class LiveVisualizer:
         self.running = True
 
         # Create figure and polar axis (dark futuristic theme)
-        bg = '#0a0f14'            # deep space background
-        fg = '#8be9fd'            # neon cyan labels
-        accent = '#00e5ff'        # bright accent for points
+        bg = "#0a0f14"  # deep space background
+        fg = "#8be9fd"  # neon cyan labels
+        accent = "#00e5ff"  # bright accent for points
 
         self.fig = plt.figure(figsize=(9, 9), facecolor=bg)
-        self.ax_scan = plt.subplot(111, projection='polar', facecolor=bg)
-        self.ax_scan.set_title('RoboMop LIDAR', pad=20, fontsize=14, color=fg, fontweight='bold')
-        self.ax_scan.set_theta_zero_location('N')
+        self.ax_scan = plt.subplot(111, projection="polar", facecolor=bg)
+        self.ax_scan.set_title("RoboMop LIDAR", pad=20, fontsize=14, color=fg, fontweight="bold")
+        self.ax_scan.set_theta_zero_location("N")
         self.ax_scan.set_theta_direction(-1)
         self.ax_scan.set_ylim(0, self.max_range_mm)
-        self.ax_scan.grid(color='#1e2a36', alpha=0.5)
+        self.ax_scan.grid(color="#1e2a36", alpha=0.5)
         for spine in self.ax_scan.spines.values():
-            spine.set_color('#1e2a36')
+            spine.set_color("#1e2a36")
         self.ax_scan.tick_params(colors=fg, labelsize=9)
         self.ax_scan.set_rlabel_position(225)
 
@@ -51,7 +51,7 @@ class LiveVisualizer:
 
         # Stats text
         self.stats_text = self.fig.text(
-            0.5, 0.02, '', ha='center', va='bottom', fontsize=10, color=fg
+            0.5, 0.02, "", ha="center", va="bottom", fontsize=10, color=fg
         )
 
         plt.tight_layout()
@@ -68,22 +68,25 @@ class LiveVisualizer:
         # Update scan points
         with self.scan_lock:
             if self.current_scan:
-                angles = np.deg2rad([m['angle'] for m in self.current_scan])
-                distances = [m['distance_mm'] for m in self.current_scan]
+                angles = np.deg2rad([m["angle"] for m in self.current_scan])
+                distances = [m["distance_mm"] for m in self.current_scan]
                 self.scan_scatter.set_offsets(np.c_[angles, distances])
 
                 num_pts = len(distances)
                 max_dist = max(distances) if num_pts else 0
                 self.stats_text.set_text(
-                    f'Scans: {self.scan_count}  |  Points: {num_pts}  |  Max: {max_dist:.0f} mm'
+                    f"Scans: {self.scan_count}  |  Points: {num_pts}  |  Max: {max_dist:.0f} mm"
                 )
 
         return self.scan_scatter, self.stats_text
 
     def start(self):
         self.ani = animation.FuncAnimation(
-            self.fig, self.animate, interval=self.update_interval,
-            blit=False, cache_frame_data=False
+            self.fig,
+            self.animate,
+            interval=self.update_interval,
+            blit=False,
+            cache_frame_data=False,
         )
         plt.show(block=False)
         plt.pause(0.1)
@@ -102,7 +105,7 @@ def recv_exact(sock: socket.socket, num_bytes: int) -> bytes:
             raise ConnectionError("Socket closed while reading")
         chunks.append(chunk)
         remaining -= len(chunk)
-    return b''.join(chunks)
+    return b"".join(chunks)
 
 
 def handle_client(
@@ -117,10 +120,10 @@ def handle_client(
         try:
             while True:
                 header = recv_exact(conn, 4)
-                (length,) = struct.unpack('!I', header)
+                (length,) = struct.unpack("!I", header)
                 payload = recv_exact(conn, length)
-                scan = json.loads(payload.decode('utf-8'))
-                measurements = scan.get('measurements', [])
+                scan = json.loads(payload.decode("utf-8"))
+                measurements = scan.get("measurements", [])
 
                 processed += 1
 
@@ -166,13 +169,17 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     )
     parser.add_argument("--visualize", action="store_true", help="Enable real-time GUI")
     parser.add_argument("--viz-update-hz", type=float, default=5.0, help="GUI update rate (Hz)")
-    parser.add_argument("--max-range-mm", type=float, default=6000.0, help="Polar radius limit (mm)")
+    parser.add_argument(
+        "--max-range-mm", type=float, default=6000.0, help="Polar radius limit (mm)"
+    )
     return parser.parse_args(argv)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv or sys.argv[1:])
-    logging.basicConfig(level=getattr(logging, args.log_level), format="%(asctime)s %(levelname)s: %(message)s")
+    logging.basicConfig(
+        level=getattr(logging, args.log_level), format="%(asctime)s %(levelname)s: %(message)s"
+    )
 
     # Optional visualizer
     visualizer = None

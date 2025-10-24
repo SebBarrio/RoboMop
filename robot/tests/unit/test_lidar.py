@@ -25,7 +25,9 @@ def test_decode_measurement_rejects_invalid_start_bits() -> None:
 
 
 def test_iter_scans_groups_measurements_by_revolution() -> None:
-    async def run() -> tuple[list[list[LidarMeasurement]], LidarMeasurement, LidarMeasurement, LidarMeasurement]:
+    async def run() -> (
+        tuple[list[list[LidarMeasurement]], LidarMeasurement, LidarMeasurement, LidarMeasurement]
+    ):
         lidar = RPLidarSerial("/dev/null")
         lidar._queue = asyncio.Queue()
         scan_a = LidarMeasurement(

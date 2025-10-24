@@ -25,7 +25,9 @@ class _FakeWebSocket:
         self.emitted: list[_Emission] = []
 
     def on(self, event: str, handler: Callable[..., Awaitable[None] | None]) -> None:
-        async def wrapper(payload: Optional[Dict[str, Any]] = None, ack: Any | None = None) -> None:  # noqa: ANN401
+        async def wrapper(
+            payload: Optional[Dict[str, Any]] = None, ack: Any | None = None
+        ) -> None:  # noqa: ANN401
             result = handler(payload or {}, ack)
             if asyncio.iscoroutine(result):
                 await result

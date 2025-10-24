@@ -100,7 +100,9 @@ def test_step_applies_custom_weight_model():
     scan = make_scan()
     weights = np.linspace(1.0, 2.0, pf.particle_count)
 
-    def weight_model(particles: np.ndarray, scan_data: np.ndarray, grid_ref: OccupancyGrid) -> np.ndarray:
+    def weight_model(
+        particles: np.ndarray, scan_data: np.ndarray, grid_ref: OccupancyGrid
+    ) -> np.ndarray:
         assert scan_data.shape == scan.shape
         assert grid_ref is grid
         return weights
@@ -132,7 +134,9 @@ def test_step_triggers_resample_when_degenerate():
 
     scan = make_scan()
 
-    def extreme_weights(particles: np.ndarray, _scan: np.ndarray, _grid: OccupancyGrid) -> np.ndarray:
+    def extreme_weights(
+        particles: np.ndarray, _scan: np.ndarray, _grid: OccupancyGrid
+    ) -> np.ndarray:
         result = np.zeros(particles.shape[0])
         result[0] = 1.0
         return result

@@ -165,7 +165,10 @@ class RobotController:
         left_velocity = self._average_wheel_velocity(self._left_indices)
         right_velocity = self._average_wheel_velocity(self._right_indices)
         if left_velocity is None or right_velocity is None:
-            left_velocity, right_velocity = self._linear_cmd / self._wheel_radius, self._linear_cmd / self._wheel_radius
+            left_velocity, right_velocity = (
+                self._linear_cmd / self._wheel_radius,
+                self._linear_cmd / self._wheel_radius,
+            )
 
         v_l = left_velocity * self._wheel_radius
         v_r = right_velocity * self._wheel_radius

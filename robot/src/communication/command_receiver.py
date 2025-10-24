@@ -77,20 +77,32 @@ class CommandReceiver:
             except Exception:  # pragma: no cover - defensive logging
                 self._logger.exception("Command handler task raised during shutdown")
 
-    async def _handle_move(self, payload: Mapping[str, Any] | None, ack: Any | None = None) -> None:  # noqa: ANN401
+    async def _handle_move(
+        self, payload: Mapping[str, Any] | None, ack: Any | None = None
+    ) -> None:  # noqa: ANN401
         await self._process_command(payload, self._validate_move, self._dispatch_move)
 
-    async def _handle_set_mode(self, payload: Mapping[str, Any] | None, ack: Any | None = None) -> None:  # noqa: ANN401
+    async def _handle_set_mode(
+        self, payload: Mapping[str, Any] | None, ack: Any | None = None
+    ) -> None:  # noqa: ANN401
         await self._process_command(payload, self._validate_set_mode, self._dispatch_set_mode)
 
-    async def _handle_e_stop(self, payload: Mapping[str, Any] | None, ack: Any | None = None) -> None:  # noqa: ANN401
+    async def _handle_e_stop(
+        self, payload: Mapping[str, Any] | None, ack: Any | None = None
+    ) -> None:  # noqa: ANN401
         await self._process_command(payload, self._validate_e_stop, self._dispatch_e_stop)
 
-    async def _handle_set_speed(self, payload: Mapping[str, Any] | None, ack: Any | None = None) -> None:  # noqa: ANN401
+    async def _handle_set_speed(
+        self, payload: Mapping[str, Any] | None, ack: Any | None = None
+    ) -> None:  # noqa: ANN401
         await self._process_command(payload, self._validate_set_speed, self._dispatch_set_speed)
 
-    async def _handle_config_update(self, payload: Mapping[str, Any] | None, ack: Any | None = None) -> None:  # noqa: ANN401
-        await self._process_command(payload, self._validate_config_update, self._dispatch_config_update)
+    async def _handle_config_update(
+        self, payload: Mapping[str, Any] | None, ack: Any | None = None
+    ) -> None:  # noqa: ANN401
+        await self._process_command(
+            payload, self._validate_config_update, self._dispatch_config_update
+        )
 
     async def _process_command(
         self,
@@ -146,7 +158,9 @@ class CommandReceiver:
         command_id = _require_command_id(payload)
         direction = _require_str(payload, "direction").upper()
         if direction not in self._MOVE_EVENTS:
-            raise _ValidationError(command_id, "INVALID_DIRECTION", f"Unsupported direction: {direction}")
+            raise _ValidationError(
+                command_id, "INVALID_DIRECTION", f"Unsupported direction: {direction}"
+            )
 
         speed = payload.get("speed", 0.0)
         if direction != "STOP":
@@ -186,7 +200,9 @@ class CommandReceiver:
         command_id = _require_command_id(payload)
         multiplier = _require_number(payload, "speedMultiplier")
         if not (0.1 <= multiplier <= 1.0):
-            raise _ValidationError(command_id, "INVALID_SPEED", "speedMultiplier must be between 0.1 and 1.0")
+            raise _ValidationError(
+                command_id, "INVALID_SPEED", "speedMultiplier must be between 0.1 and 1.0"
+            )
         return command_id, {"speedMultiplier": float(multiplier)}
 
     def _validate_config_update(self, payload: Mapping[str, Any]) -> tuple[str, Mapping[str, Any]]:
@@ -201,22 +217,30 @@ class CommandReceiver:
             return None
         return self._on_move(command_id, params)
 
-    def _dispatch_set_mode(self, command_id: str, params: Mapping[str, Any]) -> Awaitable[None] | None:
+    def _dispatch_set_mode(
+        self, command_id: str, params: Mapping[str, Any]
+    ) -> Awaitable[None] | None:
         if self._on_set_mode is None:
             return None
         return self._on_set_mode(command_id, params["mode"], params["parameters"])
 
-    def _dispatch_e_stop(self, command_id: str, params: Mapping[str, Any]) -> Awaitable[None] | None:
+    def _dispatch_e_stop(
+        self, command_id: str, params: Mapping[str, Any]
+    ) -> Awaitable[None] | None:
         if self._on_e_stop is None:
             return None
         return self._on_e_stop(command_id)
 
-    def _dispatch_set_speed(self, command_id: str, params: Mapping[str, Any]) -> Awaitable[None] | None:
+    def _dispatch_set_speed(
+        self, command_id: str, params: Mapping[str, Any]
+    ) -> Awaitable[None] | None:
         if self._on_set_speed is None:
             return None
         return self._on_set_speed(command_id, params["speedMultiplier"])
 
-    def _dispatch_config_update(self, command_id: str, params: Mapping[str, Any]) -> Awaitable[None] | None:
+    def _dispatch_config_update(
+        self, command_id: str, params: Mapping[str, Any]
+    ) -> Awaitable[None] | None:
         if self._on_config_update is None:
             return None
         return self._on_config_update(command_id, params)
@@ -240,14 +264,18 @@ def _require_command_id(payload: Mapping[str, Any]) -> str:
 def _require_str(payload: Mapping[str, Any], field: str) -> str:
     value = payload.get(field)
     if not isinstance(value, str) or not value:
-        raise _ValidationError(payload.get("commandId", ""), "INVALID_PAYLOAD", f"{field} must be a non-empty string")
+        raise _ValidationError(
+            payload.get("commandId", ""), "INVALID_PAYLOAD", f"{field} must be a non-empty string"
+        )
     return value
 
 
 def _require_number(payload: Mapping[str, Any], field: str) -> float:
     value = payload.get(field)
     if not isinstance(value, (int, float)) or math.isnan(float(value)) or math.isinf(float(value)):
-        raise _ValidationError(payload.get("commandId", ""), "INVALID_PAYLOAD", f"{field} must be a finite number")
+        raise _ValidationError(
+            payload.get("commandId", ""), "INVALID_PAYLOAD", f"{field} must be a finite number"
+        )
     return float(value)
 
 

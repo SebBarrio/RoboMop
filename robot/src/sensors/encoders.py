@@ -162,10 +162,13 @@ class QuadratureEncoder:
         alpha = dt / (rc + dt)
         return self._filtered_velocity + alpha * (raw_velocity - self._filtered_velocity)
 
+
 class GpioZeroEncoderHardware:
     """Adapter for gpiozero.RotaryEncoder."""
 
-    def __init__(self, pin_a: int, pin_b: int, *, max_steps: int = 0, rotary_cls: Optional[type] = None) -> None:
+    def __init__(
+        self, pin_a: int, pin_b: int, *, max_steps: int = 0, rotary_cls: Optional[type] = None
+    ) -> None:
         if rotary_cls is None:
             from gpiozero import RotaryEncoder  # type: ignore
 

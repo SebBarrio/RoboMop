@@ -46,7 +46,9 @@ class StatePublisher:
 
         await self._ws.wait_connected()
 
-        state_task = asyncio.create_task(self._run_periodic(self._state_period, self._publish_state))
+        state_task = asyncio.create_task(
+            self._run_periodic(self._state_period, self._publish_state)
+        )
         self._tasks.append(state_task)
 
         if self._map_period is not None:

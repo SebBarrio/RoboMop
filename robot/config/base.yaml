@@ -1,0 +1,15 @@
+websocket:
+  url: http://localhost:3000
+  robotId: robomop-dev
+  namespace: /
+  socketioPath: socket.io
+  transports:
+    - websocket
+publish:
+  stateHz: 10.0
+  mapHz: 5.0
+robot:
+  mode: IDLE
+  speedMultiplier: 1.0
+logLevel: INFO
+ackTimeout: 5.0

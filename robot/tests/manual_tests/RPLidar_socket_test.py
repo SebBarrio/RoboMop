@@ -21,10 +21,7 @@ def encode_scan_payload(scan: ScanType, scan_number: int) -> bytes:
     payload = {
         "timestamp": time.time(),
         "scan_number": scan_number,
-        "measurements": [
-            {"quality": q, "angle": a, "distance_mm": d}
-            for q, a, d in scan
-        ],
+        "measurements": [{"quality": q, "angle": a, "distance_mm": d} for q, a, d in scan],
     }
     message = json.dumps(payload, separators=(",", ":")).encode("utf-8")
     return struct.pack("!I", len(message)) + message
@@ -39,10 +36,10 @@ def initialize_lidar(lidar: RPLidarProtocol) -> Dict:
     time.sleep(0.1)
     info = lidar.get_device_info()
     health = lidar.get_device_health()
-    
-    if health['status'] != 'Good':
+
+    if health["status"] != "Good":
         logging.warning("Lidar health: %s", health)
-    
+
     return info
 
 
@@ -118,12 +115,7 @@ def collect_scans(lidar: RPLidarProtocol):
 
                 # Detect new scan by angle wrap-around only once synced
                 new_scan = False
-                if (
-                    last_angle is not None
-                    and last_angle > 300.0
-                    and angle < 60.0
-                    and current_scan
-                ):
+                if last_angle is not None and last_angle > 300.0 and angle < 60.0 and current_scan:
                     new_scan = True
 
                 if new_scan:
@@ -164,8 +156,9 @@ def collect_scans(lidar: RPLidarProtocol):
             time.sleep(0.05)
 
 
-def stream_scans(lidar: RPLidarProtocol, sock: socket.socket, 
-                  scan_limit: int | None, log_every: int) -> None:
+def stream_scans(
+    lidar: RPLidarProtocol, sock: socket.socket, scan_limit: int | None, log_every: int
+) -> None:
     """Stream scans from lidar to socket."""
     with closing(sock):
         sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
@@ -176,14 +169,14 @@ def stream_scans(lidar: RPLidarProtocol, sock: socket.socket,
             pass
         time.sleep(0.05)
         lidar.start_scan()
-        
+
         for scan_number, scan in enumerate(collect_scans(lidar), start=1):
             if scan:
                 sock.sendall(encode_scan_payload(scan, scan_number))
-                
+
                 if scan_number % log_every == 0:
                     logging.info("Sent %d scans (%d measurements)", scan_number, len(scan))
-                
+
                 if scan_limit and scan_number >= scan_limit:
                     break
 
@@ -207,33 +200,37 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser.add_argument("--timeout", type=float, default=5.0, help="Connection timeout")
     parser.add_argument("--scan-limit", type=int, help="Max scans to send")
     parser.add_argument("--log-every", type=int, default=10, help="Log frequency")
-    parser.add_argument("--log-level", default="INFO", 
-                        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
-                        help="Logging level")
+    parser.add_argument(
+        "--log-level",
+        default="INFO",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+        help="Logging level",
+    )
     return parser.parse_args(argv)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     """Main entry point."""
     args = parse_args(argv or sys.argv[1:])
-    logging.basicConfig(level=getattr(logging, args.log_level),
-                        format="%(asctime)s [%(levelname)s] %(message)s")
-    
+    logging.basicConfig(
+        level=getattr(logging, args.log_level), format="%(asctime)s [%(levelname)s] %(message)s"
+    )
+
     lidar = RPLidarProtocol(args.serial_port, args.baudrate)
-    
+
     try:
         if not lidar.connect():
             return 1
-        
+
         time.sleep(0.3)
         initialize_lidar(lidar)
-        
+
         logging.info("Connecting to %s:%d", args.host, args.port)
         sock = connect_socket(args.host, args.port, args.timeout)
-        
+
         logging.info("Streaming scans (Ctrl+C to stop)")
         stream_scans(lidar, sock, args.scan_limit, args.log_every)
-        
+
     except KeyboardInterrupt:
         logging.info("Interrupted")
     except Exception as exc:
@@ -245,7 +242,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         except:
             pass
         lidar.disconnect()
-    
+
     return 0
 
 

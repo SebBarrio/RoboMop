@@ -33,7 +33,9 @@ class DummyMotorController:
         timestamp = self.update_calls * interval
         motors = set(self.last_targets.keys()) | set(self.feedback_velocities.keys())
         for motor_index in motors:
-            omega = self.feedback_velocities.get(motor_index, self.last_targets.get(motor_index, 0.0))
+            omega = self.feedback_velocities.get(
+                motor_index, self.last_targets.get(motor_index, 0.0)
+            )
             self.readings[motor_index] = EncoderReading(
                 timestamp=timestamp,
                 ticks=0,
@@ -54,7 +56,9 @@ class DummyMotorController:
         self.feedback_velocities[motor_index] = velocity
 
 
-def _controller(position_pid: PIDController | None = None, heading_pid: PIDController | None = None) -> tuple[RobotController, DummyMotorController]:
+def _controller(
+    position_pid: PIDController | None = None, heading_pid: PIDController | None = None
+) -> tuple[RobotController, DummyMotorController]:
     motor = DummyMotorController()
     controller = RobotController(
         motor_controller=motor,

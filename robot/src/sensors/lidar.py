@@ -90,9 +90,7 @@ class RPLidarSerial:
         await asyncio.to_thread(self._set_motor_pwm, self._motor_pwm)
         descriptor = await asyncio.to_thread(self._begin_scan)
         if descriptor.data_type != self.RESP_MEASUREMENT_TYPE_STANDARD:
-            raise RPLidarProtocolError(
-                f"Unsupported measurement type 0x{descriptor.data_type:02x}"
-            )
+            raise RPLidarProtocolError(f"Unsupported measurement type 0x{descriptor.data_type:02x}")
         self._packet_size = descriptor.data_length
         if self._packet_size <= 0:
             raise RPLidarProtocolError("Invalid packet size reported by descriptor")

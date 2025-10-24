@@ -136,9 +136,7 @@ class OccupancyGrid:
     ) -> "OccupancyGrid":
         expected = width * height
         if len(payload) != expected:
-            raise ValueError(
-                f"Payload length {len(payload)} does not match grid size {expected}"
-            )
+            raise ValueError(f"Payload length {len(payload)} does not match grid size {expected}")
         array = np.frombuffer(payload, dtype=np.uint8).reshape((height, width))
         return cls(width=width, height=height, resolution=resolution, origin=origin, data=array)
 

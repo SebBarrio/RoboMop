@@ -45,7 +45,9 @@ class ParticleFilter:
         self._particle_count = int(particle_count)
         self._rng = rng or np.random.default_rng()
         self._states: StateArray = np.zeros((self._particle_count, 3), dtype=float)
-        self._weights: WeightArray = np.full(self._particle_count, 1.0 / self._particle_count, dtype=float)
+        self._weights: WeightArray = np.full(
+            self._particle_count, 1.0 / self._particle_count, dtype=float
+        )
         self._initialised = False
 
     @property
@@ -109,7 +111,9 @@ class ParticleFilter:
         self._states[:, 1] += dy_world + noise[:, 1]
         self._states[:, 2] = _wrap_angle(self._states[:, 2] + dtheta + noise[:, 2])
 
-    def update(self, measurement_weights: Callable[[np.ndarray], np.ndarray] | Sequence[float] | np.ndarray) -> None:
+    def update(
+        self, measurement_weights: Callable[[np.ndarray], np.ndarray] | Sequence[float] | np.ndarray
+    ) -> None:
         if not self._initialised:
             raise RuntimeError("particle filter must be initialised before update")
 

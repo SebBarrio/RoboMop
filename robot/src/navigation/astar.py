@@ -239,8 +239,14 @@ class AStarPlanner:
     def _has_nearby_obstacle(self, row: int, col: int) -> bool:
         if self._inflation_radius == 0:
             return False
-        for r in range(max(0, row - self._inflation_radius), min(self._grid.height, row + self._inflation_radius + 1)):
-            for c in range(max(0, col - self._inflation_radius), min(self._grid.width, col + self._inflation_radius + 1)):
+        for r in range(
+            max(0, row - self._inflation_radius),
+            min(self._grid.height, row + self._inflation_radius + 1),
+        ):
+            for c in range(
+                max(0, col - self._inflation_radius),
+                min(self._grid.width, col + self._inflation_radius + 1),
+            ):
                 if self._grid.get_cell(r, c) >= self._obstacle_threshold:
                     return True
         return False

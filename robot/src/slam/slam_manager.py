@@ -162,7 +162,9 @@ class SlamManager:
                 score += 0.1
         return score
 
-    def _sensor_in_world(self, pose: np.ndarray, sensor_pose: np.ndarray) -> tuple[float, float, float]:
+    def _sensor_in_world(
+        self, pose: np.ndarray, sensor_pose: np.ndarray
+    ) -> tuple[float, float, float]:
         base_x, base_y, heading = pose
         offset_x, offset_y, offset_heading = sensor_pose
         cos_heading = math.cos(heading)

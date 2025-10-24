@@ -19,6 +19,7 @@ from pathlib import Path
 import board
 import busio
 from adafruit_pca9685 import PCA9685
+
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 from control.pwm_controller import MotorChannelConfig, MotorDriver
 from sensors.encoders import EncoderReading, QuadratureEncoder, GpioZeroEncoderHardware
@@ -55,7 +56,7 @@ B_NM_S_PER_RAD: float = 0.000467
 KT_NM_PER_A: float = 0.018803
 KE_VS_PER_RAD: float = 0.018803
 GEAR_RATIO: float = 8.45
-WHEEL_DIAMETER_M: float = 0.1524 
+WHEEL_DIAMETER_M: float = 0.1524
 
 # Supply voltage (update to your battery/bus voltage)
 SUPPLY_VOLTAGE: float = 12.0
@@ -108,7 +109,9 @@ class PIDController:
 
     def update(self, error: float, dt: float) -> float:
         self._integrator += error * dt
-        self._integrator = max(-self._integrator_limit, min(self._integrator, self._integrator_limit))
+        self._integrator = max(
+            -self._integrator_limit, min(self._integrator, self._integrator_limit)
+        )
         derivative = (error - self._prev_error) / dt if dt > 0 else 0.0
         self._prev_error = error
         return (self._kp * error) + (self._ki * self._integrator) + (self._kd * derivative)
@@ -142,10 +145,7 @@ class QuadratureEncoderFeedback:
         self.zero()
 
     def _refresh_cache(self) -> None:
-        self._cached_readings = {
-            idx: encoder.read()
-            for idx, encoder in self._encoders.items()
-        }
+        self._cached_readings = {idx: encoder.read() for idx, encoder in self._encoders.items()}
 
     def __call__(self, motor_index: int, _: float) -> tuple[float, float]:
         # Reset cache on first motor call or after each full cycle through motors
@@ -194,8 +194,12 @@ class MotorTestRig:
         self._times: list[float] = []
         self._omega_sp: dict[int, list[float]] = {cfg.index: [] for cfg in controller.motor_configs}
         self._theta_sp: dict[int, list[float]] = {cfg.index: [] for cfg in controller.motor_configs}
-        self._omega_meas: dict[int, list[float]] = {cfg.index: [] for cfg in controller.motor_configs}
-        self._theta_meas: dict[int, list[float]] = {cfg.index: [] for cfg in controller.motor_configs}
+        self._omega_meas: dict[int, list[float]] = {
+            cfg.index: [] for cfg in controller.motor_configs
+        }
+        self._theta_meas: dict[int, list[float]] = {
+            cfg.index: [] for cfg in controller.motor_configs
+        }
         self._last_theta_sp: dict[int, float] = {cfg.index: 0.0 for cfg in controller.motor_configs}
 
     def _evaluate_setpoint(self, t: float) -> float:
@@ -209,7 +213,9 @@ class MotorTestRig:
             else:
                 # Adjust time for sine to start at t=7s
                 t_sine = t - 7.0
-                return self._setpoint_amplitude * math.sin(2.0 * math.pi * SETPOINT_FREQ_HZ * t_sine)
+                return self._setpoint_amplitude * math.sin(
+                    2.0 * math.pi * SETPOINT_FREQ_HZ * t_sine
+                )
         # steps profile: 0 -> +A -> -A/2 -> 0
         if t < 2.0:
             return 0.0
@@ -227,7 +233,11 @@ class MotorTestRig:
             else:
                 t_sine = t - 7.0
                 return (
-                    self._setpoint_amplitude * 2.0 * math.pi * SETPOINT_FREQ_HZ * math.cos(2.0 * math.pi * SETPOINT_FREQ_HZ * t_sine)
+                    self._setpoint_amplitude
+                    * 2.0
+                    * math.pi
+                    * SETPOINT_FREQ_HZ
+                    * math.cos(2.0 * math.pi * SETPOINT_FREQ_HZ * t_sine)
                 )
         return 0.0
 
@@ -311,7 +321,7 @@ class MotorTestRig:
 
         # Convert to numpy arrays and filter out inf/nan values
         times_arr = np.array(self._times)
-        
+
         # Create mask for valid time points (no inf/nan in any data)
         valid_mask = np.ones(len(times_arr), dtype=bool)
         for idx in self._omega_meas.keys():
@@ -321,23 +331,23 @@ class MotorTestRig:
             theta_meas_arr = np.array(self._theta_meas[idx])
             valid_mask &= np.isfinite(omega_sp_arr) & np.isfinite(omega_meas_arr)
             valid_mask &= np.isfinite(theta_sp_arr) & np.isfinite(theta_meas_arr)
-        
+
         # Filter data
         times_clean = times_arr[valid_mask]
         if len(times_clean) == 0:
             print("Warning: No valid data points to plot")
             return
-        
+
         # Calculate RMSE for each motor
-        print("\n" + "="*60)
+        print("\n" + "=" * 60)
         print("Speed Tracking Performance Metrics (RMSE)")
-        print("="*60)
+        print("=" * 60)
 
         # Figure 1: Speed tracking
         plt.figure(figsize=(10, 8))
         ax1 = plt.subplot(2, 1, 1)
         omega_sp_clean = np.array(self._omega_sp[next(iter(self._omega_sp))])[valid_mask]
-        
+
         # Calculate and print RMSE for each motor
         rmse_values = []
         for idx in sorted(self._omega_meas.keys()):
@@ -345,18 +355,20 @@ class MotorTestRig:
             rmse = self._calculate_rmse(omega_sp_clean, omega_meas_clean)
             rmse_values.append(rmse)
             print(f"Motor {idx}: RMSE = {rmse:.4f} rad/s")
-        
+
         avg_rmse = np.mean(rmse_values)
         print(f"\nAverage RMSE across all motors: {avg_rmse:.4f} rad/s")
-        print("="*60 + "\n")
-        
+        print("=" * 60 + "\n")
+
         # Plot speed tracking
         ax1.set_title(f"Speed Tracking (rad/s) - Avg RMSE: {avg_rmse:.4f}")
         ax1.plot(times_clean, omega_sp_clean, "k--", label="setpoint", linewidth=2)
         for idx in sorted(self._omega_meas.keys()):
             omega_meas_clean = np.array(self._omega_meas[idx])[valid_mask]
             rmse = rmse_values[idx]
-            ax1.plot(times_clean, omega_meas_clean, label=f"motor {idx} (RMSE={rmse:.3f})", alpha=0.8)
+            ax1.plot(
+                times_clean, omega_meas_clean, label=f"motor {idx} (RMSE={rmse:.3f})", alpha=0.8
+            )
         ax1.set_xlabel("time (s)")
         ax1.set_ylabel("omega_out (rad/s)")
         ax1.grid(True)
@@ -427,7 +439,7 @@ def main() -> None:
         help=f"Derivative gain (default: {SPEED_KD})",
     )
     args = parser.parse_args()
-    
+
     i2c = busio.I2C(board.SCL, board.SDA)
     pwm = PCA9685(i2c)
     pwm.frequency = PWM_FREQUENCY
@@ -441,17 +453,17 @@ def main() -> None:
         ki=args.ki,
         kd=args.kd,
     )
-    
-    print("="*60)
+
+    print("=" * 60)
     print("Control Loop Test Configuration")
-    print("="*60)
+    print("=" * 60)
     print(f"Setpoint amplitude: {args.setpoint} rad/s")
     print(f"PID gains: Kp={args.kp}, Ki={args.ki}, Kd={args.kd}")
     print(f"Test duration: {TEST_DURATION} s")
     print(f"Control interval: {CONTROL_INTERVAL} s")
     print(f"Setpoint mode: {SETPOINT_MODE}")
-    print("="*60 + "\n")
-    
+    print("=" * 60 + "\n")
+
     try:
         rig.run(TEST_DURATION, CONTROL_INTERVAL)
     finally:

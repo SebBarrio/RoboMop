@@ -1,3 +1,3 @@
 """Robot test package."""
-__all__ = []
 
+__all__ = []
