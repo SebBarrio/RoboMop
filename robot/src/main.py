@@ -320,16 +320,14 @@ class RobotApp:
             kp=nav_cfg.position_kp,
             ki=nav_cfg.position_ki,
             kd=nav_cfg.position_kd,
-            output_min=-nav_cfg.max_linear_speed,
-            output_max=nav_cfg.max_linear_speed,
+            output_limits=(-nav_cfg.max_linear_speed, nav_cfg.max_linear_speed),
         )
 
         heading_pid = PIDController(
             kp=nav_cfg.heading_kp,
             ki=nav_cfg.heading_ki,
             kd=nav_cfg.heading_kd,
-            output_min=-nav_cfg.max_angular_speed,
-            output_max=nav_cfg.max_angular_speed,
+            output_limits=(-nav_cfg.max_angular_speed, nav_cfg.max_angular_speed),
         )
 
         self._robot_controller = RobotController(
