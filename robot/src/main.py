@@ -6,32 +6,33 @@ import argparse
 import asyncio
 import base64
 import logging
+import math
 import signal
 import time
 from typing import Any, Mapping
 
 import numpy as np
 
-from communication.command_receiver import CommandReceiver
-from communication.state_publisher import StatePublisher
-from communication.websocket_client import ConnectionConfig, WebSocketClient
-from config import AppConfig, load_config
-from control.motor_controller import MotorController
-from control.pid import PIDController
-from control.robot_controller import Pose2D, RobotController
-from navigation.astar import AStarPlanner
-from navigation.coverage_planner import CoveragePlanner
-from navigation.path_executor import PathExecutor, PathExecutorStatus, Waypoint
-from sensors.encoders import EncoderReading, GpioZeroEncoderHardware, QuadratureEncoder
-from sensors.hardware import HardwareAbstractionLayer
-from sensors.imu import ImuSample, MPU9250
-from sensors.lidar import LidarMeasurement, RPLidarSerial
-from sensors.ultrasonic import UltrasonicSensor
-from sensors.water_level import WaterLevelSensor
-from slam.occupancy_grid import OccupancyGrid
-from slam.particle_filter import ParticleFilter
-from slam.sensor_fusion import SensorFusionEKF
-from slam.slam_manager import SlamManager
+from .communication.command_receiver import CommandReceiver
+from .communication.state_publisher import StatePublisher
+from .communication.websocket_client import ConnectionConfig, WebSocketClient
+from .config import AppConfig, load_config
+from .control.motor_controller import MotorController
+from .control.pid import PIDController
+from .control.robot_controller import Pose2D, RobotController
+from .navigation.astar import AStarPlanner
+from .navigation.coverage_planner import CoveragePlanner
+from .navigation.path_executor import PathExecutor, PathExecutorStatus, Waypoint
+from .sensors.encoders import EncoderReading, GpioZeroEncoderHardware, QuadratureEncoder
+from .sensors.hardware import HardwareAbstractionLayer
+from .sensors.imu import ImuSample, MPU9250
+from .sensors.lidar import LidarMeasurement, RPLidarSerial
+from .sensors.ultrasonic import UltrasonicSensor
+from .sensors.water_level import WaterLevelSensor
+from .slam.occupancy_grid import OccupancyGrid
+from .slam.particle_filter import ParticleFilter
+from .slam.sensor_fusion import SensorFusionEKF
+from .slam.slam_manager import SlamManager
 
 
 class RobotApp:
