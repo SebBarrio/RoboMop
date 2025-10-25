@@ -17,7 +17,12 @@ from .communication.command_receiver import CommandReceiver
 from .communication.state_publisher import StatePublisher
 from .communication.websocket_client import ConnectionConfig, WebSocketClient
 from .config import AppConfig, load_config
-from .control.motor_controller import MotorController
+from .control.motor_controller import (
+    MotorController,
+    MotorControllerConfig,
+    PIDSettings as VelocityPIDSettings,
+)
+from .control.pwm_controller import MotorChannelConfig, MotorDriver
 from .control.pid import PIDController
 from .control.robot_controller import Pose2D, RobotController
 from .navigation.astar import AStarPlanner
@@ -99,6 +104,8 @@ class RobotApp:
         self._path_executor: PathExecutor | None = None
         self._navigation_task: asyncio.Task[None] | None = None
         self._start_position: tuple[float, float, float] = (0.0, 0.0, 0.0)
+        # Cache latest encoder readings for synchronous motor loop consumption
+        self._encoder_cache: dict[str, EncoderReading] = {}
 
     async def _initialize_hardware(self) -> None:
         """Initialize hardware abstraction layer with all sensors."""
@@ -125,6 +132,9 @@ class RobotApp:
             hardware=left_encoder_hw,
             counts_per_revolution=hw_cfg.encoder_counts_per_rev,
             wheel_circumference_m=hw_cfg.wheel_diameter_m * 3.14159,
+            invert=False,
+            velocity_cutoff_hz=12.0,
+            min_dt=0.001,
         )
 
         right_encoder_hw = GpioZeroEncoderHardware(
@@ -135,6 +145,9 @@ class RobotApp:
             hardware=right_encoder_hw,
             counts_per_revolution=hw_cfg.encoder_counts_per_rev,
             wheel_circumference_m=hw_cfg.wheel_diameter_m * 3.14159,
+            invert=False,
+            velocity_cutoff_hz=12.0,
+            min_dt=0.001,
         )
 
         ultrasonic = UltrasonicSensor(
@@ -169,6 +182,9 @@ class RobotApp:
             start_hooks=[lidar.start, imu.start, ultrasonic.start, water_level.start],
             stop_hooks=[lidar.stop, imu.stop, ultrasonic.stop, water_level.stop],
         )
+        # Keep references for motor feedback
+        self._left_encoder = left_encoder
+        self._right_encoder = right_encoder
 
     def _initialize_slam(self) -> None:
         """Initialize SLAM components (grid, particle filter, sensor fusion, manager)."""
@@ -241,9 +257,63 @@ class RobotApp:
             obstacle_threshold=nav_cfg.obstacle_threshold,
         )
 
-        self._motor_controller = MotorController(
-            motor_count=2,
+        # Real PWM motor driver (PCA9685) and encoder feedback wiring
+        try:
+            import board  # type: ignore
+            import busio  # type: ignore
+            from adafruit_pca9685 import PCA9685  # type: ignore
+        except Exception as exc:  # pragma: no cover - import guard on non-RPi envs
+            raise RuntimeError(
+                "Hardware modules (board, busio, adafruit_pca9685) are required on the robot"
+            ) from exc
+
+        i2c = busio.I2C(board.SCL, board.SDA)
+        pwm = PCA9685(i2c)
+        pwm.frequency = 1000
+
+        # Map two motors: left index 0 -> channels (0,1), right index 1 -> channels (2,3)
+        motor_channels = [
+            MotorChannelConfig(index=0, forward_channel=0, reverse_channel=1),
+            MotorChannelConfig(index=1, forward_channel=2, reverse_channel=3),
+        ]
+        motor_driver = MotorDriver(pwm, motor_channels, supply_voltage=12.0)
+
+        class _EncoderFeedback:
+            def __init__(self, left: QuadratureEncoder, right: QuadratureEncoder) -> None:
+                self._left = left
+                self._right = right
+
+            def get_reading(self, encoder_index: int) -> EncoderReading:
+                if encoder_index == 0:
+                    return self._left.read()
+                elif encoder_index == 1:
+                    return self._right.read()
+                raise KeyError(f"Unknown encoder index {encoder_index}")
+
+        encoder_feedback = _EncoderFeedback(self._left_encoder, self._right_encoder)
+
+        velocity_pid = VelocityPIDSettings(
+            kp=0.3,
+            ki=0.05,
+            kd=0.0,
+        )
+
+        mc_config = MotorControllerConfig(
+            motor_to_encoder={0: 0, 1: 1},
+            gear_ratio=1.0,
+            rotor_inertia=1e-4,
+            viscous_friction=0.01,
+            torque_constant=0.0188,
+            back_emf_constant=0.0188,
+            winding_resistance=0.091,
             loop_interval=0.01,
+            pid=velocity_pid,
+        )
+
+        self._motor_controller = MotorController(
+            driver=motor_driver,
+            encoder_feedback=encoder_feedback,
+            config=mc_config,
         )
 
         position_pid = PIDController(
@@ -354,6 +424,10 @@ class RobotApp:
 
                     left_vel = snapshot.encoders.get("left")
                     right_vel = snapshot.encoders.get("right")
+                    if left_vel is not None:
+                        self._encoder_cache["left"] = left_vel
+                    if right_vel is not None:
+                        self._encoder_cache["right"] = right_vel
                     avg_encoder_velocity = 0.0
                     if left_vel and right_vel:
                         avg_encoder_velocity = (
