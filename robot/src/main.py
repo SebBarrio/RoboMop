@@ -29,7 +29,7 @@ from .sensors.imu import ImuSample, MPU9250
 from .sensors.lidar import LidarMeasurement, RPLidarSerial
 from .sensors.ultrasonic import UltrasonicSensor
 from .sensors.water_level import WaterLevelSensor
-from .slam.occupancy_grid import OccupancyGrid, GridOrigin
+from .slam.occupancy_grid import OccupancyGrid
 from .slam.particle_filter import ParticleFilter
 from .slam.sensor_fusion import SensorFusionEKF
 from .slam.slam_manager import SlamManager
@@ -174,12 +174,12 @@ class RobotApp:
         """Initialize SLAM components (grid, particle filter, sensor fusion, manager)."""
         slam_cfg = self._config.slam
 
-        grid_origin = GridOrigin(slam_cfg.grid_origin_x, slam_cfg.grid_origin_y, 0.0)
         self._occupancy_grid = OccupancyGrid(
             resolution=slam_cfg.grid_resolution,
             width=slam_cfg.grid_width,
             height=slam_cfg.grid_height,
-            origin=grid_origin,
+            origin_x=slam_cfg.grid_origin_x,
+            origin_y=slam_cfg.grid_origin_y,
         )
 
         self._particle_filter = ParticleFilter(
