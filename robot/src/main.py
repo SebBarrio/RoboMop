@@ -182,9 +182,14 @@ class RobotApp:
         )
 
         self._particle_filter = ParticleFilter(
-            num_particles=slam_cfg.particle_count,
-            initial_pose=np.array([0.0, 0.0, 0.0]),
-            initial_std=np.array([0.1, 0.1, 0.1]),
+            particle_count=slam_cfg.particle_count,
+        )
+        # Initialize particles with Gaussian distribution around origin
+        initial_pose_mean = np.array([0.0, 0.0, 0.0])
+        initial_pose_covariance = np.diag([0.1, 0.1, 0.1])
+        self._particle_filter.initialize_gaussian(
+            mean=initial_pose_mean,
+            covariance=initial_pose_covariance,
         )
 
         initial_state = np.array([0.0, 0.0, 0.0, 0.0, 0.0])
