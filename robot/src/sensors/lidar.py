@@ -142,6 +142,21 @@ class RPLidarSerial:
             else:
                 current.append(measurement)
 
+    async def read_scan(self) -> list[LidarMeasurement]:
+        """Read and return a single complete scan (one revolution)."""
+
+        if self._queue is None:
+            raise RuntimeError("read_scan() requires an active connection")
+
+        current: list[LidarMeasurement] = []
+        while True:
+            measurement = await self._queue.get()
+            if measurement is None:
+                return current if current else []
+            if measurement.start_flag and current:
+                return current
+            current.append(measurement)
+
     async def get_device_info(self) -> bytes:
         """Return the raw payload from the get info command."""
 
