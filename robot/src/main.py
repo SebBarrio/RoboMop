@@ -178,8 +178,7 @@ class RobotApp:
             resolution=slam_cfg.grid_resolution,
             width=slam_cfg.grid_width,
             height=slam_cfg.grid_height,
-            origin_x=slam_cfg.grid_origin_x,
-            origin_y=slam_cfg.grid_origin_y,
+            origin=(slam_cfg.grid_origin_x, slam_cfg.grid_origin_y, 0.0),
         )
 
         self._particle_filter = ParticleFilter(
@@ -337,7 +336,7 @@ class RobotApp:
                     await asyncio.sleep(target_interval)
                     continue
 
-                snapshot = await self._hardware.read_snapshot()
+                snapshot = await self._hardware.read_all()
                 dt = snapshot.timestamp - self._last_update_time
                 self._last_update_time = snapshot.timestamp
 
@@ -563,7 +562,7 @@ class RobotApp:
         if not self._occupancy_grid:
             return None
 
-        grid_data = self._occupancy_grid.grid
+        grid_data = self._occupancy_grid.array
         height, width = grid_data.shape
 
         encoded_data = base64.b64encode(grid_data.tobytes()).decode("ascii")
@@ -573,9 +572,9 @@ class RobotApp:
             "width": int(width),
             "height": int(height),
             "origin": {
-                "x": float(self._occupancy_grid.origin_x),
-                "y": float(self._occupancy_grid.origin_y),
-                "theta": 0.0,
+                "x": float(self._occupancy_grid.origin[0]),
+                "y": float(self._occupancy_grid.origin[1]),
+                "theta": float(self._occupancy_grid.origin[2]),
             },
             "data": encoded_data,
             "encoding": "base64",
