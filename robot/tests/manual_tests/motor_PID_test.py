@@ -20,9 +20,21 @@ import board
 import busio
 from adafruit_pca9685 import PCA9685
 
-sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
-from control.pwm_controller import MotorChannelConfig, MotorDriver
-from sensors.encoders import EncoderReading, QuadratureEncoder, GpioZeroEncoderHardware
+# Fix import path for running as a script
+# The issue: control/__init__.py imports motor_controller with relative imports (..sensors)
+# Solution: Ensure src is the package root and Python recognizes the package hierarchy
+robot_dir = Path(__file__).parent.parent.parent
+src_dir = robot_dir / "src"
+
+# Add src parent (robot_dir) to path so Python sees src as a package
+# This allows relative imports like "from ..sensors" to work
+if str(robot_dir) not in sys.path:
+    sys.path.insert(0, str(robot_dir))
+
+# Now import from src.control and src.sensors packages
+# This ensures Python recognizes the package structure
+from src.control.pwm_controller import MotorChannelConfig, MotorDriver
+from src.sensors.encoders import EncoderReading, QuadratureEncoder, GpioZeroEncoderHardware
 
 # Use non-interactive backend for headless plotting
 import matplotlib
