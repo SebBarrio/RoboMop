@@ -21,7 +21,7 @@ from gpiozero import RotaryEncoder
 
 # Constants from ControlLoopTest.py
 MOTOR_CHANNELS = ((0, 1), (2, 3), (4, 5), (6, 7))  # (forward, reverse) for motors 0-3
-ENCODER_PINS = ((13, 26), (5, 6))  # (pin_a, pin_b) for encoders 0-1
+ENCODER_PINS = ((5, 6), (13, 26))  # (pin_a, pin_b) for encoders 0-1
 ENCODER_PPR = 400
 PWM_FREQUENCY = 1000
 PWM_MAX = 0xFFFF

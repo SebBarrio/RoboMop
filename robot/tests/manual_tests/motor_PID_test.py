@@ -41,7 +41,7 @@ MOTOR_CHANNELS: Sequence[tuple[int, int]] = ((0, 1), (2, 3), (5, 4), (7, 6))
 # ENCODER_CHANNELS: GPIO pins for quadrature encoders (pinA, pinB)
 # Encoder 0: pins (5, 6) -> encoderA=5, encoderB=6 (shared by motors 2,3)
 # Encoder 1: pins (13, 26) -> encoderA=13, encoderB=26 (shared by motors 0,1)
-ENCODER_CHANNELS: Sequence[tuple[int, int]] = ((13, 26), (5, 6))
+ENCODER_CHANNELS: Sequence[tuple[int, int]] = ((5, 6), (13, 26))
 
 # Map motor index to encoder index. Motors 0,1 use encoder 1. Motors 2,3 use encoder 0.
 MOTOR_TO_ENCODER_MAP: dict[int, int] = {0: 1, 1: 1, 2: 0, 3: 0}
