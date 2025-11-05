@@ -38,7 +38,7 @@ import numpy as np
 # Motor 1: channels (2, 3) -> L_PWM=2, R_PWM=3
 # Motor 2: channels (5, 4) -> L_PWM=5, R_PWM=4 (intentional inversion)
 # Motor 3: channels (7, 6) -> L_PWM=7, R_PWM=6 (intentional inversion)
-MOTOR_CHANNELS: Sequence[tuple[int, int]] = ((0, 1), (2, 3), (5, 4), (7, 6))
+MOTOR_CHANNELS: Sequence[tuple[int, int]] = ((1, 0), (3, 2), (5, 4), (7, 6))
 
 # ENCODER_CHANNELS: GPIO pins for quadrature encoders (pinA, pinB)
 # Encoder 0: pins (5, 6) -> encoderA=5, encoderB=6 (shared by motors 2,3)
@@ -46,7 +46,7 @@ MOTOR_CHANNELS: Sequence[tuple[int, int]] = ((0, 1), (2, 3), (5, 4), (7, 6))
 ENCODER_CHANNELS: Sequence[tuple[int, int]] = ((5, 6), (13, 26))
 
 # Map motor index to encoder index. Motors 0,1 use encoder 1. Motors 2,3 use encoder 0.
-MOTOR_TO_ENCODER_MAP: dict[int, int] = {0: 1, 1: 1, 2: 0, 3: 0}
+MOTOR_TO_ENCODER_MAP: dict[int, int] =  {0: 0, 1: 0, 2: 1, 3: 1}
 
 # Motor and drive electrical/mechanical model constants
 # Units: R[Ohm], L[H], J[kg*m^2], B[N*m*s/rad], Kt[N*m/A], Ke[V*s/rad], N[ratio], WHEEL_DIAMETER_M[m]
