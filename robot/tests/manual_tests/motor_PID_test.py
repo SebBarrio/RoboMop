@@ -175,7 +175,7 @@ class QuadratureEncoderFeedback:
 class MotorTestRig:
     def __init__(
         self,
-        controller: MotorController,
+        controller: MotorDriver,
         feedback_provider: Callable[[int, float], tuple[float, float]],
         setpoint_amplitude_rad_per_s: float = SETPOINT_AMPLITUDE_RAD_PER_S,
         kp: float = SPEED_KP,
@@ -433,7 +433,7 @@ def main() -> None:
     i2c = busio.I2C(board.SCL, board.SDA)
     pwm = PCA9685(i2c)
     pwm.frequency = PWM_FREQUENCY
-    controller = MotorController(pwm, build_motor_configs(), supply_voltage=SUPPLY_VOLTAGE)
+    controller = MotorDriver(pwm, build_motor_configs(), supply_voltage=SUPPLY_VOLTAGE)
     encoder_feedback = QuadratureEncoderFeedback(build_encoder_configs(), ENCODER_PULSES_PER_REV)
     rig = MotorTestRig(
         controller,
