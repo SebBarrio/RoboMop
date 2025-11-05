@@ -22,7 +22,7 @@ from adafruit_pca9685 import PCA9685
 # Add robot directory to path so src package can be imported properly
 robot_dir = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(robot_dir))
-from src.control.pwm_controller import MotorChannelConfig, MotorController
+from src.control.pwm_controller import MotorChannelConfig, MotorDriver
 from src.sensors.encoders import EncoderReading, QuadratureEncoder, GpioZeroEncoderHardware
 
 # Use non-interactive backend for headless plotting
