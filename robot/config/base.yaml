@@ -1,5 +1,5 @@
 websocket:
-  url: http://localhost:3000
+  url: http://172.17.142.69:3000
   robotId: robomop-dev
   namespace: /
   socketioPath: socket.io

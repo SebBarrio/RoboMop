@@ -8,10 +8,12 @@ import base64
 import logging
 import math
 import signal
+import sys
 import time
 from typing import Any, Mapping
 
 import numpy as np
+from socketio import exceptions as socketio_exceptions
 
 from .communication.command_receiver import CommandReceiver
 from .communication.state_publisher import StatePublisher
@@ -363,7 +365,19 @@ class RobotApp:
             self._logger.info("Hardware layer started")
 
         self._logger.info("Connecting to backend at %s", self._config.websocket.url)
-        await self._ws.connect()
+        try:
+            await self._ws.connect()
+        except socketio_exceptions.ConnectionError as exc:
+            self._logger.error(
+                "Failed to connect to backend at %s: %s",
+                self._config.websocket.url,
+                exc,
+            )
+            await self._ws.disconnect()
+            if self._hardware and self._hardware.started:
+                await self._hardware.stop()
+                self._logger.info("Hardware layer stopped after connection failure")
+            raise
         await self._receiver.start()
         await self._publisher.start()
 
@@ -707,7 +721,11 @@ class RobotApp:
 
 
 async def _serve(app: RobotApp) -> None:
-    await app.start()
+    try:
+        await app.start()
+    except Exception:
+        await app.stop()
+        raise
     stop_event = asyncio.Event()
     loop = asyncio.get_running_loop()
 
@@ -819,6 +837,13 @@ def main() -> None:
     app = RobotApp(config, logger)
     try:
         asyncio.run(_serve(app))
+    except socketio_exceptions.ConnectionError:
+        logger.error(
+            "Unable to establish WebSocket connection to %s. "
+            "Ensure the backend is running and reachable, or update the robot configuration.",
+            config.websocket.url,
+        )
+        sys.exit(1)
     except KeyboardInterrupt:
         logger.info("Interrupted by user, shutting down")
 

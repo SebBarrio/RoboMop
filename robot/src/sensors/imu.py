@@ -420,8 +420,14 @@ class MPU9250:
             except Exception:
                 break
             try:
+                # Check if loop is closed before trying to use it
+                if self._loop.is_closed():
+                    break
                 self._loop.call_soon_threadsafe(self._queue.put_nowait, sample)
-            except asyncio.QueueFull:
+            except (asyncio.QueueFull, RuntimeError):
+                # RuntimeError can occur if loop was closed between check and call
+                if self._loop.is_closed():
+                    break
                 pass
             next_deadline += interval
             delay = next_deadline - time.perf_counter()

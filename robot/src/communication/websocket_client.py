@@ -105,12 +105,12 @@ class WebSocketClient:
 
     async def disconnect(self) -> None:
         async with self._connect_lock:
-            if not self.connected:
+            try:
+                await self._client.disconnect()
+            except (RuntimeError, socketio.exceptions.ConnectionError):  # pragma: no cover
+                pass
+            finally:
                 self._connected_event.clear()
-                return
-
-            await self._client.disconnect()
-            self._connected_event.clear()
 
     async def emit(self, event: str, payload: Any) -> None:
         await self._client.emit(event, payload, namespace=self._config.namespace)
