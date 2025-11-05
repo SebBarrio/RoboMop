@@ -251,7 +251,7 @@ class MPU9250:
             return
         self.initialize()
         self._loop = asyncio.get_running_loop()
-        self._queue = asyncio.Queue(maxsize=512)
+        self._queue = asyncio.Queue(maxsize=2048)
         self._stop_event.clear()
         self._reader_thread = threading.Thread(
             target=self._reader_main, name="mpu9250-reader", daemon=True
@@ -412,6 +412,14 @@ class MPU9250:
         """Background thread for continuous sampling."""
         assert self._queue is not None
         assert self._loop is not None
+        
+        def _safe_enqueue(item: ImuSample) -> None:
+            """Enqueue item, dropping it silently if queue is full."""
+            try:
+                self._queue.put_nowait(item)
+            except asyncio.QueueFull:
+                pass  # Drop sample when queue is full
+        
         interval = 1.0 / self._sample_rate_hz
         next_deadline = time.perf_counter()
         while not self._stop_event.is_set():
@@ -419,16 +427,10 @@ class MPU9250:
                 sample = self.read_sample()
             except Exception:
                 break
-            try:
-                # Check if loop is closed before trying to use it
-                if self._loop.is_closed():
-                    break
-                self._loop.call_soon_threadsafe(self._queue.put_nowait, sample)
-            except (asyncio.QueueFull, RuntimeError):
-                # RuntimeError can occur if loop was closed between check and call
-                if self._loop.is_closed():
-                    break
-                pass
+            # Check if loop is closed before trying to use it
+            if self._loop.is_closed():
+                break
+            self._loop.call_soon_threadsafe(_safe_enqueue, sample)
             next_deadline += interval
             delay = next_deadline - time.perf_counter()
             if delay > 0:

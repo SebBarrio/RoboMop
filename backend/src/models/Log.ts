@@ -41,10 +41,10 @@ export class Log {
   @Column({ type: "simple-enum", enum: LogLevel })
   level!: LogLevel;
 
-  @Column({ length: 50 })
+  @Column({ type: "varchar", length: 50 })
   module!: string;
 
-  @Column({ length: 500 })
+  @Column({ type: "varchar", length: 500 })
   message!: string;
 
   @Column({ type: "simple-json", nullable: true })

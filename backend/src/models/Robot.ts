@@ -13,16 +13,16 @@ export class Robot {
   @PrimaryGeneratedColumn("uuid")
   id!: string;
 
-  @Column({ length: 100 })
+  @Column({ type: "varchar", length: 100 })
   name!: string;
 
-  @Column({ length: 64 })
+  @Column({ type: "varchar", length: 64 })
   serialNumber!: string;
 
-  @Column({ length: 32 })
+  @Column({ type: "varchar", length: 32 })
   modelVersion!: string;
 
-  @Column({ length: 32 })
+  @Column({ type: "varchar", length: 32 })
   firmwareVersion!: string;
 
   @CreateDateColumn({ type: "datetime" })

@@ -95,7 +95,7 @@ class RPLidarSerial:
         if self._packet_size <= 0:
             raise RPLidarProtocolError("Invalid packet size reported by descriptor")
 
-        self._queue = asyncio.Queue(maxsize=4096)
+        self._queue = asyncio.Queue(maxsize=8192)
         self._stop_event.clear()
         self._reader_thread = threading.Thread(
             target=self._reader_main,
@@ -205,6 +205,14 @@ class RPLidarSerial:
     def _reader_main(self) -> None:
         assert self._queue is not None
         assert self._loop is not None
+        
+        def _safe_enqueue(item: LidarMeasurement) -> None:
+            """Enqueue item, dropping it silently if queue is full."""
+            try:
+                self._queue.put_nowait(item)
+            except asyncio.QueueFull:
+                pass  # Drop measurement when queue is full
+        
         while not self._stop_event.is_set():
             try:
                 packet = self._read_exact(self._packet_size)
@@ -215,10 +223,7 @@ class RPLidarSerial:
             measurement = self._decode_measurement(packet)
             if measurement is None:
                 continue
-            try:
-                self._loop.call_soon_threadsafe(self._queue.put_nowait, measurement)
-            except asyncio.QueueFull:
-                continue
+            self._loop.call_soon_threadsafe(_safe_enqueue, measurement)
 
     def _read_descriptor(self) -> _ResponseDescriptor:
         raw = self._read_exact(7)

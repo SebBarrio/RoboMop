@@ -10,7 +10,8 @@
     "test": "jest",
     "test:watch": "jest --watch",
     "lint": "eslint . --ext .ts",
-    "format": "prettier --write ."
+    "format": "prettier --write .",
+    "seed:robot": "tsx scripts/seed-robot.ts"
   },
   "engines": {
     "node": ">=20.0.0"
