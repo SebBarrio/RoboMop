@@ -385,6 +385,7 @@ class RobotApp:
             except (asyncio.CancelledError, KeyboardInterrupt):
                 self._logger.warning("Triangle test interrupted, shutting down")
                 self._mode = original_mode
+                self._running_triangle_test = False
                 raise
 
         self._logger.info("Connecting to backend at %s", self._config.websocket.url)
@@ -696,7 +697,7 @@ class RobotApp:
             self._logger.info("Triangle path loaded with %d waypoints", len(waypoints))
             
             # Wait for path completion with timeout
-            timeout = 60.0  # 60 seconds timeout
+            timeout = 10.0  # 60 seconds timeout
             start_time = time.perf_counter()
             sample_interval = 0.1  # Sample trajectory every 100ms
             last_sample_time = start_time
@@ -734,8 +735,7 @@ class RobotApp:
             # Stop motors immediately if motor controller exists
             if self._motor_controller:
                 try:
-                    self._motor_controller.set_velocity(0, 0.0)
-                    self._motor_controller.set_velocity(1, 0.0)
+                    self._motor_controller.stop_all()
                     self._logger.info("Motors stopped")
                 except Exception as exc:
                     self._logger.error("Failed to stop motors: %s", exc)
@@ -820,12 +820,17 @@ class RobotApp:
         ax.set_aspect("equal")
         
         # Set reasonable axis limits around the triangle
-        if trajectory:
-            all_x = [p[0] for p in trajectory] + [v[0] for v in planned_vertices]
-            all_y = [p[1] for p in trajectory] + [v[1] for v in planned_vertices]
-            margin = 0.5  # 0.5m margin
-            ax.set_xlim(min(all_x) - margin, max(all_x) + margin)
-            ax.set_ylim(min(all_y) - margin, max(all_y) + margin)
+        if trajectory or planned_vertices:
+            all_x = ([p[0] for p in trajectory] if trajectory else []) + [v[0] for v in planned_vertices]
+            all_y = ([p[1] for p in trajectory] if trajectory else []) + [v[1] for v in planned_vertices]
+            if all_x and all_y:
+                margin = 0.5  # 0.5m margin
+                ax.set_xlim(min(all_x) - margin, max(all_x) + margin)
+                ax.set_ylim(min(all_y) - margin, max(all_y) + margin)
+            else:
+                # Default view if no data
+                ax.set_xlim(-0.5, 1.5)
+                ax.set_ylim(-0.5, 1.5)
         
         plt.tight_layout()
         plt.savefig(filename, dpi=150, bbox_inches="tight")
