@@ -95,6 +95,7 @@ class RobotApp:
         self._errors: list[str] = []
 
         self._hardware: HardwareAbstractionLayer | None = None
+        self._lidar: RPLidarSerial | None = None
         self._occupancy_grid: OccupancyGrid | None = None
         self._particle_filter: ParticleFilter | None = None
         self._sensor_fusion: SensorFusionEKF | None = None
@@ -180,12 +181,22 @@ class RobotApp:
         async def read_lidar_with_timeout() -> list[LidarMeasurement]:
             """Read LIDAR scan with timeout to prevent blocking."""
             try:
-                return await asyncio.wait_for(lidar.read_scan(), timeout=0.5)
+                # Increase timeout to 2 seconds (one full revolution at 5Hz = 0.2s, but allow margin)
+                return await asyncio.wait_for(lidar.read_scan(), timeout=2.0)
             except asyncio.TimeoutError:
-                self._logger.warning("LIDAR read_scan() timed out after 0.5s")
+                # Log only once per 10 timeouts to avoid spam
+                if not hasattr(read_lidar_with_timeout, '_timeout_count'):
+                    read_lidar_with_timeout._timeout_count = 0
+                read_lidar_with_timeout._timeout_count += 1
+                if read_lidar_with_timeout._timeout_count % 10 == 1:
+                    self._logger.warning(
+                        "LIDAR read_scan() timed out after 2.0s (count: %d). "
+                        "Check if LIDAR motor is spinning and data is flowing.",
+                        read_lidar_with_timeout._timeout_count
+                    )
                 return []
             except Exception as exc:
-                self._logger.error("LIDAR read_scan() failed: %s", exc)
+                self._logger.error("LIDAR read_scan() failed: %s", exc, exc_info=True)
                 return []
 
         self._hardware = HardwareAbstractionLayer(
@@ -200,9 +211,10 @@ class RobotApp:
             start_hooks=[lidar.start, imu.start, ultrasonic.start, water_level.start],
             stop_hooks=[lidar.stop, imu.stop, ultrasonic.stop, water_level.stop],
         )
-        # Keep references for motor feedback
+        # Keep references for motor feedback and LIDAR diagnostics
         self._left_encoder = left_encoder
         self._right_encoder = right_encoder
+        self._lidar = lidar
 
     def _initialize_slam(self) -> None:
         """Initialize SLAM components (grid, particle filter, sensor fusion, manager)."""
@@ -379,6 +391,18 @@ class RobotApp:
         if self._hardware:
             await self._hardware.start()
             self._logger.info("Hardware layer started")
+            
+            # Verify LIDAR is providing data
+            if self._lidar:
+                try:
+                    test_scan = await asyncio.wait_for(self._lidar.read_scan(), timeout=3.0)
+                    self._logger.info("LIDAR test scan: received %d measurements", len(test_scan))
+                    if len(test_scan) == 0:
+                        self._logger.error("LIDAR test scan returned 0 measurements - check hardware!")
+                except asyncio.TimeoutError:
+                    self._logger.error("LIDAR test scan timed out - motor may not be spinning!")
+                except Exception as exc:
+                    self._logger.error("LIDAR test scan failed: %s", exc, exc_info=True)
 
         # Start SLAM and navigation loops before connecting to backend
         self._slam_task = asyncio.create_task(self._slam_loop())
@@ -480,10 +504,8 @@ class RobotApp:
                             (left_vel.velocity_m_s or 0.0) + (right_vel.velocity_m_s or 0.0)
                         ) / 2.0
 
-                    self._sensor_fusion.update_velocity(
-                        v_measured=avg_encoder_velocity,
-                        w_measured=snapshot.imu_sample.angular_velocity_rad_s.z,
-                    )
+                    self._sensor_fusion.update_v(avg_encoder_velocity)
+                    self._sensor_fusion.update_omega(snapshot.imu_sample.angular_velocity_rad_s.z)
 
                 lidar_measurements = [
                     (m.angle_radians, m.distance_m) for m in snapshot.lidar_scan

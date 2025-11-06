@@ -281,10 +281,17 @@ class RPLidarSerial:
         if start_flag == inverse_flag:
             return None
         quality = sync_quality >> 2
-        angle_q6 = ((packet[1] >> 1) | (packet[2] << 7)) & 0x7FFF
-        angle_rad = math.radians(angle_q6 / 64.0) % (2.0 * math.pi)
-        distance_q2 = packet[3] | (packet[4] << 8)
-        distance_m = (distance_q2 / 4.0) / 1000.0
+        
+        # Decode angle - match test_lidar_direct.py protocol exactly
+        angle_raw = (packet[2] << 8) | packet[1]
+        angle_deg = ((angle_raw >> 1) & 0x7FFF) / 64.0
+        angle_rad = math.radians(angle_deg) % (2.0 * math.pi)
+        
+        # Decode distance - match test_lidar_direct.py protocol exactly
+        distance_raw = (packet[4] << 8) | packet[3]
+        distance_mm = distance_raw / 4.0
+        distance_m = distance_mm / 1000.0
+        
         return LidarMeasurement(
             angle_radians=angle_rad,
             distance_m=distance_m,
