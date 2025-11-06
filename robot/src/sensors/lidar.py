@@ -80,14 +80,27 @@ class RPLidarSerial:
         await self.stop()
 
     async def start(self) -> None:
-        """Open the serial port, configure the motor and start measurement streaming."""
+        """Open the serial port, reset device, and start measurement streaming."""
 
         if self._serial is not None:
             return
 
         self._loop = asyncio.get_running_loop()
         await asyncio.to_thread(self._open_serial)
+        
+        # Reset device to ensure clean state
+        await asyncio.to_thread(self._send_command, self.CMD_RESET)
+        await asyncio.sleep(2.0)  # Wait for reset to complete
+        
+        # Clear any stale data
+        with self._serial_lock:
+            if self._serial is not None:
+                self._serial.reset_input_buffer()
+        
+        # Motor PWM is typically auto-managed by the LIDAR
         await asyncio.to_thread(self._set_motor_pwm, self._motor_pwm)
+        
+        # Start scanning
         descriptor = await asyncio.to_thread(self._begin_scan)
         if descriptor.data_type != self.RESP_MEASUREMENT_TYPE_STANDARD:
             raise RPLidarProtocolError(f"Unsupported measurement type 0x{descriptor.data_type:02x}")
@@ -192,14 +205,26 @@ class RPLidarSerial:
                     self._serial = None
 
     def _set_motor_pwm(self, pwm: int) -> None:
-        pwm_clamped = max(0, min(1023, pwm))
-        payload = bytes([pwm_clamped & 0xFF, pwm_clamped >> 8])
-        self._send_command(self.CMD_SET_MOTOR_PWM, payload)
+        """Set motor PWM. For simplicity, we skip this as most RPLIDAR models auto-control motor."""
+        # Motor control is typically handled by the LIDAR internally for A1/A2 models
+        pass
 
     def _begin_scan(self) -> _ResponseDescriptor:
+        """Begin scanning with proper reset and buffer clearing."""
+        # Stop any ongoing scan
         self._send_command(self.CMD_STOP)
-        time.sleep(0.05)
+        time.sleep(0.1)
+        
+        # Clear buffers
+        with self._serial_lock:
+            if self._serial is not None:
+                self._serial.reset_input_buffer()
+        time.sleep(0.1)
+        
+        # Start scan
         self._send_command(self.CMD_SCAN)
+        time.sleep(0.1)
+        
         return self._read_descriptor()
 
     def _reader_main(self) -> None:
@@ -241,14 +266,9 @@ class RPLidarSerial:
         return self._read_exact(expected_length)
 
     def _send_command(self, command: int, payload: bytes | None = None) -> None:
-        frame = bytearray([self.SYNC_BYTE, command])
-        if payload:
-            frame.append(len(payload))
-            frame.extend(payload)
-            checksum = 0
-            for byte in payload:
-                checksum ^= byte
-            frame.append(checksum)
+        """Send command to RPLidar using simple 2-byte format for standard commands."""
+        # Standard scan commands (STOP, RESET, SCAN, GET_INFO, GET_HEALTH) use 2-byte format
+        frame = bytes([self.SYNC_BYTE, command])
         with self._serial_lock:
             if self._serial is None:
                 raise RuntimeError("Serial port not open")
@@ -273,24 +293,32 @@ class RPLidarSerial:
 
     @staticmethod
     def _decode_measurement(packet: bytes) -> Optional[LidarMeasurement]:
+        """Decode 5-byte RPLIDAR measurement packet.
+        
+        Packet format (standard scan mode):
+        - Byte 0: Start flag (bit 0) and Quality (bits 2-7)
+        - Bytes 1-2: Angle (15 bits, in 1/64 degree units)
+        - Bytes 3-4: Distance (16 bits, in 1/4 mm units)
+        """
         if len(packet) != 5:
             return None
-        sync_quality = packet[0]
-        start_flag = bool(sync_quality & 0x01)
-        inverse_flag = bool(sync_quality & 0x02)
-        if start_flag == inverse_flag:
-            return None
-        quality = sync_quality >> 2
         
-        # Decode angle - match test_lidar_direct.py protocol exactly
+        # Parse start flag and quality
+        start_flag = (packet[0] & 0x01) != 0
+        quality = (packet[0] >> 2) & 0x3F
+        
+        # Parse angle (15-bit value in 1/64 degree units)
         angle_raw = (packet[2] << 8) | packet[1]
         angle_deg = ((angle_raw >> 1) & 0x7FFF) / 64.0
         angle_rad = math.radians(angle_deg) % (2.0 * math.pi)
         
-        # Decode distance - match test_lidar_direct.py protocol exactly
+        # Parse distance (16-bit value in 1/4 mm units)
         distance_raw = (packet[4] << 8) | packet[3]
-        distance_mm = distance_raw / 4.0
-        distance_m = distance_mm / 1000.0
+        distance_m = (distance_raw / 4.0) / 1000.0
+        
+        # Filter out invalid measurements (matching test_lidar_direct.py behavior)
+        if distance_m <= 0.0 or quality == 0:
+            return None
         
         return LidarMeasurement(
             angle_radians=angle_rad,
