@@ -480,10 +480,8 @@ class RobotApp:
                             (left_vel.velocity_m_s or 0.0) + (right_vel.velocity_m_s or 0.0)
                         ) / 2.0
 
-                    self._sensor_fusion.update_velocity(
-                        v_measured=avg_encoder_velocity,
-                        w_measured=snapshot.imu_sample.angular_velocity_rad_s.z,
-                    )
+                    self._sensor_fusion.update_v(avg_encoder_velocity)
+                    self._sensor_fusion.update_omega(snapshot.imu_sample.angular_velocity_rad_s.z)
 
                 lidar_measurements = [
                     (m.angle_radians, m.distance_m) for m in snapshot.lidar_scan

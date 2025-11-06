@@ -48,7 +48,7 @@ class RPLidarSerial:
 
     RESP_MEASUREMENT_TYPE_STANDARD = 0x81
 
-    DEFAULT_TIMEOUT = 1.0
+    DEFAULT_TIMEOUT = 2.0  # Increased from 1.0 to 2.0 for more reliable reads
     DEFAULT_BAUD_RATE = 1_000_000
     DEFAULT_MOTOR_PWM = 660
 
@@ -83,31 +83,47 @@ class RPLidarSerial:
         """Open the serial port, reset device, and start measurement streaming."""
 
         if self._serial is not None:
+            print(f"LIDAR already started on {self._port}")
             return
 
+        print(f"Starting RPLIDAR on {self._port} at {self._baud_rate} baud")
         self._loop = asyncio.get_running_loop()
         await asyncio.to_thread(self._open_serial)
+        print("✓ Serial port opened")
         
         # Reset device to ensure clean state
+        print("Resetting LIDAR device...")
         await asyncio.to_thread(self._send_command, self.CMD_RESET)
         await asyncio.sleep(2.0)  # Wait for reset to complete
+        print("✓ Device reset complete")
         
         # Clear any stale data
         with self._serial_lock:
             if self._serial is not None:
                 self._serial.reset_input_buffer()
+        print("✓ Input buffer cleared")
         
         # Motor PWM is typically auto-managed by the LIDAR
         await asyncio.to_thread(self._set_motor_pwm, self._motor_pwm)
         
         # Start scanning
-        descriptor = await asyncio.to_thread(self._begin_scan)
-        if descriptor.data_type != self.RESP_MEASUREMENT_TYPE_STANDARD:
-            raise RPLidarProtocolError(f"Unsupported measurement type 0x{descriptor.data_type:02x}")
-        self._packet_size = descriptor.data_length
-        if self._packet_size <= 0:
-            raise RPLidarProtocolError("Invalid packet size reported by descriptor")
+        print("Starting scan...")
+        try:
+            descriptor = await asyncio.to_thread(self._begin_scan)
+            print(f"✓ Scan started: data_type=0x{descriptor.data_type:02x}, "
+                  f"data_length={descriptor.data_length}, sub_type={descriptor.sub_type}")
+            if descriptor.data_type != self.RESP_MEASUREMENT_TYPE_STANDARD:
+                raise RPLidarProtocolError(
+                    f"Unsupported measurement type 0x{descriptor.data_type:02x}"
+                )
+            # For standard scan mode, packet size is always 5 bytes
+            # (the descriptor's data_length field is not used for continuous scan)
+            self._packet_size = 5
+        except Exception as exc:
+            print(f"✗ Failed to start scan: {exc}")
+            raise RPLidarProtocolError(f"Failed to start scan: {exc}") from exc
 
+        print(f"Starting reader thread (packet_size={self._packet_size})...")
         self._queue = asyncio.Queue(maxsize=8192)
         self._stop_event.clear()
         self._reader_thread = threading.Thread(
@@ -116,6 +132,7 @@ class RPLidarSerial:
             daemon=True,
         )
         self._reader_thread.start()
+        print("✓ RPLIDAR reader thread started")
 
     async def stop(self) -> None:
         """Stop scanning and close the serial connection."""
@@ -228,6 +245,7 @@ class RPLidarSerial:
         return self._read_descriptor()
 
     def _reader_main(self) -> None:
+        """Background thread that continuously reads LIDAR measurement packets."""
         assert self._queue is not None
         assert self._loop is not None
         
@@ -238,25 +256,64 @@ class RPLidarSerial:
             except asyncio.QueueFull:
                 pass  # Drop measurement when queue is full
         
+        measurement_count = 0
+        error_count = 0
+        
         while not self._stop_event.is_set():
             try:
                 packet = self._read_exact(self._packet_size)
-            except RPLidarProtocolError:
-                break
-            if not packet:
-                continue
-            measurement = self._decode_measurement(packet)
-            if measurement is None:
-                continue
-            self._loop.call_soon_threadsafe(_safe_enqueue, measurement)
+                if not packet:
+                    continue
+                    
+                measurement = self._decode_measurement(packet)
+                if measurement is None:
+                    continue
+                    
+                self._loop.call_soon_threadsafe(_safe_enqueue, measurement)
+                measurement_count += 1
+                
+            except RPLidarProtocolError as exc:
+                error_count += 1
+                if error_count < 5:  # Log first few errors
+                    print(f"RPLidar protocol error in reader thread: {exc}")
+                if error_count > 100:  # Too many errors, give up
+                    print(f"Too many LIDAR errors ({error_count}), stopping reader thread")
+                    break
+            except Exception as exc:
+                error_count += 1
+                if error_count < 5:
+                    print(f"Unexpected error in LIDAR reader thread: {exc}")
+                if error_count > 100:
+                    print(f"Too many LIDAR errors ({error_count}), stopping reader thread")
+                    break
+        
+        print(f"LIDAR reader thread exiting (read {measurement_count} measurements, {error_count} errors)")
 
     def _read_descriptor(self) -> _ResponseDescriptor:
+        """Read response descriptor (7 bytes) from RPLIDAR.
+        
+        Format:
+        - Bytes 0-1: Sync bytes (0xA5 0x5A)
+        - Bytes 2-5: Data length (32-bit little-endian)
+        - Byte 6: Data type
+        """
+        # Try to read with timeout
         raw = self._read_exact(7)
-        if len(raw) != 7 or raw[0] != self.SYNC_BYTE or raw[1] != self.RESPONSE_SYNC_BYTE:
-            raise RPLidarProtocolError("Invalid descriptor sync sequence")
+        if len(raw) != 7:
+            raise RPLidarProtocolError(f"Expected 7 bytes for descriptor, got {len(raw)}")
+        
+        # Check sync bytes
+        if raw[0] != self.SYNC_BYTE or raw[1] != self.RESPONSE_SYNC_BYTE:
+            raise RPLidarProtocolError(
+                f"Invalid descriptor sync: got 0x{raw[0]:02x} 0x{raw[1]:02x}, "
+                f"expected 0x{self.SYNC_BYTE:02x} 0x{self.RESPONSE_SYNC_BYTE:02x}"
+            )
+        
+        # Parse data length (30 bits) and send mode (2 bits in byte 5 upper bits)
         size = raw[2] | (raw[3] << 8) | (raw[4] << 16) | ((raw[5] & 0x3F) << 24)
         sub_type = (raw[5] >> 6) & 0x03
         data_type = raw[6]
+        
         return _ResponseDescriptor(size, data_type, sub_type)
 
     def _read_payload(self, *, expected_length: int) -> bytes:
