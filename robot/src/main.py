@@ -378,9 +378,14 @@ class RobotApp:
         if self._config.robot.run_triangle_test:
             self._logger.info("Running triangle calibration test")
             original_mode = self._mode
-            await self._run_triangle_test()
-            self._mode = original_mode
-            self._logger.info("Triangle calibration test completed, restored mode to %s", self._mode)
+            try:
+                await self._run_triangle_test()
+                self._mode = original_mode
+                self._logger.info("Triangle calibration test completed, restored mode to %s", self._mode)
+            except (asyncio.CancelledError, KeyboardInterrupt):
+                self._logger.warning("Triangle test interrupted, shutting down")
+                self._mode = original_mode
+                raise
 
         self._logger.info("Connecting to backend at %s", self._config.websocket.url)
         try:
@@ -685,46 +690,63 @@ class RobotApp:
         self._running_triangle_test = True
         self._mode = "MANUAL"
         
-        # Load and start the path
-        self._path_executor.load_path(waypoints, start_immediately=True)
-        self._logger.info("Triangle path loaded with %d waypoints", len(waypoints))
-        
-        # Wait for path completion with timeout
-        timeout = 60.0  # 60 seconds timeout
-        start_time = time.perf_counter()
-        sample_interval = 0.1  # Sample trajectory every 100ms
-        last_sample_time = start_time
-        
-        while time.perf_counter() - start_time < timeout:
-            await asyncio.sleep(0.05)
+        try:
+            # Load and start the path
+            self._path_executor.load_path(waypoints, start_immediately=True)
+            self._logger.info("Triangle path loaded with %d waypoints", len(waypoints))
             
-            # Sample trajectory
-            current_time = time.perf_counter()
-            if current_time - last_sample_time >= sample_interval:
-                trajectory.append((self._pose["x"], self._pose["y"]))
-                last_sample_time = current_time
+            # Wait for path completion with timeout
+            timeout = 60.0  # 60 seconds timeout
+            start_time = time.perf_counter()
+            sample_interval = 0.1  # Sample trajectory every 100ms
+            last_sample_time = start_time
             
-            # Check if path is complete
-            if self._path_executor.status is PathExecutorStatus.COMPLETED:
-                self._logger.info("Triangle path completed successfully")
-                break
-            elif self._path_executor.status in (PathExecutorStatus.CANCELLED, PathExecutorStatus.IDLE):
-                self._logger.warning("Triangle path was cancelled or stopped")
-                break
-        else:
-            self._logger.warning("Triangle test timed out after %.1f seconds", timeout)
-            self._path_executor.cancel()
+            while time.perf_counter() - start_time < timeout:
+                await asyncio.sleep(0.05)
+                
+                # Sample trajectory
+                current_time = time.perf_counter()
+                if current_time - last_sample_time >= sample_interval:
+                    trajectory.append((self._pose["x"], self._pose["y"]))
+                    last_sample_time = current_time
+                
+                # Check if path is complete
+                if self._path_executor.status is PathExecutorStatus.COMPLETED:
+                    self._logger.info("Triangle path completed successfully")
+                    break
+                elif self._path_executor.status in (PathExecutorStatus.CANCELLED, PathExecutorStatus.IDLE):
+                    self._logger.warning("Triangle path was cancelled or stopped")
+                    break
+            else:
+                self._logger.warning("Triangle test timed out after %.1f seconds", timeout)
+                self._path_executor.cancel()
         
-        # Stop the robot
-        self._velocity = {"linear": 0.0, "angular": 0.0}
+        except (asyncio.CancelledError, KeyboardInterrupt):
+            self._logger.warning("Triangle test interrupted by user")
+            if self._path_executor:
+                self._path_executor.cancel()
+            raise
         
-        # Clear the test flag
-        self._running_triangle_test = False
-        
-        # Save the diagnostic image
-        self._save_triangle_test_image(trajectory, vertices)
-        
-        self._logger.info("Triangle test complete. Trajectory had %d samples", len(trajectory))
+        finally:
+            # Always stop the robot and save diagnostics
+            self._velocity = {"linear": 0.0, "angular": 0.0}
+            
+            # Stop motors immediately if motor controller exists
+            if self._motor_controller:
+                try:
+                    self._motor_controller.set_velocity(0, 0.0)
+                    self._motor_controller.set_velocity(1, 0.0)
+                    self._logger.info("Motors stopped")
+                except Exception as exc:
+                    self._logger.error("Failed to stop motors: %s", exc)
+            
+            # Clear the test flag
+            self._running_triangle_test = False
+            
+            # Save the diagnostic image
+            self._save_triangle_test_image(trajectory, vertices)
+            
+            self._logger.info("Triangle test complete. Trajectory had %d samples", len(trajectory))
 
     def _save_triangle_test_image(
         self, trajectory: list[tuple[float, float]], planned_vertices: list[tuple[float, float]]
