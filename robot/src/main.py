@@ -111,6 +111,8 @@ class RobotApp:
         self._start_position: tuple[float, float, float] = (0.0, 0.0, 0.0)
         # Cache latest encoder readings for synchronous motor loop consumption
         self._encoder_cache: dict[str, EncoderReading] = {}
+        # Flag to indicate triangle test is running (prevents navigation loop interference)
+        self._running_triangle_test = False
 
     async def _initialize_hardware(self) -> None:
         """Initialize hardware abstraction layer with all sensors."""
@@ -544,8 +546,10 @@ class RobotApp:
                 elif self._mode == "RETURNING":
                     await self._handle_returning_mode(current_pose)
                 elif self._mode == "MANUAL":
-                    if self._path_executor.status is not PathExecutorStatus.IDLE:
-                        self._path_executor.cancel()
+                    # Don't cancel path executor if triangle test is running
+                    if not self._running_triangle_test:
+                        if self._path_executor.status is not PathExecutorStatus.IDLE:
+                            self._path_executor.cancel()
 
                 if self._path_executor.status is PathExecutorStatus.RUNNING:
                     self._path_executor.update(current_pose, dt=target_interval)
@@ -677,7 +681,8 @@ class RobotApp:
         # Track trajectory
         trajectory: list[tuple[float, float]] = []
         
-        # Set mode to MANUAL to prevent autonomous behavior
+        # Set flags to prevent navigation loop interference
+        self._running_triangle_test = True
         self._mode = "MANUAL"
         
         # Load and start the path
@@ -712,6 +717,9 @@ class RobotApp:
         
         # Stop the robot
         self._velocity = {"linear": 0.0, "angular": 0.0}
+        
+        # Clear the test flag
+        self._running_triangle_test = False
         
         # Save the diagnostic image
         self._save_triangle_test_image(trajectory, vertices)
