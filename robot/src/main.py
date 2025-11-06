@@ -177,8 +177,19 @@ class RobotApp:
             await asyncio.sleep(0.001)
             return right_encoder.read()
 
+        async def read_lidar_with_timeout() -> list[LidarMeasurement]:
+            """Read LIDAR scan with timeout to prevent blocking."""
+            try:
+                return await asyncio.wait_for(lidar.read_scan(), timeout=0.5)
+            except asyncio.TimeoutError:
+                self._logger.warning("LIDAR read_scan() timed out after 0.5s")
+                return []
+            except Exception as exc:
+                self._logger.error("LIDAR read_scan() failed: %s", exc)
+                return []
+
         self._hardware = HardwareAbstractionLayer(
-            lidar_reader=lidar.read_scan,
+            lidar_reader=read_lidar_with_timeout,
             imu_reader=read_imu_async,
             encoder_readers={
                 "left": read_left_encoder_async,
@@ -436,6 +447,7 @@ class RobotApp:
         """Main SLAM update loop running at 10 Hz."""
         self._logger.info("SLAM loop started")
         target_interval = 0.1
+        slam_update_count = 0
 
         while True:
             try:
@@ -478,6 +490,7 @@ class RobotApp:
                 ]
 
                 if lidar_measurements:
+                    slam_update_count += 1
                     odometry_pose = self._sensor_fusion.state_vector[:3]
                     estimated_pose = self._slam_manager.update(
                         scan=lidar_measurements, odometry_pose=odometry_pose
@@ -488,6 +501,22 @@ class RobotApp:
                         "y": float(estimated_pose[1]),
                         "theta": float(estimated_pose[2]),
                     }
+                    
+                    # Log SLAM updates periodically
+                    if slam_update_count % 50 == 0:  # Every 5 seconds at 10Hz
+                        self._logger.info(
+                            "SLAM update #%d: pose=(%.3f, %.3f, %.3f°), %d measurements",
+                            slam_update_count,
+                            self._pose["x"],
+                            self._pose["y"],
+                            math.degrees(self._pose["theta"]),
+                            len(lidar_measurements)
+                        )
+                else:
+                    # Log when no LIDAR data is received (only once per second to avoid spam)
+                    if not hasattr(self, '_last_lidar_warning') or time.perf_counter() - self._last_lidar_warning > 1.0:
+                        self._logger.warning("No LIDAR measurements received in snapshot")
+                        self._last_lidar_warning = time.perf_counter()
 
                 self._battery_level = max(0.0, self._battery_level - 0.001)
                 self._water_level = snapshot.water_level_percentage
