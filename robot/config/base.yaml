@@ -11,5 +11,6 @@ publish:
 robot:
   mode: IDLE
   speedMultiplier: 1.0
+  runTriangleTest: false
 logLevel: INFO
 ackTimeout: 5.0

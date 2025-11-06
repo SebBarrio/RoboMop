@@ -42,6 +42,7 @@ class RobotConfig:
 
     mode: str = "IDLE"
     speed_multiplier: float = 1.0
+    run_triangle_test: bool = False
 
 
 @dataclass(slots=True)

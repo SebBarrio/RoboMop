@@ -10,8 +10,11 @@ import math
 import signal
 import sys
 import time
+from datetime import datetime
+from pathlib import Path
 from typing import Any, Mapping
 
+import matplotlib.pyplot as plt
 import numpy as np
 from socketio import exceptions as socketio_exceptions
 
@@ -364,6 +367,19 @@ class RobotApp:
             await self._hardware.start()
             self._logger.info("Hardware layer started")
 
+        # Start SLAM and navigation loops before connecting to backend
+        self._slam_task = asyncio.create_task(self._slam_loop())
+        self._navigation_task = asyncio.create_task(self._navigation_loop())
+        self._logger.info("SLAM and navigation loops started")
+
+        # Run triangle calibration test if enabled
+        if self._config.robot.run_triangle_test:
+            self._logger.info("Running triangle calibration test")
+            original_mode = self._mode
+            await self._run_triangle_test()
+            self._mode = original_mode
+            self._logger.info("Triangle calibration test completed, restored mode to %s", self._mode)
+
         self._logger.info("Connecting to backend at %s", self._config.websocket.url)
         try:
             await self._ws.connect()
@@ -381,8 +397,6 @@ class RobotApp:
         await self._receiver.start()
         await self._publisher.start()
 
-        self._slam_task = asyncio.create_task(self._slam_loop())
-        self._navigation_task = asyncio.create_task(self._navigation_loop())
         self._logger.info("Robot connection established (mode=%s)", self._mode)
 
     async def stop(self) -> None:
@@ -637,6 +651,158 @@ class RobotApp:
         waypoints.append(Waypoint(x=start_x, y=start_y, theta=start_theta))
         self._path_executor.load_path(waypoints, start_immediately=True)
 
+    async def _run_triangle_test(self) -> None:
+        """Execute a 1m equilateral triangle path and save diagnostic map image."""
+        if not self._path_executor or not self._robot_controller or not self._occupancy_grid:
+            self._logger.error("Cannot run triangle test: navigation not initialized")
+            return
+
+        self._logger.info("Starting triangle calibration test (1m equilateral triangle)")
+        
+        # Calculate equilateral triangle vertices (1m side length)
+        # Start at origin, first vertex at (0, 0)
+        side_length = 1.0
+        height = side_length * math.sqrt(3) / 2.0
+        
+        vertices = [
+            (0.0, 0.0),  # Start
+            (side_length, 0.0),  # Move right 1m
+            (side_length / 2.0, height),  # Move to apex
+            (0.0, 0.0),  # Return to start
+        ]
+        
+        # Create waypoints for the triangle
+        waypoints = [Waypoint(x=x, y=y, theta=None) for x, y in vertices]
+        
+        # Track trajectory
+        trajectory: list[tuple[float, float]] = []
+        
+        # Set mode to MANUAL to prevent autonomous behavior
+        self._mode = "MANUAL"
+        
+        # Load and start the path
+        self._path_executor.load_path(waypoints, start_immediately=True)
+        self._logger.info("Triangle path loaded with %d waypoints", len(waypoints))
+        
+        # Wait for path completion with timeout
+        timeout = 60.0  # 60 seconds timeout
+        start_time = time.perf_counter()
+        sample_interval = 0.1  # Sample trajectory every 100ms
+        last_sample_time = start_time
+        
+        while time.perf_counter() - start_time < timeout:
+            await asyncio.sleep(0.05)
+            
+            # Sample trajectory
+            current_time = time.perf_counter()
+            if current_time - last_sample_time >= sample_interval:
+                trajectory.append((self._pose["x"], self._pose["y"]))
+                last_sample_time = current_time
+            
+            # Check if path is complete
+            if self._path_executor.status is PathExecutorStatus.COMPLETED:
+                self._logger.info("Triangle path completed successfully")
+                break
+            elif self._path_executor.status in (PathExecutorStatus.CANCELLED, PathExecutorStatus.IDLE):
+                self._logger.warning("Triangle path was cancelled or stopped")
+                break
+        else:
+            self._logger.warning("Triangle test timed out after %.1f seconds", timeout)
+            self._path_executor.cancel()
+        
+        # Stop the robot
+        self._velocity = {"linear": 0.0, "angular": 0.0}
+        
+        # Save the diagnostic image
+        self._save_triangle_test_image(trajectory, vertices)
+        
+        self._logger.info("Triangle test complete. Trajectory had %d samples", len(trajectory))
+
+    def _save_triangle_test_image(
+        self, trajectory: list[tuple[float, float]], planned_vertices: list[tuple[float, float]]
+    ) -> None:
+        """Save occupancy grid map with trajectory overlay to disk."""
+        if not self._occupancy_grid:
+            self._logger.warning("Cannot save map: occupancy grid not available")
+            return
+        
+        # Create logs directory if it doesn't exist
+        logs_dir = Path("robot/logs")
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Generate filename with timestamp
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = logs_dir / f"triangle_test_{timestamp}.png"
+        
+        # Create figure
+        fig, ax = plt.subplots(figsize=(12, 12), dpi=100)
+        
+        # Get occupancy grid data
+        grid_data = self._occupancy_grid.array
+        origin_x, origin_y, _ = self._occupancy_grid.origin
+        resolution = self._occupancy_grid.resolution
+        height, width = grid_data.shape
+        
+        # Create extent for imshow (world coordinates)
+        extent = [
+            origin_x,
+            origin_x + width * resolution,
+            origin_y,
+            origin_y + height * resolution,
+        ]
+        
+        # Display occupancy grid (inverted colormap: white=free, black=occupied)
+        # Grid values: 0=unknown, 1-127=free, 128-255=occupied
+        display_grid = np.where(grid_data == 0, 128, grid_data)  # Show unknown as gray
+        ax.imshow(
+            display_grid,
+            cmap="gray_r",
+            origin="lower",
+            extent=extent,
+            vmin=0,
+            vmax=255,
+            alpha=0.8,
+        )
+        
+        # Plot planned triangle vertices
+        if planned_vertices:
+            planned_x = [v[0] for v in planned_vertices]
+            planned_y = [v[1] for v in planned_vertices]
+            ax.plot(planned_x, planned_y, "b--", linewidth=2, label="Planned Path", alpha=0.7)
+            ax.scatter(planned_x[:-1], planned_y[:-1], c="blue", s=100, marker="o", 
+                      label="Waypoints", zorder=5)
+        
+        # Plot actual trajectory
+        if trajectory:
+            traj_x = [p[0] for p in trajectory]
+            traj_y = [p[1] for p in trajectory]
+            ax.plot(traj_x, traj_y, "r-", linewidth=2, label="Actual Trajectory", alpha=0.9)
+            ax.scatter(traj_x[0], traj_y[0], c="green", s=150, marker="^", 
+                      label="Start", zorder=6)
+            ax.scatter(traj_x[-1], traj_y[-1], c="red", s=150, marker="s", 
+                      label="End", zorder=6)
+        
+        ax.set_xlabel("X (meters)", fontsize=12)
+        ax.set_ylabel("Y (meters)", fontsize=12)
+        ax.set_title(f"Triangle Calibration Test - {timestamp}", fontsize=14, fontweight="bold")
+        ax.legend(loc="upper right", fontsize=10)
+        ax.grid(True, alpha=0.3)
+        ax.set_aspect("equal")
+        
+        # Set reasonable axis limits around the triangle
+        if trajectory:
+            all_x = [p[0] for p in trajectory] + [v[0] for v in planned_vertices]
+            all_y = [p[1] for p in trajectory] + [v[1] for v in planned_vertices]
+            margin = 0.5  # 0.5m margin
+            ax.set_xlim(min(all_x) - margin, max(all_x) + margin)
+            ax.set_ylim(min(all_y) - margin, max(all_y) + margin)
+        
+        plt.tight_layout()
+        plt.savefig(filename, dpi=150, bbox_inches="tight")
+        plt.close(fig)
+        
+        self._logger.info("Triangle test map saved to %s", filename)
+
     def _state_provider(self) -> Mapping[str, Any]:
         return {
             "mode": self._mode,
@@ -771,6 +937,8 @@ def _build_overrides(args: argparse.Namespace) -> dict[str, Any]:
         nested("robot")["mode"] = args.mode
     if args.speed_multiplier is not None:
         nested("robot")["speedMultiplier"] = args.speed_multiplier
+    if args.triangle_test:
+        nested("robot")["runTriangleTest"] = True
     if args.log_level:
         overrides["logLevel"] = args.log_level
     if args.ack_timeout is not None:
@@ -817,6 +985,11 @@ def _parse_args() -> argparse.Namespace:
         "--ack-timeout",
         type=float,
         help="Command acknowledgement timeout in seconds",
+    )
+    parser.add_argument(
+        "--triangle-test",
+        action="store_true",
+        help="Run triangle calibration test before connecting to backend",
     )
     return parser.parse_args()
 
