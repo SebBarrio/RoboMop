@@ -103,8 +103,8 @@ class RPLidarSerial:
                 self._serial.reset_input_buffer()
         print("✓ Input buffer cleared")
         
-        # Motor PWM is typically auto-managed by the LIDAR
-        await asyncio.to_thread(self._set_motor_pwm, self._motor_pwm)
+        # Note: Motor PWM is auto-managed by most RPLIDAR models when scan starts
+        # No need to explicitly control it
         
         # Start scanning
         print("Starting scan...")
@@ -123,6 +123,10 @@ class RPLidarSerial:
             print(f"✗ Failed to start scan: {exc}")
             raise RPLidarProtocolError(f"Failed to start scan: {exc}") from exc
 
+        # Give the LIDAR motor time to spin up before reading measurements
+        print("Waiting for LIDAR motor to spin up...")
+        await asyncio.sleep(1.0)
+        
         print(f"Starting reader thread (packet_size={self._packet_size})...")
         self._queue = asyncio.Queue(maxsize=8192)
         self._stop_event.clear()
@@ -140,8 +144,10 @@ class RPLidarSerial:
         if self._serial is None:
             return
 
+        print("Stopping RPLIDAR scan...")
         await asyncio.to_thread(self._send_command, self.CMD_STOP)
-        await asyncio.to_thread(self._set_motor_pwm, 0)
+        # Motor will stop automatically when scan stops
+        
         self._stop_event.set()
         if self._reader_thread is not None:
             self._reader_thread.join(timeout=2.0)
@@ -152,6 +158,7 @@ class RPLidarSerial:
         self._queue = None
         self._loop = None
         self._reader_thread = None
+        print("✓ RPLIDAR stopped")
 
     async def iter_scans(self) -> AsyncIterator[list[LidarMeasurement]]:
         """Yield scans grouped per revolution."""
@@ -222,9 +229,23 @@ class RPLidarSerial:
                     self._serial = None
 
     def _set_motor_pwm(self, pwm: int) -> None:
-        """Set motor PWM. For simplicity, we skip this as most RPLIDAR models auto-control motor."""
-        # Motor control is typically handled by the LIDAR internally for A1/A2 models
-        pass
+        """Set motor PWM to control LIDAR spinning speed.
+        
+        For RPLidar A1/A2 models, the motor needs to be controlled via PWM.
+        PWM value range: 0-1023 (0 = stop, 600-700 = typical operating speed)
+        """
+        if pwm == 0:
+            # Stop motor - just send the command without waiting for response
+            pwm_clamped = 0
+            payload = bytes([pwm_clamped & 0xFF, pwm_clamped >> 8])
+            self._send_command_with_payload(self.CMD_SET_MOTOR_PWM, payload)
+        else:
+            # Start motor - for A1/A2, we can just send a simple command
+            # Many RPLidar models will auto-start the motor when scan begins
+            # But we'll try to explicitly set it just to be sure
+            pwm_clamped = max(0, min(1023, pwm))
+            payload = bytes([pwm_clamped & 0xFF, pwm_clamped >> 8])
+            self._send_command_with_payload(self.CMD_SET_MOTOR_PWM, payload)
 
     def _begin_scan(self) -> _ResponseDescriptor:
         """Begin scanning with proper reset and buffer clearing."""
@@ -331,21 +352,60 @@ class RPLidarSerial:
                 raise RuntimeError("Serial port not open")
             self._serial.write(frame)
             self._serial.flush()
+    
+    def _send_command_with_payload(self, command: int, payload: bytes) -> None:
+        """Send command with payload (e.g., motor PWM control).
+        
+        Format: [SYNC_BYTE, COMMAND, PAYLOAD_LENGTH, ...PAYLOAD, CHECKSUM]
+        """
+        frame = bytearray([self.SYNC_BYTE, command, len(payload)])
+        frame.extend(payload)
+        # Calculate checksum (XOR of all payload bytes)
+        checksum = 0
+        for byte in payload:
+            checksum ^= byte
+        frame.append(checksum)
+        
+        with self._serial_lock:
+            if self._serial is None:
+                raise RuntimeError("Serial port not open")
+            self._serial.write(frame)
+            self._serial.flush()
 
     def _read_exact(self, size: int) -> bytes:
+        """Read exactly `size` bytes from the serial port.
+        
+        Uses blocking read with timeout. If timeout occurs, raises RPLidarProtocolError.
+        """
         if size <= 0:
             return b""
         with self._serial_lock:
             if self._serial is None:
                 raise RuntimeError("Serial port not open")
+            
+            # For more reliable reading, wait a bit if no data is immediately available
+            if self._serial.in_waiting == 0:
+                time.sleep(0.001)  # 1ms wait to allow data to arrive
+            
             remaining = size
             chunks = bytearray()
+            retry_count = 0
+            max_retries = 3
+            
             while remaining > 0:
                 chunk = self._serial.read(remaining)
                 if not chunk:
-                    raise RPLidarProtocolError("Timed out while reading from sensor")
+                    retry_count += 1
+                    if retry_count >= max_retries:
+                        raise RPLidarProtocolError(
+                            f"Timed out while reading from sensor "
+                            f"(expected {size} bytes, got {len(chunks)})"
+                        )
+                    time.sleep(0.01)  # Short wait before retry
+                    continue
                 chunks.extend(chunk)
                 remaining -= len(chunk)
+                retry_count = 0  # Reset retry count on successful read
             return bytes(chunks)
 
     @staticmethod

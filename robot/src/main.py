@@ -489,9 +489,19 @@ class RobotApp:
 
                 if lidar_measurements:
                     slam_update_count += 1
+                    # Get odometry pose from sensor fusion for control input
                     odometry_pose = self._sensor_fusion.state_vector[:3]
-                    estimated_pose = self._slam_manager.update(
-                        scan=lidar_measurements, odometry_pose=odometry_pose
+                    control = np.array([
+                        self._velocity["linear"],
+                        self._velocity["angular"],
+                        odometry_pose[2]
+                    ])
+                    process_covariance = np.diag([0.01, 0.01, 0.01])
+                    
+                    estimated_pose, _ = self._slam_manager.step(
+                        control=control,
+                        process_covariance=process_covariance,
+                        scan=lidar_measurements,
                     )
 
                     self._pose = {
