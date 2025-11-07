@@ -71,6 +71,7 @@ class RPLidarSerial:
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._queue: Optional[asyncio.Queue[LidarMeasurement | None]] = None
         self._packet_size = 0
+        self._last_start_bit: Optional[bool] = None
 
     async def __aenter__(self) -> "RPLidarSerial":
         await self.start()
@@ -167,17 +168,28 @@ class RPLidarSerial:
             raise RuntimeError("iter_scans() requires an active connection")
 
         current: list[LidarMeasurement] = []
+        prev_angle: Optional[float] = None
+        prev_start_bit: Optional[bool] = None
         while True:
             measurement = await self._queue.get()
             if measurement is None:
                 if current:
                     yield current
                 break
-            if measurement.start_flag and current:
+            # Detect new scan by start-bit toggle (per SDK, start bit toggles each revolution)
+            new_scan_by_toggle = (
+                prev_start_bit is not None and measurement.start_flag != prev_start_bit
+            )
+            # Also detect by angle wrap-around for robustness
+            new_scan_by_angle = (
+                prev_angle is not None and measurement.angle_radians + 0.5 < prev_angle - math.pi
+            )
+            if current and (new_scan_by_toggle or new_scan_by_angle):
                 yield current
-                current = [measurement]
-            else:
-                current.append(measurement)
+                current = []
+            current.append(measurement)
+            prev_angle = measurement.angle_radians
+            prev_start_bit = measurement.start_flag
 
     async def read_scan(self) -> list[LidarMeasurement]:
         """Read and return a single complete scan (one revolution)."""
@@ -186,13 +198,23 @@ class RPLidarSerial:
             raise RuntimeError("read_scan() requires an active connection")
 
         current: list[LidarMeasurement] = []
+        prev_start_bit: Optional[bool] = None
+        prev_angle: Optional[float] = None
         while True:
             measurement = await self._queue.get()
             if measurement is None:
                 return current if current else []
-            if measurement.start_flag and current:
+            new_scan_by_toggle = (
+                prev_start_bit is not None and measurement.start_flag != prev_start_bit
+            )
+            new_scan_by_angle = (
+                prev_angle is not None and measurement.angle_radians + 0.5 < prev_angle - math.pi
+            )
+            if current and (new_scan_by_toggle or new_scan_by_angle):
                 return current
             current.append(measurement)
+            prev_start_bit = measurement.start_flag
+            prev_angle = measurement.angle_radians
 
     async def get_device_info(self) -> bytes:
         """Return the raw payload from the get info command."""
@@ -282,16 +304,30 @@ class RPLidarSerial:
         
         while not self._stop_event.is_set():
             try:
-                packet = self._read_exact(self._packet_size)
-                if not packet:
-                    continue
-                    
+                packet = self._read_packet_with_resync()
                 measurement = self._decode_measurement(packet)
                 if measurement is None:
+                    # Failed to decode even after resync: count as error and continue
+                    error_count += 1
+                    if error_count < 5:
+                        print("Failed to decode measurement packet after resync; skipping")
+                    # Try auto-recover if persistent errors accumulate
+                    if error_count in (20, 50):
+                        try:
+                            print("Attempting to recover scan stream...")
+                            self._attempt_recover_scan()
+                            print("Recover attempt finished")
+                        except Exception as rec_exc:
+                            print(f"Recover attempt failed: {rec_exc}")
+                    if error_count > 100:
+                        print(f"Too many LIDAR errors ({error_count}), stopping reader thread")
+                        break
                     continue
                     
                 self._loop.call_soon_threadsafe(_safe_enqueue, measurement)
                 measurement_count += 1
+                # Reset error counter on successful decode
+                error_count = 0
                 
             except RPLidarProtocolError as exc:
                 error_count += 1
@@ -408,6 +444,81 @@ class RPLidarSerial:
                 retry_count = 0  # Reset retry count on successful read
             return bytes(chunks)
 
+    def _read_packet_with_resync(self) -> bytes:
+        """Read one 5-byte standard measurement packet with on-the-fly resynchronization.
+        
+        The standard node format requires:
+        - Byte0 bit0 = start bit, Byte0 bit1 = inverted start bit (XOR must be 1)
+        - Angle word LSB (bit0 of (b2<<8|b1)) must be 1 (check bit)
+        """
+        # Initial read
+        window = bytearray(self._read_exact(5))
+        # Fast path: window already looks like a valid packet
+        if self._looks_like_valid_packet(window):
+            return bytes(window)
+        # Slow path: shift-by-one resync scan
+        attempts = 0
+        # Limit the resync scan to a reasonable number of bytes to avoid getting stuck
+        max_attempt_bytes = 100
+        while attempts < max_attempt_bytes:
+            # Read one more byte and slide
+            nxt = self._read_exact(1)
+            if not nxt:
+                attempts += 1
+                continue
+            window.pop(0)
+            window.append(nxt[0])
+            if self._looks_like_valid_packet(window):
+                return bytes(window)
+            attempts += 1
+        raise RPLidarProtocolError("Unable to resynchronize to measurement packet boundary")
+
+    @staticmethod
+    def _looks_like_valid_packet(packet: bytes) -> bool:
+        """Heuristic validation for a 5-byte standard measurement packet."""
+        if len(packet) != 5:
+            return False
+        # Byte0: start bit and its inverse in bit1
+        start_bit = (packet[0] & 0x01) != 0
+        inv_start_bit = ((packet[0] >> 1) & 0x01) != 0
+        if (start_bit ^ inv_start_bit) != True:
+            return False
+        # Angle word check bit (bit0) must be 1
+        angle_word = (packet[2] << 8) | packet[1]
+        if (angle_word & 0x01) == 0:
+            return False
+        # Basic sanity on distance (avoid always-zero)
+        distance_raw = (packet[4] << 8) | packet[3]
+        if distance_raw == 0:
+            return False
+        return True
+
+    def _attempt_recover_scan(self) -> None:
+        """Try to recover from a desynchronized or stalled stream."""
+        # Stop current stream
+        self._send_command(self.CMD_STOP)
+        time.sleep(0.05)
+        # Flush input
+        with self._serial_lock:
+            if self._serial is not None:
+                self._serial.reset_input_buffer()
+        time.sleep(0.05)
+        # Restart scan
+        self._send_command(self.CMD_SCAN)
+        time.sleep(0.1)
+        # Read and validate descriptor (best-effort; ignore mismatch but keep running)
+        try:
+            desc = self._read_descriptor()
+            if desc.data_type != self.RESP_MEASUREMENT_TYPE_STANDARD:
+                # For S2/S2L we still expect standard node type in this code path
+                # If not, we raise to trigger outer error handling
+                raise RPLidarProtocolError(
+                    f"Unexpected measurement type 0x{desc.data_type:02x} during recovery"
+                )
+        except Exception as exc:
+            # If descriptor read fails, let the caller handle escalation
+            raise
+
     @staticmethod
     def _decode_measurement(packet: bytes) -> Optional[LidarMeasurement]:
         """Decode 5-byte RPLIDAR measurement packet.
@@ -420,12 +531,18 @@ class RPLidarSerial:
         if len(packet) != 5:
             return None
         
-        # Parse start flag and quality
-        start_flag = (packet[0] & 0x01) != 0
+        # Validate start bits (bit0 vs inverted bit1), and angle check bit
+        start_bit = (packet[0] & 0x01) != 0
+        inv_start_bit = ((packet[0] >> 1) & 0x01) != 0
+        if (start_bit ^ inv_start_bit) != True:
+            return None
         quality = (packet[0] >> 2) & 0x3F
         
         # Parse angle (15-bit value in 1/64 degree units)
         angle_raw = (packet[2] << 8) | packet[1]
+        # angle check bit (bit0) must be 1
+        if (angle_raw & 0x01) == 0:
+            return None
         angle_deg = ((angle_raw >> 1) & 0x7FFF) / 64.0
         angle_rad = math.radians(angle_deg) % (2.0 * math.pi)
         
@@ -441,5 +558,5 @@ class RPLidarSerial:
             angle_radians=angle_rad,
             distance_m=distance_m,
             quality=quality,
-            start_flag=start_flag,
+            start_flag=start_bit,
         )
