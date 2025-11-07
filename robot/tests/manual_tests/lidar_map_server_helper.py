@@ -1,8 +1,9 @@
-"""PC-side server that receives RPLidar scans and shows a dark-themed live polar view."""
+"""PC-side server that receives occupancy grid and shows a dark-themed live 2D map view."""
 
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import logging
 
@@ -11,7 +12,7 @@ import struct
 import sys
 import threading
 import time
-from typing import Iterable, List, Sequence
+from typing import List, Sequence
 
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
@@ -19,35 +20,35 @@ import numpy as np
 
 
 class LiveVisualizer:
-    """Real-time dark-themed visualization of lidar scans."""
+    """Real-time dark-themed visualization of occupancy grid."""
 
-    def __init__(self, update_hz: float = 5.0, max_range_mm: float = 6000.0):
+    def __init__(self, update_hz: float = 5.0):
         self.update_interval = 1000 / update_hz  # milliseconds
-        self.max_range_mm = max_range_mm
-        self.current_scan: List[dict] = []
-        self.scan_lock = threading.Lock()
-        self.scan_count = 0
+        self.current_grid: np.ndarray | None = None
+        self.grid_metadata: dict | None = None
+        self.grid_lock = threading.Lock()
+        self.grid_count = 0
         self.running = True
 
-        # Create figure and polar axis (dark futuristic theme)
+        # Create figure and axis (dark futuristic theme)
         bg = "#0a0f14"  # deep space background
         fg = "#8be9fd"  # neon cyan labels
-        accent = "#00e5ff"  # bright accent for points
 
-        self.fig = plt.figure(figsize=(9, 9), facecolor=bg)
-        self.ax_scan = plt.subplot(111, projection="polar", facecolor=bg)
-        self.ax_scan.set_title("RoboMop LIDAR", pad=20, fontsize=14, color=fg, fontweight="bold")
-        self.ax_scan.set_theta_zero_location("N")
-        self.ax_scan.set_theta_direction(-1)
-        self.ax_scan.set_ylim(0, self.max_range_mm)
-        self.ax_scan.grid(color="#1e2a36", alpha=0.5)
-        for spine in self.ax_scan.spines.values():
+        self.fig = plt.figure(figsize=(12, 10), facecolor=bg)
+        self.ax_grid = plt.subplot(111, facecolor=bg)
+        self.ax_grid.set_title(
+            "RoboMop Occupancy Grid", pad=20, fontsize=14, color=fg, fontweight="bold"
+        )
+        self.ax_grid.set_xlabel("X (meters)", fontsize=11, color=fg)
+        self.ax_grid.set_ylabel("Y (meters)", fontsize=11, color=fg)
+        self.ax_grid.grid(color="#1e2a36", alpha=0.3, linewidth=0.5)
+        for spine in self.ax_grid.spines.values():
             spine.set_color("#1e2a36")
-        self.ax_scan.tick_params(colors=fg, labelsize=9)
-        self.ax_scan.set_rlabel_position(225)
+        self.ax_grid.tick_params(colors=fg, labelsize=9)
+        self.ax_grid.set_aspect("equal")
 
-        # Scatter layer
-        self.scan_scatter = self.ax_scan.scatter([], [], s=6, c=accent, alpha=0.85)
+        # Image layer (will be initialized on first grid)
+        self.grid_image = None
 
         # Stats text
         self.stats_text = self.fig.text(
@@ -56,29 +57,68 @@ class LiveVisualizer:
 
         plt.tight_layout()
 
-    def update_scan(self, measurements: List[dict]):
-        with self.scan_lock:
-            self.current_scan = measurements
-            self.scan_count += 1
+    def update_grid(self, grid_data: np.ndarray, metadata: dict):
+        with self.grid_lock:
+            self.current_grid = grid_data
+            self.grid_metadata = metadata
+            self.grid_count += 1
 
     def animate(self, frame):
         if not self.running:
-            return self.scan_scatter, self.stats_text
+            return (self.grid_image,) if self.grid_image else ()
 
-        # Update scan points
-        with self.scan_lock:
-            if self.current_scan:
-                angles = np.deg2rad([m["angle"] for m in self.current_scan])
-                distances = [m["distance_mm"] for m in self.current_scan]
-                self.scan_scatter.set_offsets(np.c_[angles, distances])
-
-                num_pts = len(distances)
-                max_dist = max(distances) if num_pts else 0
+        # Update grid visualization
+        with self.grid_lock:
+            if self.current_grid is not None and self.grid_metadata is not None:
+                # Prepare grid for display
+                # 0=unknown (gray), 1-127=free (white), 128-255=occupied (black)
+                display_grid = np.where(
+                    self.current_grid == 0, 128, self.current_grid
+                )  # Show unknown as gray
+                
+                # Calculate extent in world coordinates
+                origin_x = self.grid_metadata["origin"]["x"]
+                origin_y = self.grid_metadata["origin"]["y"]
+                resolution = self.grid_metadata["resolution"]
+                width = self.grid_metadata["width"]
+                height = self.grid_metadata["height"]
+                
+                extent = [
+                    origin_x,
+                    origin_x + width * resolution,
+                    origin_y,
+                    origin_y + height * resolution,
+                ]
+                
+                if self.grid_image is None:
+                    # First time: create image
+                    self.grid_image = self.ax_grid.imshow(
+                        display_grid,
+                        cmap="gray_r",  # white=free, black=occupied
+                        origin="lower",
+                        extent=extent,
+                        vmin=0,
+                        vmax=255,
+                        alpha=0.9,
+                        interpolation="nearest",
+                    )
+                    # Add colorbar
+                    cbar = plt.colorbar(self.grid_image, ax=self.ax_grid, pad=0.02)
+                    cbar.set_label("Occupancy", rotation=270, labelpad=15, color="#8be9fd")
+                    cbar.ax.tick_params(colors="#8be9fd", labelsize=8)
+                else:
+                    # Update existing image
+                    self.grid_image.set_data(display_grid)
+                    self.grid_image.set_extent(extent)
+                
+                # Update stats
+                completion = self.grid_metadata.get("completion_ratio", 0.0)
                 self.stats_text.set_text(
-                    f"Scans: {self.scan_count}  |  Points: {num_pts}  |  Max: {max_dist:.0f} mm"
+                    f"Grids: {self.grid_count}  |  Size: {width}x{height}  |  "
+                    f"Resolution: {resolution:.3f} m  |  Completion: {completion*100:.1f}%"
                 )
 
-        return self.scan_scatter, self.stats_text
+        return (self.grid_image,) if self.grid_image else ()
 
     def start(self):
         self.ani = animation.FuncAnimation(
@@ -116,22 +156,34 @@ def handle_client(
     with conn:
         conn.settimeout(5.0)
         processed = 0
-        last_dump = time.monotonic()
         try:
             while True:
                 header = recv_exact(conn, 4)
                 (length,) = struct.unpack("!I", header)
                 payload = recv_exact(conn, length)
-                scan = json.loads(payload.decode("utf-8"))
-                measurements = scan.get("measurements", [])
-
+                grid_message = json.loads(payload.decode("utf-8"))
+                
+                # Decode base64 grid data
+                encoded_data = grid_message.get("data", "")
+                grid_bytes = base64.b64decode(encoded_data)
+                width = grid_message["width"]
+                height = grid_message["height"]
+                
+                # Reconstruct grid array
+                grid_data = np.frombuffer(grid_bytes, dtype=np.uint8).reshape((height, width))
+                
                 processed += 1
 
                 if visualizer:
-                    visualizer.update_scan(measurements)
+                    visualizer.update_grid(grid_data, grid_message)
 
                 if processed % log_every == 0:
-                    logging.info("Processed %d scans (%d points)", processed, len(measurements))
+                    completion = grid_message.get("completion_ratio", 0.0)
+                    logging.info(
+                        "Processed %d grids (%.1f%% complete)",
+                        processed,
+                        completion * 100,
+                    )
         except (ConnectionError, json.JSONDecodeError) as exc:
             logging.warning("Client disconnected or invalid data: %s", exc)
         except socket.timeout:
@@ -160,7 +212,7 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("host", help="Interface to bind (use 0.0.0.0 for all)")
     parser.add_argument("port", type=int, help="TCP port to listen on")
-    parser.add_argument("--log-every", type=int, default=10, help="Log every N scans")
+    parser.add_argument("--log-every", type=int, default=10, help="Log every N grids")
     parser.add_argument(
         "--log-level",
         default="INFO",
@@ -169,9 +221,6 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     )
     parser.add_argument("--visualize", action="store_true", help="Enable real-time GUI")
     parser.add_argument("--viz-update-hz", type=float, default=5.0, help="GUI update rate (Hz)")
-    parser.add_argument(
-        "--max-range-mm", type=float, default=6000.0, help="Polar radius limit (mm)"
-    )
     return parser.parse_args(argv)
 
 
@@ -185,7 +234,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     visualizer = None
     if args.visualize:
         logging.info("Starting live visualization at %.1f Hz", args.viz_update_hz)
-        visualizer = LiveVisualizer(update_hz=args.viz_update_hz, max_range_mm=args.max_range_mm)
+        visualizer = LiveVisualizer(update_hz=args.viz_update_hz)
         visualizer.start()
 
     try:

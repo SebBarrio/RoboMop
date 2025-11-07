@@ -794,7 +794,7 @@ class RobotApp:
             return
         
         # Create logs directory if it doesn't exist
-        logs_dir = Path("robot/logs")
+        logs_dir = Path("/logs")
         logs_dir.mkdir(parents=True, exist_ok=True)
         
         # Generate filename with timestamp

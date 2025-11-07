@@ -1,184 +1,170 @@
-"""RPLidar socket client - streams scans over TCP using direct protocol."""
+"""RPLidar socket client - streams occupancy grid over TCP using lidar.py."""
 
 import argparse
+import asyncio
+import base64
 import json
 import logging
+import math
 import socket
 import struct
 import sys
 import time
 from contextlib import closing
-from typing import Dict, List, Sequence, Tuple
+from pathlib import Path
+from typing import Sequence
 
-from RPLidarProtocol import RPLidarProtocol
+# Add parent directories to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
-ScanType = List[Tuple[int, float, float]]  # (quality, angle, distance)
+from sensors.lidar import RPLidarSerial, LidarMeasurement
+from slam.occupancy_grid import OccupancyGrid
+
 MIN_MEASUREMENTS_PER_SCAN = 180
 
 
-def encode_scan_payload(scan: ScanType, scan_number: int) -> bytes:
-    """Serialize scan to length-prefixed JSON."""
+def encode_grid_payload(grid: OccupancyGrid, scan_number: int) -> bytes:
+    """Serialize occupancy grid to length-prefixed JSON."""
+    grid_data = grid.array
+    encoded_data = base64.b64encode(grid_data.tobytes()).decode("ascii")
+    
     payload = {
         "timestamp": time.time(),
         "scan_number": scan_number,
-        "measurements": [{"quality": q, "angle": a, "distance_mm": d} for q, a, d in scan],
+        "resolution": float(grid.resolution),
+        "width": int(grid.width),
+        "height": int(grid.height),
+        "origin": {
+            "x": float(grid.origin[0]),
+            "y": float(grid.origin[1]),
+            "theta": float(grid.origin[2]),
+        },
+        "data": encoded_data,
+        "encoding": "base64",
+        "completion_ratio": float(grid.completion_ratio),
     }
     message = json.dumps(payload, separators=(",", ":")).encode("utf-8")
     return struct.pack("!I", len(message)) + message
 
 
-def initialize_lidar(lidar: RPLidarProtocol) -> Dict:
-    """Initialize lidar and check health."""
-    lidar.reset_device()
-    # Clear any residual stream
-    if lidar.ser:
-        lidar.ser.reset_input_buffer()
-    time.sleep(0.1)
-    info = lidar.get_device_info()
-    health = lidar.get_device_health()
-
-    if health["status"] != "Good":
-        logging.warning("Lidar health: %s", health)
-
-    return info
-
-
-def collect_scans(lidar: RPLidarProtocol):
-    """Yield complete scans from continuous measurement stream with resync.
-
-    More robust new-scan detection using both header check bits and angle wrap.
-    """
-    current_scan: ScanType = []
-    last_angle: float | None = None
-    buffer = bytearray()
-    synced = False
-    sample_count = 0
-
-    while True:
-        try:
-            if not lidar.ser:
-                time.sleep(0.001)
-                continue
-
-            if len(buffer) < 5:
-                waiting = lidar.ser.in_waiting
-                if waiting:
-                    chunk = lidar.ser.read(waiting)
-                    if chunk:
-                        buffer.extend(chunk)
-                        # Try to parse immediately if we now have enough data
-                        if len(buffer) < 5:
-                            continue
-                else:
-                    time.sleep(0.001)
-                    continue
-
-            while len(buffer) >= 5:
-                first_byte = buffer[0]
-
-                # Validate header: bit0 = S (start), bit1 = !S must be complementary
-                header_bits = first_byte & 0x03
-                if header_bits not in (0x01, 0x02):
-                    del buffer[0]
-                    continue
-
-                s_bit = header_bits & 0x01
-                not_s_bit = (header_bits >> 1) & 0x01
-                if s_bit == not_s_bit:
-                    del buffer[0]
-                    continue
-
-                # Angle check bit (spec requires this to be 1)
-                if (buffer[1] & 0x01) != 1:
-                    del buffer[0]
-                    continue
-
-                if len(buffer) < 5:
-                    break
-
-                quality = (first_byte >> 2) & 0x3F
-                angle = ((((buffer[2] << 8) | buffer[1]) >> 1) & 0x7FFF) / 64.0
-                distance = ((buffer[4] << 8) | buffer[3]) / 4.0
-                start_flag = s_bit == 1
-
-                del buffer[:5]
-
-                sample_count += 1
-                valid_measurement = distance > 0
-
-                if not synced:
-                    if start_flag and valid_measurement:
-                        synced = True
-                        current_scan = [(quality, angle, distance)]
-                    last_angle = angle
-                    continue
-
-                # Detect new scan by angle wrap-around only once synced
-                new_scan = False
-                if last_angle is not None and last_angle > 300.0 and angle < 60.0 and current_scan:
-                    new_scan = True
-
-                if new_scan:
-                    measurements = len(current_scan)
-                    if measurements < MIN_MEASUREMENTS_PER_SCAN:
-                        logging.debug(
-                            "Discarding partial scan with %d raw samples, %d filtered measurements",
-                            sample_count,
-                            measurements,
-                        )
-                        current_scan = []
-                    else:
-                        logging.debug(
-                            "Completed scan with %d raw samples, %d filtered measurements",
-                            sample_count,
-                            measurements,
-                        )
-                        yield current_scan
-                        current_scan = []
-                    sample_count = 0
-
-                if valid_measurement:
-                    current_scan.append((quality, angle, distance))
-
-                last_angle = angle
-
-                # Continue parsing remaining buffer without sleeping
-                # so fall through to while loop condition
-                continue
-
-            # If we exit the inner while because buffer < 5, loop back to read more
-            continue
-
-        except Exception as exc:
-            logging.error("Measurement error: %s", exc)
-            if lidar.ser:
-                lidar.ser.reset_input_buffer()
-            time.sleep(0.05)
-
-
-def stream_scans(
-    lidar: RPLidarProtocol, sock: socket.socket, scan_limit: int | None, log_every: int
+def update_occupancy_grid(
+    grid: OccupancyGrid,
+    scan: list[LidarMeasurement],
+    robot_pose: tuple[float, float, float] = (0.0, 0.0, 0.0),
+    max_range: float = 5.0,
+    occupied_value: int = 220,
+    free_value: int = 40,
 ) -> None:
-    """Stream scans from lidar to socket."""
-    with closing(sock):
-        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-        # Ensure device is in a clean state before starting scan
-        try:
-            lidar.stop_scan()
-        except Exception:
-            pass
-        time.sleep(0.05)
-        lidar.start_scan()
+    """Update occupancy grid with LIDAR scan data.
+    
+    This implements a simplified version of the SLAM manager's map update logic.
+    """
+    robot_x, robot_y, robot_theta = robot_pose
+    
+    for measurement in scan:
+        angle = measurement.angle_radians
+        distance = measurement.distance_m
+        
+        if not math.isfinite(distance) or distance <= 0.0:
+            continue
+        
+        clipped_distance = min(distance, max_range)
+        
+        # Calculate hit point in world coordinates
+        world_angle = robot_theta + angle
+        hit_x = robot_x + clipped_distance * math.cos(world_angle)
+        hit_y = robot_y + clipped_distance * math.sin(world_angle)
+        
+        # Mark free cells along the ray
+        free_cells = _ray_cells(grid, robot_x, robot_y, hit_x, hit_y, include_endpoint=False)
+        for row, col in free_cells:
+            try:
+                current = grid.get_cell(row, col)
+                if current >= occupied_value:
+                    continue
+                if current == OccupancyGrid.UNKNOWN_VALUE or current > free_value:
+                    grid.set_cell(row, col, free_value)
+            except IndexError:
+                pass
+        
+        # Mark occupied cell at hit point
+        if distance <= max_range:
+            hit_cell = _world_to_cell(grid, hit_x, hit_y)
+            if hit_cell is not None:
+                row, col = hit_cell
+                try:
+                    grid.set_cell(row, col, occupied_value)
+                except IndexError:
+                    pass
 
-        for scan_number, scan in enumerate(collect_scans(lidar), start=1):
-            if scan:
-                sock.sendall(encode_scan_payload(scan, scan_number))
 
-                if scan_number % log_every == 0:
-                    logging.info("Sent %d scans (%d measurements)", scan_number, len(scan))
+def _world_to_cell(grid: OccupancyGrid, x: float, y: float) -> tuple[int, int] | None:
+    """Convert world coordinates to grid cell coordinates."""
+    origin_x, origin_y, _ = grid.origin
+    col = int(math.floor((x - origin_x) / grid.resolution))
+    row = int(math.floor((y - origin_y) / grid.resolution))
+    if row < 0 or row >= grid.height or col < 0 or col >= grid.width:
+        return None
+    return row, col
 
-                if scan_limit and scan_number >= scan_limit:
-                    break
+
+def _ray_cells(
+    grid: OccupancyGrid,
+    start_x: float,
+    start_y: float,
+    end_x: float,
+    end_y: float,
+    *,
+    include_endpoint: bool,
+) -> list[tuple[int, int]]:
+    """Get all grid cells along a ray using Bresenham-like algorithm."""
+    distance = math.hypot(end_x - start_x, end_y - start_y)
+    steps = max(1, int(distance / (grid.resolution * 0.5)))
+    cells: list[tuple[int, int]] = []
+    for i in range(steps if include_endpoint else max(steps - 1, 0)):
+        ratio = (i + 1) / steps
+        point_x = start_x + (end_x - start_x) * ratio
+        point_y = start_y + (end_y - start_y) * ratio
+        cell = _world_to_cell(grid, point_x, point_y)
+        if cell is not None and (not cells or cell != cells[-1]):
+            cells.append(cell)
+    return cells
+
+
+async def stream_grid_updates(
+    lidar: RPLidarSerial,
+    sock: socket.socket,
+    grid: OccupancyGrid,
+    scan_limit: int | None,
+    log_every: int,
+) -> None:
+    """Stream occupancy grid updates from lidar to socket."""
+    sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+    
+    scan_count = 0
+    async for scan in lidar.iter_scans():
+        if not scan or len(scan) < MIN_MEASUREMENTS_PER_SCAN:
+            continue
+        
+        scan_count += 1
+        
+        # Update occupancy grid with scan
+        update_occupancy_grid(grid, scan)
+        
+        # Send grid update
+        payload = encode_grid_payload(grid, scan_count)
+        sock.sendall(payload)
+        
+        if scan_count % log_every == 0:
+            logging.info(
+                "Sent %d grids (%d measurements, %.1f%% complete)",
+                scan_count,
+                len(scan),
+                grid.completion_ratio * 100,
+            )
+        
+        if scan_limit and scan_count >= scan_limit:
+            break
 
 
 def connect_socket(host: str, port: int, timeout: float) -> socket.socket:
@@ -206,7 +192,54 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
         help="Logging level",
     )
+    parser.add_argument("--grid-resolution", type=float, default=0.05, help="Grid resolution (m)")
+    parser.add_argument("--grid-width", type=int, default=400, help="Grid width (cells)")
+    parser.add_argument("--grid-height", type=int, default=400, help="Grid height (cells)")
     return parser.parse_args(argv)
+
+
+async def async_main(args: argparse.Namespace) -> int:
+    """Async main entry point."""
+    # Create occupancy grid
+    grid = OccupancyGrid(
+        resolution=args.grid_resolution,
+        width=args.grid_width,
+        height=args.grid_height,
+        origin=(-args.grid_width * args.grid_resolution / 2, 
+                -args.grid_height * args.grid_resolution / 2, 
+                0.0),
+    )
+    logging.info(
+        "Created occupancy grid: %dx%d cells at %.3f m/cell (%.1fx%.1f m)",
+        grid.width,
+        grid.height,
+        grid.resolution,
+        grid.width * grid.resolution,
+        grid.height * grid.resolution,
+    )
+    
+    # Initialize LIDAR
+    lidar = RPLidarSerial(args.serial_port, baud_rate=args.baudrate)
+    
+    try:
+        await lidar.start()
+        
+        logging.info("Connecting to %s:%d", args.host, args.port)
+        sock = connect_socket(args.host, args.port, args.timeout)
+        
+        logging.info("Streaming occupancy grid updates (Ctrl+C to stop)")
+        with closing(sock):
+            await stream_grid_updates(lidar, sock, grid, args.scan_limit, args.log_every)
+    
+    except KeyboardInterrupt:
+        logging.info("Interrupted")
+    except Exception as exc:
+        logging.error("Error: %s", exc, exc_info=True)
+        return 1
+    finally:
+        await lidar.stop()
+    
+    return 0
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -215,35 +248,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     logging.basicConfig(
         level=getattr(logging, args.log_level), format="%(asctime)s [%(levelname)s] %(message)s"
     )
-
-    lidar = RPLidarProtocol(args.serial_port, args.baudrate)
-
-    try:
-        if not lidar.connect():
-            return 1
-
-        time.sleep(0.3)
-        initialize_lidar(lidar)
-
-        logging.info("Connecting to %s:%d", args.host, args.port)
-        sock = connect_socket(args.host, args.port, args.timeout)
-
-        logging.info("Streaming scans (Ctrl+C to stop)")
-        stream_scans(lidar, sock, args.scan_limit, args.log_every)
-
-    except KeyboardInterrupt:
-        logging.info("Interrupted")
-    except Exception as exc:
-        logging.error("Error: %s", exc)
-        return 1
-    finally:
-        try:
-            lidar.stop_scan()
-        except:
-            pass
-        lidar.disconnect()
-
-    return 0
+    
+    return asyncio.run(async_main(args))
 
 
 if __name__ == "__main__":
