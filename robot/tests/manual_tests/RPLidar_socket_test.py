@@ -142,21 +142,32 @@ async def stream_grid_updates(
     sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
     
     scan_count = 0
+    skipped_count = 0
     logging.info("Waiting for LIDAR scans...")
     
     async for scan in lidar.iter_scans():
+        logging.debug("Received scan with %d measurements", len(scan) if scan else 0)
+        
         if not scan or len(scan) < MIN_MEASUREMENTS_PER_SCAN:
+            skipped_count += 1
+            if skipped_count % 10 == 0:
+                logging.warning("Skipped %d scans (too few measurements)", skipped_count)
             continue
         
         scan_count += 1
         
         # Update occupancy grid with scan
+        logging.debug("Updating occupancy grid...")
         update_occupancy_grid(grid, scan)
         
         # Send grid update (use asyncio.to_thread to avoid blocking the event loop)
+        logging.debug("Encoding grid payload...")
         payload = encode_grid_payload(grid, scan_count)
+        logging.debug("Sending %d bytes to server...", len(payload))
+        
         try:
             await asyncio.to_thread(sock.sendall, payload)
+            logging.debug("Grid #%d sent successfully", scan_count)
         except Exception as e:
             logging.error("Failed to send grid update: %s", e)
             break
@@ -173,6 +184,8 @@ async def stream_grid_updates(
         
         if scan_limit and scan_count >= scan_limit:
             break
+    
+    logging.info("Scan loop ended (sent %d grids, skipped %d)", scan_count, skipped_count)
 
 
 def connect_socket(host: str, port: int, timeout: float) -> socket.socket:
