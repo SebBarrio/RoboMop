@@ -142,6 +142,8 @@ async def stream_grid_updates(
     sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
     
     scan_count = 0
+    logging.info("Waiting for LIDAR scans...")
+    
     async for scan in lidar.iter_scans():
         if not scan or len(scan) < MIN_MEASUREMENTS_PER_SCAN:
             continue
@@ -151,11 +153,17 @@ async def stream_grid_updates(
         # Update occupancy grid with scan
         update_occupancy_grid(grid, scan)
         
-        # Send grid update
+        # Send grid update (use asyncio.to_thread to avoid blocking the event loop)
         payload = encode_grid_payload(grid, scan_count)
-        sock.sendall(payload)
+        try:
+            await asyncio.to_thread(sock.sendall, payload)
+        except Exception as e:
+            logging.error("Failed to send grid update: %s", e)
+            break
         
-        if scan_count % log_every == 0:
+        if scan_count == 1:
+            logging.info("First grid sent successfully (%d measurements)", len(scan))
+        elif scan_count % log_every == 0:
             logging.info(
                 "Sent %d grids (%d measurements, %.1f%% complete)",
                 scan_count,
@@ -222,10 +230,13 @@ async def async_main(args: argparse.Namespace) -> int:
     lidar = RPLidarSerial(args.serial_port, baud_rate=args.baudrate)
     
     try:
+        logging.info("Starting LIDAR on %s...", args.serial_port)
         await lidar.start()
+        logging.info("LIDAR started successfully")
         
         logging.info("Connecting to %s:%d", args.host, args.port)
         sock = connect_socket(args.host, args.port, args.timeout)
+        logging.info("Connected to server successfully")
         
         logging.info("Streaming occupancy grid updates (Ctrl+C to stop)")
         with closing(sock):
@@ -237,7 +248,9 @@ async def async_main(args: argparse.Namespace) -> int:
         logging.error("Error: %s", exc, exc_info=True)
         return 1
     finally:
+        logging.info("Stopping LIDAR...")
         await lidar.stop()
+        logging.info("LIDAR stopped")
     
     return 0
 
