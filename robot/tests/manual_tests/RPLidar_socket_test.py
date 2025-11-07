@@ -162,7 +162,7 @@ async def stream_grid_updates(
         
         # Send grid update (use asyncio.to_thread to avoid blocking the event loop)
         logging.debug("Encoding grid payload...")
-        payload = encode_grid_payload(grid, scan_count)
+        payload = await asyncio.to_thread(encode_grid_payload, grid, scan_count)
         logging.debug("Sending %d bytes to server...", len(payload))
         
         try:

@@ -113,6 +113,8 @@ class RobotApp:
         self._encoder_cache: dict[str, EncoderReading] = {}
         # Flag to indicate triangle test is running (prevents navigation loop interference)
         self._running_triangle_test = False
+        # Cached map payload to avoid blocking event loop with base64 encoding
+        self._latest_map_payload: Mapping[str, Any] | None = None
 
     async def _initialize_hardware(self) -> None:
         """Initialize hardware abstraction layer with all sensors."""
@@ -509,6 +511,11 @@ class RobotApp:
                         "y": float(estimated_pose[1]),
                         "theta": float(estimated_pose[2]),
                     }
+                    # Refresh cached map payload off-thread to avoid blocking the event loop
+                    try:
+                        await asyncio.to_thread(self._refresh_map_payload)
+                    except Exception as exc:
+                        self._logger.debug("Failed to refresh map payload: %s", exc)
                     
                     # Log SLAM updates periodically
                     if slam_update_count % 50 == 0:  # Every 5 seconds at 10Hz
@@ -888,26 +895,36 @@ class RobotApp:
 
     def _map_provider(self) -> Mapping[str, Any] | None:
         """Provide current occupancy grid map for transmission."""
+        if self._latest_map_payload is not None:
+            return self._latest_map_payload
+        # Fallback: build once synchronously if cache is empty
         if not self._occupancy_grid:
             return None
+        self._latest_map_payload = self._build_map_payload(self._occupancy_grid)
+        return self._latest_map_payload
 
-        grid_data = self._occupancy_grid.array
+    def _build_map_payload(self, grid: OccupancyGrid) -> Mapping[str, Any]:
+        grid_data = grid.array
         height, width = grid_data.shape
-
         encoded_data = base64.b64encode(grid_data.tobytes()).decode("ascii")
-
         return {
-            "resolution": float(self._occupancy_grid.resolution),
+            "resolution": float(grid.resolution),
             "width": int(width),
             "height": int(height),
             "origin": {
-                "x": float(self._occupancy_grid.origin[0]),
-                "y": float(self._occupancy_grid.origin[1]),
-                "theta": float(self._occupancy_grid.origin[2]),
+                "x": float(grid.origin[0]),
+                "y": float(grid.origin[1]),
+                "theta": float(grid.origin[2]),
             },
             "data": encoded_data,
             "encoding": "base64",
         }
+
+    def _refresh_map_payload(self) -> None:
+        if not self._occupancy_grid:
+            return
+        # Build new payload and swap atomically
+        self._latest_map_payload = self._build_map_payload(self._occupancy_grid)
 
     async def _on_move(self, command_id: str, params: Mapping[str, Any]) -> None:
         direction = str(params.get("direction", "STOP")).upper()

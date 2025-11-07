@@ -129,7 +129,7 @@ class RPLidarSerial:
         await asyncio.sleep(1.0)
         
         print(f"Starting reader thread (packet_size={self._packet_size})...")
-        self._queue = asyncio.Queue(maxsize=8192)
+        self._queue = asyncio.Queue()
         self._stop_event.clear()
         self._reader_thread = threading.Thread(
             target=self._reader_main,
