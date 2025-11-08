@@ -765,7 +765,7 @@ class RobotApp:
             self._logger.info("Triangle path loaded with %d waypoints", len(waypoints))
             
             # Wait for path completion with timeout
-            timeout = 10.0  # 60 seconds timeout
+            timeout = 60.0  # 60 seconds timeout
             start_time = time.perf_counter()
             sample_interval = 0.1  # Sample trajectory every 100ms
             last_sample_time = start_time
