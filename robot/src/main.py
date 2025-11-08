@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import base64
+import gzip
 import json
 import logging
 import math
@@ -763,6 +764,7 @@ class RobotApp:
             start_time = time.perf_counter()
             sample_interval = 0.1  # Sample trajectory every 100ms
             last_sample_time = start_time
+            update_counter = 0
             
             while time.perf_counter() - start_time < timeout:
                 await asyncio.sleep(0.05)
@@ -772,6 +774,7 @@ class RobotApp:
                 if current_time - last_sample_time >= sample_interval:
                     trajectory.append((self._pose["x"], self._pose["y"]))
                     last_sample_time = current_time
+                    update_counter += 1
                     
                     # Stream update to viewer if connected
                     if ws_connection:
@@ -787,9 +790,9 @@ class RobotApp:
                                 "trajectory": trajectory,
                                 "plannedVertices": vertices,
                             }
-                            # Add map data if available
-                            map_data = self._map_provider()
-                            if map_data:
+                            # Add compressed map data if available (send every 5 updates to reduce bandwidth)
+                            if self._occupancy_grid and update_counter % 5 == 0:
+                                map_data = self._build_map_payload(self._occupancy_grid, compress=True)
                                 update_message["map"] = map_data
                             
                             await ws_connection.send(json.dumps(update_message))
@@ -952,10 +955,19 @@ class RobotApp:
         self._latest_map_payload = self._build_map_payload(self._occupancy_grid)
         return self._latest_map_payload
 
-    def _build_map_payload(self, grid: OccupancyGrid) -> Mapping[str, Any]:
+    def _build_map_payload(self, grid: OccupancyGrid, compress: bool = False) -> Mapping[str, Any]:
         grid_data = grid.array
         height, width = grid_data.shape
-        encoded_data = base64.b64encode(grid_data.tobytes()).decode("ascii")
+        
+        if compress:
+            # Compress with gzip before base64 encoding
+            compressed_data = gzip.compress(grid_data.tobytes(), compresslevel=6)
+            encoded_data = base64.b64encode(compressed_data).decode("ascii")
+            encoding = "gzip+base64"
+        else:
+            encoded_data = base64.b64encode(grid_data.tobytes()).decode("ascii")
+            encoding = "base64"
+        
         return {
             "resolution": float(grid.resolution),
             "width": int(width),
@@ -966,7 +978,7 @@ class RobotApp:
                 "theta": float(grid.origin[2]),
             },
             "data": encoded_data,
-            "encoding": "base64",
+            "encoding": encoding,
         }
 
     def _refresh_map_payload(self) -> None:

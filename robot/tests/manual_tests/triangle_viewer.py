@@ -30,10 +30,14 @@ from __future__ import annotations
 import argparse
 import asyncio
 import base64
+import gzip
 import json
 import logging
+import threading
 from typing import Any
 
+import matplotlib
+matplotlib.use('TkAgg')  # Use TkAgg backend for better async compatibility
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -63,66 +67,75 @@ class TriangleViewer:
         self.ax.set_ylim(-0.5, 1.5)
         
         plt.ion()
-        plt.show()
+        plt.show(block=False)
+        plt.pause(0.1)  # Give the window time to appear
         
         self.logger = logging.getLogger("triangle_viewer")
         self.update_count = 0
+        self.lock = threading.Lock()  # Thread-safe updates
 
     def update(self, data: dict[str, Any]) -> None:
         """Update the visualization with new data from the robot."""
-        try:
-            self.update_count += 1
-            
-            # Update map if present
-            if "map" in data and data["map"]:
-                self._update_map(data["map"])
-            
-            # Update trajectory
-            if "trajectory" in data and data["trajectory"]:
-                trajectory = data["trajectory"]
-                traj_x = [p[0] for p in trajectory]
-                traj_y = [p[1] for p in trajectory]
-                self.trajectory_line.set_data(traj_x, traj_y)
+        with self.lock:
+            try:
+                self.update_count += 1
                 
-                # Update start marker (first point)
-                if len(trajectory) > 0:
-                    self.start_marker.set_data([traj_x[0]], [traj_y[0]])
-            
-            # Update planned path
-            if "plannedVertices" in data and data["plannedVertices"]:
-                vertices = data["plannedVertices"]
-                planned_x = [v[0] for v in vertices]
-                planned_y = [v[1] for v in vertices]
-                self.planned_line.set_data(planned_x, planned_y)
-            
-            # Update current pose
-            if "pose" in data and data["pose"]:
-                pose = data["pose"]
-                self.pose_marker.set_data([pose["x"]], [pose["y"]])
-            
-            # Auto-adjust view limits if needed
-            if self.update_count % 10 == 0:  # Every 10 updates
-                self._auto_adjust_limits(data)
-            
-            # Refresh display
-            self.fig.canvas.draw_idle()
-            self.fig.canvas.flush_events()
-            plt.pause(0.001)
-            
-            if self.update_count % 10 == 0:
-                self.logger.info("Received update #%d", self.update_count)
+                # Update map if present
+                if "map" in data and data["map"]:
+                    self._update_map(data["map"])
                 
-        except Exception as exc:
-            self.logger.error("Error updating visualization: %s", exc, exc_info=True)
+                # Update trajectory
+                if "trajectory" in data and data["trajectory"]:
+                    trajectory = data["trajectory"]
+                    traj_x = [p[0] for p in trajectory]
+                    traj_y = [p[1] for p in trajectory]
+                    self.trajectory_line.set_data(traj_x, traj_y)
+                    
+                    # Update start marker (first point)
+                    if len(trajectory) > 0:
+                        self.start_marker.set_data([traj_x[0]], [traj_y[0]])
+                
+                # Update planned path
+                if "plannedVertices" in data and data["plannedVertices"]:
+                    vertices = data["plannedVertices"]
+                    planned_x = [v[0] for v in vertices]
+                    planned_y = [v[1] for v in vertices]
+                    self.planned_line.set_data(planned_x, planned_y)
+                
+                # Update current pose
+                if "pose" in data and data["pose"]:
+                    pose = data["pose"]
+                    self.pose_marker.set_data([pose["x"]], [pose["y"]])
+                
+                # Auto-adjust view limits if needed
+                if self.update_count % 10 == 0:  # Every 10 updates
+                    self._auto_adjust_limits(data)
+                
+                # Refresh display
+                self.fig.canvas.draw()
+                self.fig.canvas.flush_events()
+                
+                if self.update_count % 10 == 0:
+                    self.logger.info("Received update #%d", self.update_count)
+                    
+            except Exception as exc:
+                self.logger.error("Error updating visualization: %s", exc, exc_info=True)
 
     def _update_map(self, map_data: dict[str, Any]) -> None:
         """Update the occupancy grid map display."""
         try:
-            # Decode base64 map data
-            if map_data.get("encoding") != "base64":
-                return
+            # Decode map data (supports base64 and gzip+base64)
+            encoding = map_data.get("encoding", "base64")
             
             data_bytes = base64.b64decode(map_data["data"])
+            
+            # Decompress if gzipped
+            if encoding == "gzip+base64":
+                data_bytes = gzip.decompress(data_bytes)
+            elif encoding != "base64":
+                self.logger.warning("Unknown encoding: %s", encoding)
+                return
+            
             width = map_data["width"]
             height = map_data["height"]
             resolution = map_data["resolution"]
@@ -228,11 +241,33 @@ async def serve(host: str, port: int, logger: logging.Logger) -> None:
     async def client_handler(websocket):
         await handle_client(websocket, viewer, logger)
     
+    async def matplotlib_refresh_loop():
+        """Periodically refresh matplotlib to keep window responsive."""
+        while True:
+            try:
+                plt.pause(0.01)  # Process GUI events
+                await asyncio.sleep(0.05)  # 20 Hz refresh
+            except Exception as exc:
+                logger.debug("Matplotlib refresh error: %s", exc)
+    
     logger.info("Starting WebSocket server on ws://%s:%d", host, port)
     logger.info("Waiting for robot connection...")
     
-    async with websockets.serve(client_handler, host, port):
-        await asyncio.Future()  # Run forever
+    # Start matplotlib refresh task
+    refresh_task = asyncio.create_task(matplotlib_refresh_loop())
+    
+    try:
+        # Increase max_size to 10MB to handle large map data
+        async with websockets.serve(
+            client_handler, host, port, max_size=10 * 1024 * 1024
+        ):
+            await asyncio.Future()  # Run forever
+    finally:
+        refresh_task.cancel()
+        try:
+            await refresh_task
+        except asyncio.CancelledError:
+            pass
 
 
 def main() -> None:
