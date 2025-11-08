@@ -36,6 +36,13 @@ class SlamManager:
         max_range: float = 5.0,
         sensor_pose: Sequence[float] | np.ndarray = (0.0, 0.0, 0.0),
         weight_model: WeightModel | None = None,
+        # Log-odds mapping parameters (with hysteresis)
+        l_occ_increment: float = 0.9,
+        l_free_increment: float = -0.7,
+        l_min: float = -3.0,
+        l_max: float = 3.0,
+        l_occ_threshold: float = 0.6,
+        l_free_threshold: float = -0.6,
     ) -> None:
         if not 0.0 < resample_threshold <= 1.0:
             raise ValueError("resample_threshold must be in the range (0, 1]")
@@ -57,6 +64,25 @@ class SlamManager:
         self._sensor_pose = _as_pose(sensor_pose)
         self._weight_model = weight_model
         self._last_estimate: np.ndarray | None = None
+        # Log-odds state and thresholds
+        self._l_occ_increment = float(l_occ_increment)
+        self._l_free_increment = float(l_free_increment)
+        self._l_min = float(l_min)
+        self._l_max = float(l_max)
+        self._l_occ_threshold = float(l_occ_threshold)
+        self._l_free_threshold = float(l_free_threshold)
+        # Backing log-odds grid (0 means unknown / 0.5 probability)
+        self._log_odds = np.zeros(
+            (self._grid.height, self._grid.width), dtype=np.float32
+        )
+        # Seed log-odds from any existing grid content
+        grid_arr = self._grid.array
+        occupied_mask = grid_arr >= self._occupied_value
+        # Treat any non-zero and below occupied threshold as free
+        free_mask = (grid_arr > 0) & (grid_arr < self._occupied_value)
+        # Use moderate confidence so hysteresis remains effective
+        self._log_odds[occupied_mask] = min(self._l_max, 2.0)
+        self._log_odds[free_mask] = max(self._l_min, -2.0)
 
     @property
     def occupancy_grid(self) -> OccupancyGrid:
@@ -185,19 +211,51 @@ class SlamManager:
 
             free_cells = self._ray_cells(sensor_x, sensor_y, hit_x, hit_y, include_endpoint=False)
             for row, col in free_cells:
-                current = self._grid.get_cell(row, col)
-                # Only write free space to previously unknown cells; do not overwrite known cells
-                if current == OccupancyGrid.UNKNOWN_VALUE:
-                    self._grid.set_cell(row, col, self._free_value)
+                self._apply_log_odds_update(row, col, self._l_free_increment)
 
             if distance <= self._max_range:
                 hit_cell = self._world_to_cell(hit_x, hit_y)
                 if hit_cell is not None:
                     row, col = hit_cell
-                    current = self._grid.get_cell(row, col)
-                    # Only write occupied to previously unknown cells; do not overwrite known cells
-                    if current == OccupancyGrid.UNKNOWN_VALUE:
-                        self._grid.set_cell(row, col, self._occupied_value)
+                    self._apply_log_odds_update(row, col, self._l_occ_increment)
+
+    def _apply_log_odds_update(self, row: int, col: int, delta: float) -> None:
+        # Integrate evidence with clamping
+        updated = float(self._log_odds[row, col] + delta)
+        if updated > self._l_max:
+            updated = self._l_max
+        elif updated < self._l_min:
+            updated = self._l_min
+        self._log_odds[row, col] = updated
+
+        # Hysteresis classification: only change discrete state when thresholds are crossed
+        prev_val = self._grid.get_cell(row, col)
+        is_prev_occupied = prev_val >= self._occupied_value
+        is_prev_free = prev_val == self._free_value
+
+        if is_prev_occupied:
+            # Switch to free only with strong contrary evidence
+            if updated <= self._l_free_threshold:
+                self._grid.set_cell(row, col, self._free_value)
+            else:
+                # Remain occupied
+                pass
+        elif is_prev_free:
+            # Switch to occupied only with strong evidence
+            if updated >= self._l_occ_threshold:
+                self._grid.set_cell(row, col, self._occupied_value)
+            else:
+                # Remain free
+                pass
+        else:
+            # Unknown: adopt classification once evidence is strong enough
+            if updated >= self._l_occ_threshold:
+                self._grid.set_cell(row, col, self._occupied_value)
+            elif updated <= self._l_free_threshold:
+                self._grid.set_cell(row, col, self._free_value)
+            else:
+                # Stay unknown in the gray zone
+                pass
 
     def _ray_cells(
         self,

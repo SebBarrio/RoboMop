@@ -298,10 +298,12 @@ class RobotApp:
         pwm = PCA9685(i2c)
         pwm.frequency = 1000
 
-        # Map two motors: left index 0 -> channels (0,1), right index 1 -> channels (2,3)
+        # Map four motors with new channel assignments
         motor_channels = [
-            MotorChannelConfig(index=0, forward_channel=0, reverse_channel=1),
-            MotorChannelConfig(index=1, forward_channel=2, reverse_channel=3),
+            MotorChannelConfig(index=0, forward_channel=1, reverse_channel=0),
+            MotorChannelConfig(index=1, forward_channel=3, reverse_channel=2),
+            MotorChannelConfig(index=2, forward_channel=5, reverse_channel=4),
+            MotorChannelConfig(index=3, forward_channel=7, reverse_channel=6),
         ]
         motor_driver = MotorDriver(pwm, motor_channels, supply_voltage=12.0)
 
@@ -326,7 +328,7 @@ class RobotApp:
         )
 
         mc_config = MotorControllerConfig(
-            motor_to_encoder={0: 0, 1: 1},
+            motor_to_encoder={0: 0, 1: 0, 2: 1, 3: 1},
             gear_ratio=1.0,
             rotor_inertia=1e-4,
             viscous_friction=0.01,
@@ -361,8 +363,8 @@ class RobotApp:
             motor_controller=self._motor_controller,
             track_width=nav_cfg.track_width,
             wheel_radius=hw_cfg.wheel_diameter_m / 2.0,
-            left_motor_indices=[0],
-            right_motor_indices=[1],
+            left_motor_indices=[0, 1],
+            right_motor_indices=[2, 3],
             position_pid=position_pid,
             heading_pid=heading_pid,
             max_linear_speed=nav_cfg.max_linear_speed,
