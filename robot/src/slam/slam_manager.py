@@ -186,16 +186,18 @@ class SlamManager:
             free_cells = self._ray_cells(sensor_x, sensor_y, hit_x, hit_y, include_endpoint=False)
             for row, col in free_cells:
                 current = self._grid.get_cell(row, col)
-                if current >= self._occupied_value:
-                    continue
-                if current == OccupancyGrid.UNKNOWN_VALUE or current > self._free_value:
+                # Only write free space to previously unknown cells; do not overwrite known cells
+                if current == OccupancyGrid.UNKNOWN_VALUE:
                     self._grid.set_cell(row, col, self._free_value)
 
             if distance <= self._max_range:
                 hit_cell = self._world_to_cell(hit_x, hit_y)
                 if hit_cell is not None:
                     row, col = hit_cell
-                    self._grid.set_cell(row, col, self._occupied_value)
+                    current = self._grid.get_cell(row, col)
+                    # Only write occupied to previously unknown cells; do not overwrite known cells
+                    if current == OccupancyGrid.UNKNOWN_VALUE:
+                        self._grid.set_cell(row, col, self._occupied_value)
 
     def _ray_cells(
         self,
