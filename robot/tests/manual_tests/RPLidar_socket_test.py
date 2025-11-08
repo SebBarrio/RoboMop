@@ -19,6 +19,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from sensors.lidar import RPLidarSerial, LidarMeasurement
 from slam.occupancy_grid import OccupancyGrid
+from slam.particle_filter import ParticleFilter
+from slam.slam_manager import SlamManager
+import numpy as np
 
 MIN_MEASUREMENTS_PER_SCAN = 180
 
@@ -135,6 +138,7 @@ async def stream_grid_updates(
     lidar: RPLidarSerial,
     sock: socket.socket,
     grid: OccupancyGrid,
+    slam: SlamManager,
     scan_limit: int | None,
     log_every: int,
 ) -> None:
@@ -144,6 +148,7 @@ async def stream_grid_updates(
     scan_count = 0
     skipped_count = 0
     logging.info("Waiting for LIDAR scans...")
+    last_time = time.perf_counter()
     
     async for scan in lidar.iter_scans():
         logging.debug("Received scan with %d measurements", len(scan) if scan else 0)
@@ -156,9 +161,33 @@ async def stream_grid_updates(
         
         scan_count += 1
         
-        # Update occupancy grid with scan
-        logging.debug("Updating occupancy grid...")
-        update_occupancy_grid(grid, scan)
+        # SLAM pose estimation + map integration
+        now = time.perf_counter()
+        dt = max(0.01, min(0.5, now - last_time))
+        last_time = now
+        scan_array = np.array(
+            [(m.angle_radians, m.distance_m) for m in scan],
+            dtype=np.float64,
+        )
+        control = np.array([0.0, 0.0, 0.0], dtype=np.float64)  # no odom; allow process noise
+        sigma_xy_per_s = 0.15
+        sigma_th_per_s = math.radians(12.0)
+        qx = (sigma_xy_per_s * dt) ** 2
+        qy = (sigma_xy_per_s * dt) ** 2
+        qth = (sigma_th_per_s * dt) ** 2
+        process_cov = np.diag([qx, qy, qth])
+        try:
+            pose, _ = slam.step(
+                control=control,
+                process_covariance=process_cov,
+                scan=scan_array,
+            )
+            logging.debug(
+                "SLAM pose: (%.3f, %.3f, %.1f°), dt=%.3f, N=%d",
+                float(pose[0]), float(pose[1]), math.degrees(float(pose[2])), dt, len(scan_array)
+            )
+        except Exception as exc:
+            logging.warning("SLAM step failed: %s", exc)
         
         # Send grid update (use asyncio.to_thread to avoid blocking the event loop)
         logging.debug("Encoding grid payload...")
@@ -216,6 +245,8 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser.add_argument("--grid-resolution", type=float, default=0.05, help="Grid resolution (m)")
     parser.add_argument("--grid-width", type=int, default=400, help="Grid width (cells)")
     parser.add_argument("--grid-height", type=int, default=400, help="Grid height (cells)")
+    parser.add_argument("--pf-particles", type=int, default=300, help="Particle filter size (100-500)")
+    parser.add_argument("--max-lidar-range", type=float, default=5.0, help="Max lidar range for mapping (m)")
     return parser.parse_args(argv)
 
 
@@ -239,6 +270,24 @@ async def async_main(args: argparse.Namespace) -> int:
         grid.height * grid.resolution,
     )
     
+    # Initialize Particle Filter and SLAM manager
+    try:
+        pf = ParticleFilter(particle_count=args.pf_particles)
+    except Exception as exc:
+        logging.error("Invalid particle filter configuration: %s", exc)
+        return 1
+    pf.initialize_gaussian(
+        mean=np.array([0.0, 0.0, 0.0], dtype=np.float64),
+        covariance=np.diag([0.05, 0.05, math.radians(10.0)]),
+    )
+    slam = SlamManager(
+        occupancy_grid=grid,
+        particle_filter=pf,
+        resample_threshold=0.5,
+        max_range=args.max_lidar_range,
+        sensor_pose=(0.0, 0.0, 0.0),
+    )
+    
     # Initialize LIDAR
     lidar = RPLidarSerial(args.serial_port, baud_rate=args.baudrate)
     
@@ -253,7 +302,7 @@ async def async_main(args: argparse.Namespace) -> int:
         
         logging.info("Streaming occupancy grid updates (Ctrl+C to stop)")
         with closing(sock):
-            await stream_grid_updates(lidar, sock, grid, args.scan_limit, args.log_every)
+            await stream_grid_updates(lidar, sock, grid, slam, args.scan_limit, args.log_every)
     
     except KeyboardInterrupt:
         logging.info("Interrupted")
