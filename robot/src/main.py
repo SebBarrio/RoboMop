@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import base64
+import json
 import logging
 import math
 import signal
@@ -48,9 +49,12 @@ from .slam.slam_manager import SlamManager
 class RobotApp:
     """Coordinates communication between the robot and backend services."""
 
-    def __init__(self, config: AppConfig, logger: logging.Logger) -> None:
+    def __init__(
+        self, config: AppConfig, logger: logging.Logger, triangle_stream_url: str | None = None
+    ) -> None:
         self._config = config
         self._logger = logger
+        self._triangle_stream_url = triangle_stream_url
 
         connection = ConnectionConfig(
             url=config.websocket.url,
@@ -735,6 +739,20 @@ class RobotApp:
         self._running_triangle_test = True
         self._mode = "MANUAL"
         
+        # Optional WebSocket streaming
+        ws_connection = None
+        if self._triangle_stream_url:
+            try:
+                import websockets  # type: ignore
+                ws_connection = await websockets.connect(self._triangle_stream_url)
+                self._logger.info("Connected to triangle viewer at %s", self._triangle_stream_url)
+            except Exception as exc:
+                self._logger.warning(
+                    "Failed to connect to triangle viewer at %s: %s",
+                    self._triangle_stream_url,
+                    exc,
+                )
+        
         try:
             # Load and start the path
             self._path_executor.load_path(waypoints, start_immediately=True)
@@ -754,6 +772,29 @@ class RobotApp:
                 if current_time - last_sample_time >= sample_interval:
                     trajectory.append((self._pose["x"], self._pose["y"]))
                     last_sample_time = current_time
+                    
+                    # Stream update to viewer if connected
+                    if ws_connection:
+                        try:
+                            update_message = {
+                                "type": "triangle_update",
+                                "timestamp": current_time,
+                                "pose": {
+                                    "x": self._pose["x"],
+                                    "y": self._pose["y"],
+                                    "theta": self._pose["theta"],
+                                },
+                                "trajectory": trajectory,
+                                "plannedVertices": vertices,
+                            }
+                            # Add map data if available
+                            map_data = self._map_provider()
+                            if map_data:
+                                update_message["map"] = map_data
+                            
+                            await ws_connection.send(json.dumps(update_message))
+                        except Exception as exc:
+                            self._logger.debug("Failed to send update to viewer: %s", exc)
                 
                 # Check if path is complete
                 if self._path_executor.status is PathExecutorStatus.COMPLETED:
@@ -773,6 +814,14 @@ class RobotApp:
             raise
         
         finally:
+            # Close WebSocket connection if open
+            if ws_connection:
+                try:
+                    await ws_connection.close()
+                    self._logger.info("Closed connection to triangle viewer")
+                except Exception as exc:
+                    self._logger.debug("Error closing viewer connection: %s", exc)
+            
             # Always stop the robot and save diagnostics
             self._velocity = {"linear": 0.0, "angular": 0.0}
             
@@ -1080,6 +1129,11 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         help="Run triangle calibration test before connecting to backend",
     )
+    parser.add_argument(
+        "--triangle-stream-url",
+        type=str,
+        help="WebSocket URL (ws://host:port) for triangle test live viewer (enables streaming)",
+    )
     return parser.parse_args()
 
 
@@ -1096,7 +1150,7 @@ def main() -> None:
     logger = logging.getLogger("robomop")
     logger.info("Loaded configuration (robotId=%s)", config.websocket.robot_id)
 
-    app = RobotApp(config, logger)
+    app = RobotApp(config, logger, triangle_stream_url=args.triangle_stream_url)
     try:
         asyncio.run(_serve(app))
     except socketio_exceptions.ConnectionError:
