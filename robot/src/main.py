@@ -120,6 +120,8 @@ class RobotApp:
         self._running_triangle_test = False
         # Cached map payload to avoid blocking event loop with base64 encoding
         self._latest_map_payload: Mapping[str, Any] | None = None
+        # Cache latest LIDAR scan for visualization
+        self._latest_lidar_scan: list[tuple[float, float]] = []
 
     async def _initialize_hardware(self) -> None:
         """Initialize hardware abstraction layer with all sensors."""
@@ -493,6 +495,9 @@ class RobotApp:
                 lidar_measurements = [
                     (m.angle_radians, m.distance_m) for m in snapshot.lidar_scan
                 ]
+                
+                # Cache LIDAR scan for visualization
+                self._latest_lidar_scan = lidar_measurements
 
                 if lidar_measurements:
                     slam_update_count += 1
@@ -789,6 +794,7 @@ class RobotApp:
                                 },
                                 "trajectory": trajectory,
                                 "plannedVertices": vertices,
+                                "lidarScan": self._latest_lidar_scan,  # Add current LIDAR scan
                             }
                             # Add compressed map data if available (send every 5 updates to reduce bandwidth)
                             if self._occupancy_grid and update_counter % 5 == 0:
@@ -853,7 +859,7 @@ class RobotApp:
             return
         
         # Create logs directory if it doesn't exist
-        logs_dir = Path("/logs")
+        logs_dir = Path("robot/logs")
         logs_dir.mkdir(parents=True, exist_ok=True)
         
         # Generate filename with timestamp

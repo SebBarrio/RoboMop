@@ -59,6 +59,7 @@ class TriangleViewer:
         self.planned_line, = self.ax.plot([], [], "b--", linewidth=2, label="Planned Path", alpha=0.7)
         self.pose_marker, = self.ax.plot([], [], "go", markersize=12, label="Current Pose")
         self.start_marker, = self.ax.plot([], [], "g^", markersize=15, label="Start")
+        self.lidar_scatter = self.ax.scatter([], [], c="cyan", s=10, alpha=0.7, label="LIDAR Scan", zorder=10)
         
         self.ax.legend(loc="upper right", fontsize=10)
         
@@ -106,6 +107,10 @@ class TriangleViewer:
                 if "pose" in data and data["pose"]:
                     pose = data["pose"]
                     self.pose_marker.set_data([pose["x"]], [pose["y"]])
+                    
+                    # Update LIDAR scan if present
+                    if "lidarScan" in data and data["lidarScan"]:
+                        self._update_lidar_scan(data["lidarScan"], pose)
                 
                 # Auto-adjust view limits if needed
                 if self.update_count % 10 == 0:  # Every 10 updates
@@ -173,6 +178,44 @@ class TriangleViewer:
                 
         except Exception as exc:
             self.logger.debug("Error updating map: %s", exc)
+
+    def _update_lidar_scan(self, lidar_scan: list[list[float]], pose: dict[str, float]) -> None:
+        """Update the LIDAR scan visualization."""
+        try:
+            if not lidar_scan:
+                # Clear LIDAR points if no scan data
+                self.lidar_scatter.set_offsets(np.empty((0, 2)))
+                return
+            
+            # Convert LIDAR measurements from robot frame to world frame
+            robot_x = pose["x"]
+            robot_y = pose["y"]
+            robot_theta = pose["theta"]
+            
+            # Each measurement is [angle_rad, distance_m]
+            world_points = []
+            for measurement in lidar_scan:
+                angle_rad = measurement[0]
+                distance_m = measurement[1]
+                
+                # Convert polar to Cartesian in robot frame
+                local_x = distance_m * np.cos(angle_rad)
+                local_y = distance_m * np.sin(angle_rad)
+                
+                # Transform to world frame
+                world_x = robot_x + local_x * np.cos(robot_theta) - local_y * np.sin(robot_theta)
+                world_y = robot_y + local_x * np.sin(robot_theta) + local_y * np.cos(robot_theta)
+                
+                world_points.append([world_x, world_y])
+            
+            # Update scatter plot
+            if world_points:
+                self.lidar_scatter.set_offsets(np.array(world_points))
+            else:
+                self.lidar_scatter.set_offsets(np.empty((0, 2)))
+                
+        except Exception as exc:
+            self.logger.debug("Error updating LIDAR scan: %s", exc)
 
     def _auto_adjust_limits(self, data: dict[str, Any]) -> None:
         """Automatically adjust axis limits based on trajectory and planned path."""
