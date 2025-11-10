@@ -473,12 +473,6 @@ class RobotApp:
                 self._last_update_time = snapshot.timestamp
 
                 if dt > 0 and dt < 1.0:
-                    self._sensor_fusion.predict(
-                        control_v=self._velocity["linear"],
-                        control_w=self._velocity["angular"],
-                        dt=dt,
-                    )
-
                     left_vel = snapshot.encoders.get("left")
                     right_vel = snapshot.encoders.get("right")
                     if left_vel is not None:
@@ -490,9 +484,16 @@ class RobotApp:
                         avg_encoder_velocity = (
                             (left_vel.velocity_m_s or 0.0) + (right_vel.velocity_m_s or 0.0)
                         ) / 2.0
-
+                    omega_meas = snapshot.imu_sample.angular_velocity_rad_s.z
+                    # Use measured velocities for EKF prediction and telemetry
+                    self._sensor_fusion.predict(
+                        control_v=avg_encoder_velocity,
+                        control_w=omega_meas,
+                        dt=dt,
+                    )
+                    self._velocity = {"linear": avg_encoder_velocity, "angular": omega_meas}
                     self._sensor_fusion.update_v(avg_encoder_velocity)
-                    self._sensor_fusion.update_omega(snapshot.imu_sample.angular_velocity_rad_s.z)
+                    self._sensor_fusion.update_omega(omega_meas)
 
                 lidar_measurements = [
                     (m.angle_radians, m.distance_m) for m in snapshot.lidar_scan
@@ -503,16 +504,13 @@ class RobotApp:
 
                 if lidar_measurements:
                     slam_update_count += 1
-                    # Get odometry pose from sensor fusion for control input
-                    odometry_pose = self._sensor_fusion.state_vector[:3]
-                    control = np.array([
-                        self._velocity["linear"],
-                        self._velocity["angular"],
-                        odometry_pose[2]
-                    ])
+                    # Build body-frame displacement control for particle filter
+                    dx_body = self._velocity["linear"] * dt if dt > 0 else 0.0
+                    dtheta = self._velocity["angular"] * dt if dt > 0 else 0.0
+                    control = np.array([dx_body, 0.0, dtheta])
                     process_covariance = np.diag([0.01, 0.01, 0.01])
                     
-                    estimated_pose, _ = self._slam_manager.step(
+                    estimated_pose, slam_covariance = self._slam_manager.step(
                         control=control,
                         process_covariance=process_covariance,
                         scan=lidar_measurements,
@@ -523,6 +521,11 @@ class RobotApp:
                         "y": float(estimated_pose[1]),
                         "theta": float(estimated_pose[2]),
                     }
+                    # Fuse SLAM pose back into EKF with returned covariance
+                    try:
+                        self._sensor_fusion.update_pose(estimated_pose, R=slam_covariance)
+                    except Exception as exc:
+                        self._logger.debug("EKF pose update failed: %s", exc)
                     # Refresh cached map payload off-thread to avoid blocking the event loop
                     try:
                         await asyncio.to_thread(self._refresh_map_payload)
@@ -616,15 +619,6 @@ class RobotApp:
                 if self._path_executor.status is PathExecutorStatus.RUNNING:
                     self._path_executor.update(current_pose, dt=target_interval)
                     self._robot_controller.update(dt=target_interval)
-                    
-                    cmd_linear = self._robot_controller.pose.x - current_pose.x
-                    cmd_angular = self._robot_controller.pose.theta - current_pose.theta
-                    self._velocity = {
-                        "linear": max(-self._config.navigation.max_linear_speed, 
-                                    min(self._config.navigation.max_linear_speed, cmd_linear)),
-                        "angular": max(-self._config.navigation.max_angular_speed,
-                                     min(self._config.navigation.max_angular_speed, cmd_angular)),
-                    }
 
                 loop_duration = time.perf_counter() - loop_start
                 sleep_time = max(0.0, target_interval - loop_duration)

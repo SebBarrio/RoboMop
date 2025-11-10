@@ -231,7 +231,7 @@ class SlamManager:
         # Hysteresis classification: only change discrete state when thresholds are crossed
         prev_val = self._grid.get_cell(row, col)
         is_prev_occupied = prev_val >= self._occupied_value
-        is_prev_free = prev_val == self._free_value
+        is_prev_free = (prev_val > 0) and (prev_val < self._occupied_value)
 
         if is_prev_occupied:
             # Switch to free only with strong contrary evidence
