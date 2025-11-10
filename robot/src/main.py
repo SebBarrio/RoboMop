@@ -508,7 +508,11 @@ class RobotApp:
                     dx_body = self._velocity["linear"] * dt if dt > 0 else 0.0
                     dtheta = self._velocity["angular"] * dt if dt > 0 else 0.0
                     control = np.array([dx_body, 0.0, dtheta])
-                    process_covariance = np.diag([0.01, 0.01, 0.01])
+                    # Scale process noise with actual per-step motion; keep tiny floors to avoid degeneracy
+                    lin_sigma = max(1e-4, 0.1 * abs(dx_body))
+                    side_sigma = max(1e-4, 0.05 * abs(dx_body))
+                    ang_sigma = max(1e-3, 0.2 * abs(dtheta))
+                    process_covariance = np.diag([lin_sigma**2, side_sigma**2, ang_sigma**2])
                     
                     estimated_pose, slam_covariance = self._slam_manager.step(
                         control=control,
