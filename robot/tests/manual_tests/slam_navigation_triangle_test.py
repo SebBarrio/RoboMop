@@ -253,13 +253,26 @@ class TriangleSlamNavigator:
         self._imu_sign_locked: bool = False
         self._sign_product_accum: float = 0.0
         self._sign_samples: int = 0
+        # IMU background sampling state
+        self._imu_task: Optional[asyncio.Task[None]] = None
+        self._imu_latest_yaw_rate: Optional[float] = None
 
     async def run(self) -> None:
         self._running = True
         try:
+            # Start IMU background consumer if available
+            if self._imu is not None and self._imu_task is None:
+                self._imu_task = asyncio.create_task(self._imu_loop(), name="imu-loop")
             await self._run_all_tasks()
         finally:
             self._running = False
+            if self._imu_task is not None:
+                self._imu_task.cancel()
+                try:
+                    await self._imu_task
+                except asyncio.CancelledError:
+                    pass
+                self._imu_task = None
 
     async def _run_all_tasks(self) -> None:
         tasks = [
@@ -301,27 +314,7 @@ class TriangleSlamNavigator:
                 omega_odom = self._compute_odom_yaw_rate()
                 omega_gyro = None
                 if self._imu is not None:
-                    sample = self._imu.read_sample()
-                    omega_gyro = float(sample.angular_velocity_rad_s.z)
-                    # Clamp and apply sign
-                    if not math.isfinite(omega_gyro):
-                        omega_gyro = None
-                    else:
-                        # Auto-detect sign against odom yaw during initial samples
-                        if not self._imu_sign_locked and abs(omega_odom) > 0.05 and abs(omega_gyro) > 0.05:
-                            self._sign_product_accum += omega_odom * omega_gyro
-                            self._sign_samples += 1
-                            if self._sign_samples >= 40:
-                                if self._sign_product_accum < 0.0:
-                                    self._imu_yaw_sign = -1.0
-                                    self._logger.info("IMU yaw sign auto-detected as inverted (-1)")
-                                else:
-                                    self._imu_yaw_sign = 1.0
-                                self._imu_sign_locked = True
-                        omega_gyro *= self._imu_yaw_sign
-                        # Clamp to sane physical range
-                        max_rate = getattr(self, "_max_gyro_rate", DEFAULT_MAX_GYRO_RATE_RAD_S)
-                        omega_gyro = max(-max_rate, min(omega_gyro, max_rate))
+                    omega_gyro = self._imu_latest_yaw_rate
                 # Complementary fusion of yaw rate
                 if omega_gyro is not None and math.isfinite(omega_gyro):
                     omega_fused = self._fusion_alpha * omega_gyro + (1.0 - self._fusion_alpha) * omega_odom
@@ -338,6 +331,43 @@ class TriangleSlamNavigator:
             # Loop pacing
             elapsed = asyncio.get_running_loop().time() - start
             await asyncio.sleep(max(0.0, loop_interval - elapsed))
+
+    async def _imu_loop(self) -> None:
+        """Consume IMU samples asynchronously and maintain latest yaw rate with sign/clamp."""
+        assert self._imu is not None
+        try:
+            async for sample in self._imu.iter_samples():
+                if not self._running:
+                    break
+                omega = float(sample.angular_velocity_rad_s.z)
+                if not math.isfinite(omega):
+                    continue
+                # Auto-detect sign using odom yaw rate when available
+                omega_odom = self._compute_odom_yaw_rate()
+                if (
+                    not self._imu_sign_locked
+                    and abs(omega_odom) > 0.05
+                    and abs(omega) > 0.05
+                ):
+                    self._sign_product_accum += omega_odom * omega
+                    self._sign_samples += 1
+                    if self._sign_samples >= 40:
+                        if self._sign_product_accum < 0.0:
+                            self._imu_yaw_sign = -1.0
+                            self._logger.info("IMU yaw sign auto-detected as inverted (-1)")
+                        else:
+                            self._imu_yaw_sign = 1.0
+                        self._imu_sign_locked = True
+                omega *= self._imu_yaw_sign
+                max_rate = getattr(self, "_max_gyro_rate", DEFAULT_MAX_GYRO_RATE_RAD_S)
+                omega = max(-max_rate, min(omega, max_rate))
+                self._imu_latest_yaw_rate = omega
+        except Exception:
+            self._logger.exception("IMU loop failed; disabling IMU fusion")
+            self._imu = None
+            self._imu_latest_yaw_rate = None
+            self._imu_sign_locked = True
+            self._imu_yaw_sign = 1.0
 
     def _issue_next_waypoint(self) -> None:
         if self._waypoint_index >= len(self._vertices):
@@ -605,12 +635,12 @@ async def run_test(args: argparse.Namespace) -> None:
     lidar = RPLidarSerial(port=args.lidar_port, baud_rate=args.lidar_baud, serial_timeout=args.lidar_timeout)
     await lidar.start()
 
-    # IMU (with calibration inside initialize)
+    # IMU (start async sampling; initialize includes gyro calibration)
     imu: MPU9250 | None = None
     try:
         imu = MPU9250(bus=args.imu_bus, address=args.imu_address, sample_rate_hz=args.imu_rate)
-        imu.initialize()  # opens I2C, configures DLPF, calibrates gyro bias
-        logger.info("IMU initialized on I2C bus %d addr 0x%02X", args.imu_bus, args.imu_address)
+        await imu.start()  # opens I2C, configures DLPF, calibrates gyro bias, spawns reader
+        logger.info("IMU started on I2C bus %d addr 0x%02X", args.imu_bus, args.imu_address)
     except Exception as exc:
         logger.warning("IMU init failed (%s). Proceeding with wheel odometry only.", exc)
         imu = None
@@ -740,6 +770,12 @@ async def run_test(args: argparse.Namespace) -> None:
             await lidar.stop()
         except Exception:
             logger.exception("Error while stopping LIDAR")
+        # Stop IMU
+        if imu is not None:
+            try:
+                await imu.stop()
+            except Exception:
+                logger.exception("Error while stopping IMU")
         # Close viewer
         if viewer is not None:
             try:
