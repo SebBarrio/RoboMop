@@ -253,10 +253,11 @@ class TriangleSlamNavigator:
         self._imu_sign_locked: bool = False
         self._sign_product_accum: float = 0.0
         self._sign_samples: int = 0
+        # Debug telemetry throttle
+        self._last_debug_log_time: float = 0.0
         # IMU background sampling state
         self._imu_task: Optional[asyncio.Task[None]] = None
         self._imu_latest_yaw_rate: Optional[float] = None
-        self._imu_latest_yaw_rate_raw: Optional[float] = None
 
     async def run(self) -> None:
         self._running = True
@@ -313,28 +314,7 @@ class TriangleSlamNavigator:
             try:
                 theta_prev = self._theta_fused if self._theta_fused is not None else self._robot.pose.theta
                 omega_odom = self._compute_odom_yaw_rate()
-                omega_gyro = None
-                if self._imu is not None:
-                    omega_raw = self._imu_latest_yaw_rate_raw
-                    if omega_raw is not None and math.isfinite(omega_raw):
-                        # Auto-detect sign using odom yaw during initial samples
-                        if (
-                            not self._imu_sign_locked
-                            and abs(omega_odom) > 0.05
-                            and abs(omega_raw) > 0.05
-                        ):
-                            self._sign_product_accum += omega_odom * omega_raw
-                            self._sign_samples += 1
-                            if self._sign_samples >= 40:
-                                if self._sign_product_accum < 0.0:
-                                    self._imu_yaw_sign = -1.0
-                                    self._logger.info("IMU yaw sign auto-detected as inverted (-1)")
-                                else:
-                                    self._imu_yaw_sign = 1.0
-                                self._imu_sign_locked = True
-                        # Apply sign and clamp
-                        max_rate = getattr(self, "_max_gyro_rate", DEFAULT_MAX_GYRO_RATE_RAD_S)
-                        omega_gyro = max(-max_rate, min(self._imu_yaw_sign * omega_raw, max_rate))
+                omega_gyro = self._imu_latest_yaw_rate if self._imu is not None else None
                 # Complementary fusion of yaw rate, but only if we have at least one valid source
                 omega_fused: Optional[float] = None
                 if omega_gyro is not None and math.isfinite(omega_gyro):
@@ -354,22 +334,92 @@ class TriangleSlamNavigator:
                 # On any fusion error, keep odometry heading
                 pass
             self._trajectory.append((self._robot.pose.x, self._robot.pose.y))
+            # Periodic debug: encoder velocities and yaw rates (10 Hz)
+            now_loop = asyncio.get_running_loop().time()
+            if now_loop - self._last_debug_log_time >= 0.1:
+                self._last_debug_log_time = now_loop
+                try:
+                    r0 = self._motor.get_last_reading(0)
+                    r1 = self._motor.get_last_reading(1)
+                    r2 = self._motor.get_last_reading(2)
+                    r3 = self._motor.get_last_reading(3)
+                    v0 = None if r0 is None else float(r0.velocity_rad_s)
+                    v1 = None if r1 is None else float(r1.velocity_rad_s)
+                    v2 = None if r2 is None else float(r2.velocity_rad_s)
+                    v3 = None if r3 is None else float(r3.velocity_rad_s)
+                    wheel_radius = self._robot.wheel_radius
+                    vL = None if (v0 is None or v1 is None) else ((v0 + v1) / 2.0) * wheel_radius
+                    vR = None if (v2 is None or v3 is None) else ((v2 + v3) / 2.0) * wheel_radius
+                    omega_odom_dbg = self._compute_odom_yaw_rate()
+                    omega_gyro_dbg = self._imu_latest_yaw_rate if self._imu is not None else None
+                    # Fused omega as last computed above if available
+                    # Note: we recompute a simple fused value for display without affecting control
+                    if omega_gyro_dbg is not None and math.isfinite(omega_gyro_dbg):
+                        if omega_odom_dbg is not None and math.isfinite(omega_odom_dbg):
+                            omega_fused_dbg = self._fusion_alpha * omega_gyro_dbg + (1.0 - self._fusion_alpha) * omega_odom_dbg
+                        else:
+                            omega_fused_dbg = omega_gyro_dbg
+                    else:
+                        omega_fused_dbg = omega_odom_dbg
+                    print(
+                        f"[ODO] v0={v0 if v0 is not None else 'None'} rad/s, "
+                        f"v1={v1 if v1 is not None else 'None'} rad/s, "
+                        f"v2={v2 if v2 is not None else 'None'} rad/s, "
+                        f"v3={v3 if v3 is not None else 'None'} rad/s | "
+                        f"vL={f'{vL:.3f}' if vL is not None else 'None'} m/s, "
+                        f"vR={f'{vR:.3f}' if vR is not None else 'None'} m/s | "
+                        f"omega_odom={f'{omega_odom_dbg:.3f}' if omega_odom_dbg is not None else 'None'} rad/s, "
+                        f"omega_gyro={f'{omega_gyro_dbg:.3f}' if omega_gyro_dbg is not None else 'None'} rad/s, "
+                        f"omega_fused={f'{omega_fused_dbg:.3f}' if omega_fused_dbg is not None else 'None'} rad/s, "
+                        f"theta={self._robot.pose.theta:.3f} rad"
+                    )
+                except Exception:
+                    pass
             # Loop pacing
             elapsed = asyncio.get_running_loop().time() - start
             await asyncio.sleep(max(0.0, loop_interval - elapsed))
 
     async def _imu_loop(self) -> None:
-        """Consume IMU samples asynchronously and cache latest RAW yaw rate (no odom dependency)."""
+        """Consume IMU samples asynchronously and maintain latest yaw rate with sign/clamp."""
         assert self._imu is not None
+        sample_count = 0
         try:
             async for sample in self._imu.iter_samples():
                 if not self._running:
                     break
-                omega_raw = float(sample.angular_velocity_rad_s.z)
-                if math.isfinite(omega_raw):
-                    self._imu_latest_yaw_rate_raw = omega_raw
-                # Yield control to keep loop fairness
-                await asyncio.sleep(0)
+                omega = float(sample.angular_velocity_rad_s.z)
+                if not math.isfinite(omega):
+                    continue
+                # Auto-detect sign using odom yaw rate when available
+                omega_odom = self._compute_odom_yaw_rate()
+                if (
+                    not self._imu_sign_locked
+                    and omega_odom is not None
+                    and abs(omega_odom) > 0.05
+                    and abs(omega) > 0.05
+                ):
+                    self._sign_product_accum += omega_odom * omega
+                    self._sign_samples += 1
+                    if self._sign_samples >= 40:
+                        if self._sign_product_accum < 0.0:
+                            self._imu_yaw_sign = -1.0
+                            self._logger.info("IMU yaw sign auto-detected as inverted (-1)")
+                        else:
+                            self._imu_yaw_sign = 1.0
+                        self._imu_sign_locked = True
+                omega *= self._imu_yaw_sign
+                max_rate = getattr(self, "_max_gyro_rate", DEFAULT_MAX_GYRO_RATE_RAD_S)
+                omega = max(-max_rate, min(omega, max_rate))
+                self._imu_latest_yaw_rate = omega
+                # Debug: show consumer activity and queue size periodically
+                sample_count += 1
+                if (sample_count % 10) == 0:
+                    try:
+                        q = getattr(self._imu, "_queue", None)
+                        size = q.qsize() if q is not None else -1
+                        print(f"[IMU DEBUG] consumed sample; omega={omega:.3f} rad/s; queue size={size}")
+                    except Exception:
+                        pass
         except Exception:
             self._logger.exception("IMU loop failed; disabling IMU fusion")
             self._imu = None
