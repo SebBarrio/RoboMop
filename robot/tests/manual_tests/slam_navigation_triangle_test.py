@@ -89,7 +89,7 @@ from src.slam.slam_manager import SlamManager
 
 # Motor/encoder wiring from motor_encoder_test.py
 MOTOR_CHANNELS: Tuple[Tuple[int, int], ...] = ((1, 0), (3, 2), (5, 4), (7, 6))
-ENCODER_PINS: Tuple[Tuple[int, int], ...] = ((6, 5), (13, 26))  # two encoders
+ENCODER_PINS: Tuple[Tuple[int, int], ...] = ((5, 6), (13, 26))  # two encoders
 EXPECTED_MOTOR_TO_ENCODER: Dict[int, int] = {0: 0, 1: 0, 2: 1, 3: 1}
 ENCODER_PPR: int = 400
 PWM_FREQUENCY_HZ: int = 1000
