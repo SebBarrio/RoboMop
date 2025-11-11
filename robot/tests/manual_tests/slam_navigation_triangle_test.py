@@ -121,6 +121,7 @@ DEFAULT_FUSION_ALPHA: float = 0.9  # weight on gyro yaw rate in complementary fu
 DEFAULT_IMU_RATE_HZ: float = 100.0
 DEFAULT_IMU_BUS: int = 1
 DEFAULT_IMU_ADDRESS: int = 0x68
+DEFAULT_MAX_GYRO_RATE_RAD_S: float = 4.0  # clamp gyro z rate to avoid runaway
 
 
 # -----------------------------
@@ -247,6 +248,11 @@ class TriangleSlamNavigator:
         self._latest_scan: List[LidarMeasurement] = []
         self._running = False
         self._theta_fused: Optional[float] = None
+        # IMU yaw sign handling (manual flag or auto-detect)
+        self._imu_yaw_sign: float = 1.0
+        self._imu_sign_locked: bool = False
+        self._sign_product_accum: float = 0.0
+        self._sign_samples: int = 0
 
     async def run(self) -> None:
         self._running = True
@@ -297,6 +303,25 @@ class TriangleSlamNavigator:
                 if self._imu is not None:
                     sample = self._imu.read_sample()
                     omega_gyro = float(sample.angular_velocity_rad_s.z)
+                    # Clamp and apply sign
+                    if not math.isfinite(omega_gyro):
+                        omega_gyro = None
+                    else:
+                        # Auto-detect sign against odom yaw during initial samples
+                        if not self._imu_sign_locked and abs(omega_odom) > 0.05 and abs(omega_gyro) > 0.05:
+                            self._sign_product_accum += omega_odom * omega_gyro
+                            self._sign_samples += 1
+                            if self._sign_samples >= 40:
+                                if self._sign_product_accum < 0.0:
+                                    self._imu_yaw_sign = -1.0
+                                    self._logger.info("IMU yaw sign auto-detected as inverted (-1)")
+                                else:
+                                    self._imu_yaw_sign = 1.0
+                                self._imu_sign_locked = True
+                        omega_gyro *= self._imu_yaw_sign
+                        # Clamp to sane physical range
+                        max_rate = getattr(self, "_max_gyro_rate", DEFAULT_MAX_GYRO_RATE_RAD_S)
+                        omega_gyro = max(-max_rate, min(omega_gyro, max_rate))
                 # Complementary fusion of yaw rate
                 if omega_gyro is not None and math.isfinite(omega_gyro):
                     omega_fused = self._fusion_alpha * omega_gyro + (1.0 - self._fusion_alpha) * omega_odom
@@ -304,12 +329,7 @@ class TriangleSlamNavigator:
                     omega_fused = omega_odom
                 theta_new = _wrap_angle(theta_prev + omega_fused * loop_interval)
                 # Override heading while preserving x,y from wheel odometry
-                current_pose = self._robot.pose
-                self._robot._pose = Pose2D(  # type: ignore[attr-defined]
-                    x=current_pose.x,
-                    y=current_pose.y,
-                    theta=theta_new,
-                )
+                self._robot.set_heading(theta_new)
                 self._theta_fused = theta_new
             except Exception:
                 # On any fusion error, keep odometry heading
@@ -644,6 +664,14 @@ async def run_test(args: argparse.Namespace) -> None:
         fusion_alpha=args.fusion_alpha,
         logger=logger,
     )
+    # Apply explicit yaw inversion and max rate clamp settings to navigator if provided
+    if imu is not None:
+        # Manual yaw inversion overrides auto-detect
+        if args.imu_yaw_invert:
+            navigator._imu_yaw_sign = -1.0
+            navigator._imu_sign_locked = True
+            logger.info("IMU yaw sign forced to inverted by CLI flag")
+        navigator._max_gyro_rate = args.max_gyro_rate
 
     # Graceful shutdown handler
     stop_event = asyncio.Event()
@@ -775,6 +803,17 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         type=float,
         default=DEFAULT_FUSION_ALPHA,
         help="Complementary fusion weight for gyro yaw rate (0-1, higher trusts gyro)",
+    )
+    parser.add_argument(
+        "--imu-yaw-invert",
+        action="store_true",
+        help="Invert IMU yaw (z) rate if sensor orientation is flipped",
+    )
+    parser.add_argument(
+        "--max-gyro-rate",
+        type=float,
+        default=DEFAULT_MAX_GYRO_RATE_RAD_S,
+        help="Clamp magnitude of gyro yaw rate (rad/s) to this value",
     )
 
     parser.add_argument(
