@@ -118,6 +118,9 @@ class RobotApp:
         self._encoder_cache: dict[str, EncoderReading] = {}
         # Flag to indicate triangle test is running (prevents navigation loop interference)
         self._running_triangle_test = False
+        # Sensor warmup configuration
+        self._imu_warmup_seconds: float = 10.0
+        self._lidar_warmup_seconds: float = 5
         # Cached map payload to avoid blocking event loop with base64 encoding
         self._latest_map_payload: Mapping[str, Any] | None = None
         # Cache latest LIDAR scan for visualization
@@ -390,6 +393,11 @@ class RobotApp:
         if self._hardware:
             await self._hardware.start()
             self._logger.info("Hardware layer started")
+            # Warmup/convergence for IMU and LIDAR before starting loops
+            try:
+                await self._warmup_sensors()
+            except Exception as exc:
+                self._logger.warning("Sensor warmup encountered an issue: %s", exc)
 
         # Start SLAM and navigation loops before connecting to backend
         self._slam_task = asyncio.create_task(self._slam_loop())
@@ -453,6 +461,65 @@ class RobotApp:
         if self._hardware:
             await self._hardware.stop()
             self._logger.info("Hardware layer stopped")
+
+    async def _warmup_sensors(self) -> None:
+        """Allow IMU and LIDAR to converge/spin-up before SLAM starts."""
+        if not self._hardware:
+            return
+        self._logger.info(
+            "Warming up sensors: IMU %.1fs, LIDAR %.1fs",
+            self._imu_warmup_seconds,
+            self._lidar_warmup_seconds,
+        )
+        # IMU warmup: sample gyro to stabilize and report stats
+        imu_samples = 0
+        sum_wz = 0.0
+        sum_wz2 = 0.0
+        imu_end = time.perf_counter() + max(0.0, self._imu_warmup_seconds)
+        while time.perf_counter() < imu_end:
+            try:
+                snapshot = await self._hardware.read_all()
+                wz = float(snapshot.imu_sample.angular_velocity_rad_s.z)
+                sum_wz += wz
+                sum_wz2 += wz * wz
+                imu_samples += 1
+            except Exception:
+                # Ignore sporadic failures during warmup
+                pass
+            await asyncio.sleep(0.01)
+        if imu_samples > 0:
+            mean_wz = sum_wz / imu_samples
+            var_wz = max(0.0, (sum_wz2 / imu_samples) - (mean_wz * mean_wz))
+            std_wz = math.sqrt(var_wz)
+            self._logger.info(
+                "IMU warmup complete: samples=%d omega_z mean=%.5f rad/s std=%.5f rad/s",
+                imu_samples,
+                mean_wz,
+                std_wz,
+            )
+        else:
+            self._logger.warning("IMU warmup collected zero samples")
+
+        # LIDAR warmup: discard early scans until motor stabilizes
+        lidar_end = time.perf_counter() + max(0.0, self._lidar_warmup_seconds)
+        non_empty_scans = 0
+        total_pts = 0
+        while time.perf_counter() < lidar_end:
+            try:
+                snapshot = await self._hardware.read_all()
+                count = len(snapshot.lidar_scan)
+                if count > 0:
+                    non_empty_scans += 1
+                    total_pts += count
+            except Exception:
+                pass
+            await asyncio.sleep(0.05)
+        avg_pts = (total_pts / non_empty_scans) if non_empty_scans > 0 else 0.0
+        self._logger.info(
+            "LIDAR warmup complete: non_empty_scans=%d avg_points_per_scan=%.1f",
+            non_empty_scans,
+            avg_pts,
+        )
 
     async def _slam_loop(self) -> None:
         """Main SLAM update loop running at 10 Hz."""
@@ -545,6 +612,29 @@ class RobotApp:
                             self._pose["y"],
                             math.degrees(self._pose["theta"]),
                             len(lidar_measurements)
+                        )
+                    # Sensor diagnostics more frequently
+                    if slam_update_count % 10 == 0:  # Every ~1s at 10Hz
+                        left_v = self._encoder_cache.get("left")
+                        right_v = self._encoder_cache.get("right")
+                        left_vs = left_v.velocity_m_s if left_v is not None else None
+                        right_vs = right_v.velocity_m_s if right_v is not None else None
+                        pf_neff = None
+                        try:
+                            if self._particle_filter is not None:
+                                pf_neff = float(self._particle_filter.effective_particle_count)
+                        except Exception:
+                            pf_neff = None
+                        self._logger.info(
+                            "SENSORS dt=%.3f v_enc=%.4f m/s (L=%.4f R=%.4f) omega_imu=%.4f rad/s "
+                            "lidar_pts=%d pf_neff=%s",
+                            dt,
+                            self._velocity["linear"],
+                            left_vs or 0.0,
+                            right_vs or 0.0,
+                            self._velocity["angular"],
+                            len(lidar_measurements),
+                            f"{pf_neff:.1f}" if pf_neff is not None else "n/a",
                         )
                 else:
                     # Log when no LIDAR data is received (only once per second to avoid spam)
