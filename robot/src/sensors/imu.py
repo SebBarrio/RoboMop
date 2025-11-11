@@ -9,10 +9,7 @@ import time
 from dataclasses import dataclass
 from typing import AsyncIterator, Callable, Optional
 
-try:
-    from smbus2 import SMBus
-except ImportError:
-    SMBus = None  # type: ignore
+from smbus2 import SMBus
 
 
 GRAVITY = 9.80665
@@ -146,9 +143,6 @@ class MPU9250:
         filter_alpha: float = 0.98,
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
-        if SMBus is None:
-            raise ImportError("smbus2 library not found. Install with: pip install smbus2")
-
         self._sample_rate_hz = sample_rate_hz
         self._filter_alpha = filter_alpha
         self._sleep = sleep
