@@ -649,7 +649,15 @@ async def run_test(args: argparse.Namespace) -> None:
     stop_event = asyncio.Event()
 
     def _handle_sigint() -> None:
-        logger.info("SIGINT received, stopping...")
+        logger.info("SIGINT received, stopping motors immediately...")
+        try:
+            motor_controller.stop_all()
+        except Exception:
+            logger.exception("Error while stopping MotorController on SIGINT")
+        try:
+            driver.stop_all()
+        except Exception:
+            logger.exception("Error while stopping MotorDriver on SIGINT")
         stop_event.set()
 
     loop = asyncio.get_running_loop()
@@ -664,7 +672,18 @@ async def run_test(args: argparse.Namespace) -> None:
         await navigator.run()
 
     main_task = asyncio.create_task(_run_and_wait(), name="navigator")
-    await stop_event.wait()
+    try:
+        await stop_event.wait()
+    except KeyboardInterrupt:
+        logger.info("KeyboardInterrupt caught, stopping motors immediately...")
+        try:
+            motor_controller.stop_all()
+        except Exception:
+            logger.exception("Error while stopping MotorController on KeyboardInterrupt")
+        try:
+            driver.stop_all()
+        except Exception:
+            logger.exception("Error while stopping MotorDriver on KeyboardInterrupt")
     # Cancel the navigator loop
     main_task.cancel()
     try:
