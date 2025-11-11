@@ -501,24 +501,103 @@ class RobotApp:
             self._logger.warning("IMU warmup collected zero samples")
 
         # LIDAR warmup: discard early scans until motor stabilizes
-        lidar_end = time.perf_counter() + max(0.0, self._lidar_warmup_seconds)
-        non_empty_scans = 0
-        total_pts = 0
-        while time.perf_counter() < lidar_end:
+        # LIDAR mapping warmup: integrate scans into the map while stationary to build confidence
+        if self._slam_manager is None or self._sensor_fusion is None:
+            return
+        warmup_end = time.perf_counter() + max(0.0, self._lidar_warmup_seconds)
+        scans_integrated = 0
+        total_points = 0
+        last_ts: float | None = None
+        v_eps, w_eps = 1e-3, 0.02
+        while time.perf_counter() < warmup_end:
             try:
                 snapshot = await self._hardware.read_all()
-                count = len(snapshot.lidar_scan)
-                if count > 0:
-                    non_empty_scans += 1
-                    total_pts += count
             except Exception:
-                pass
-            await asyncio.sleep(0.05)
-        avg_pts = (total_pts / non_empty_scans) if non_empty_scans > 0 else 0.0
+                await asyncio.sleep(0.05)
+                continue
+            ts = float(snapshot.timestamp)
+            if last_ts is None:
+                last_ts = ts
+                continue
+            dt = ts - last_ts
+            last_ts = ts
+            if dt <= 0.0 or dt >= 1.0:
+                continue
+            # Measured velocities
+            left_vel = snapshot.encoders.get("left")
+            right_vel = snapshot.encoders.get("right")
+            if left_vel is not None:
+                self._encoder_cache["left"] = left_vel
+            if right_vel is not None:
+                self._encoder_cache["right"] = right_vel
+            v_meas = 0.0
+            if left_vel and right_vel:
+                v_meas = (
+                    (left_vel.velocity_m_s or 0.0) + (right_vel.velocity_m_s or 0.0)
+                ) / 2.0
+            w_meas = snapshot.imu_sample.angular_velocity_rad_s.z
+            # Gate tiny motion to avoid drift while stationary
+            if abs(v_meas) < v_eps:
+                v_meas = 0.0
+            if abs(w_meas) < w_eps:
+                w_meas = 0.0
+            # EKF predict/update with measured values
+            self._sensor_fusion.predict(control_v=v_meas, control_w=w_meas, dt=dt)
+            self._sensor_fusion.update_v(v_meas)
+            self._sensor_fusion.update_omega(w_meas)
+            self._velocity = {"linear": v_meas, "angular": w_meas}
+            # SLAM integration
+            lidar_measurements = [(m.angle_radians, m.distance_m) for m in snapshot.lidar_scan]
+            self._latest_lidar_scan = lidar_measurements
+            if lidar_measurements:
+                dx_body = v_meas * dt
+                dtheta = w_meas * dt
+                control = np.array([dx_body, 0.0, dtheta])
+                # Small, motion-scaled process noise
+                lin_sigma = max(1e-4, 0.1 * abs(dx_body))
+                side_sigma = max(1e-4, 0.05 * abs(dx_body))
+                ang_sigma = max(1e-3, 0.2 * abs(dtheta))
+                process_covariance = np.diag([lin_sigma**2, side_sigma**2, ang_sigma**2])
+                try:
+                    estimated_pose, slam_covariance = self._slam_manager.step(
+                        control=control,
+                        process_covariance=process_covariance,
+                        scan=lidar_measurements,
+                    )
+                    self._pose = {
+                        "x": float(estimated_pose[0]),
+                        "y": float(estimated_pose[1]),
+                        "theta": float(estimated_pose[2]),
+                    }
+                    try:
+                        self._sensor_fusion.update_pose(estimated_pose, R=slam_covariance)
+                    except Exception:
+                        pass
+                    scans_integrated += 1
+                    total_points += len(lidar_measurements)
+                    # Keep map payload fresh for viewers
+                    try:
+                        await asyncio.to_thread(self._refresh_map_payload)
+                    except Exception:
+                        pass
+                except Exception:
+                    # Ignore sporadic failures during warmup
+                    await asyncio.sleep(0.01)
+                    continue
+            await asyncio.sleep(0.01)
+        completion = 0.0
+        try:
+            if self._occupancy_grid is not None:
+                completion = float(self._occupancy_grid.completion_ratio)
+        except Exception:
+            completion = 0.0
+        avg_points = (total_points / scans_integrated) if scans_integrated > 0 else 0.0
+        self._last_update_time = time.perf_counter()
         self._logger.info(
-            "LIDAR warmup complete: non_empty_scans=%d avg_points_per_scan=%.1f",
-            non_empty_scans,
-            avg_pts,
+            "LIDAR mapping warmup complete: scans=%d avg_points=%.1f map_completion=%.2f%%",
+            scans_integrated,
+            avg_points,
+            100.0 * completion,
         )
 
     async def _slam_loop(self) -> None:
