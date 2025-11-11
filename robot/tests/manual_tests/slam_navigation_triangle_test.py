@@ -312,18 +312,22 @@ class TriangleSlamNavigator:
             try:
                 theta_prev = self._theta_fused if self._theta_fused is not None else self._robot.pose.theta
                 omega_odom = self._compute_odom_yaw_rate()
-                omega_gyro = None
-                if self._imu is not None:
-                    omega_gyro = self._imu_latest_yaw_rate
-                # Complementary fusion of yaw rate
+                omega_gyro = self._imu_latest_yaw_rate if self._imu is not None else None
+                # Complementary fusion of yaw rate, but only if we have at least one valid source
+                omega_fused: Optional[float] = None
                 if omega_gyro is not None and math.isfinite(omega_gyro):
-                    omega_fused = self._fusion_alpha * omega_gyro + (1.0 - self._fusion_alpha) * omega_odom
-                else:
+                    if omega_odom is not None and math.isfinite(omega_odom):
+                        omega_fused = self._fusion_alpha * omega_gyro + (1.0 - self._fusion_alpha) * omega_odom
+                    else:
+                        omega_fused = omega_gyro
+                elif omega_odom is not None and math.isfinite(omega_odom):
                     omega_fused = omega_odom
-                theta_new = _wrap_angle(theta_prev + omega_fused * loop_interval)
-                # Override heading while preserving x,y from wheel odometry
-                self._robot.set_heading(theta_new)
-                self._theta_fused = theta_new
+                # Only override heading if we actually computed a fused yaw rate
+                if omega_fused is not None:
+                    theta_new = _wrap_angle(theta_prev + omega_fused * loop_interval)
+                    # Override heading while preserving x,y from wheel odometry
+                    self._robot.set_heading(theta_new)
+                    self._theta_fused = theta_new
             except Exception:
                 # On any fusion error, keep odometry heading
                 pass
@@ -346,6 +350,7 @@ class TriangleSlamNavigator:
                 omega_odom = self._compute_odom_yaw_rate()
                 if (
                     not self._imu_sign_locked
+                    and omega_odom is not None
                     and abs(omega_odom) > 0.05
                     and abs(omega) > 0.05
                 ):
@@ -469,8 +474,12 @@ class TriangleSlamNavigator:
         }
         await self._viewer.send_update(payload)
 
-    def _compute_odom_yaw_rate(self) -> float:
-        """Compute yaw rate (rad/s) from wheel odometry using latest encoder-derived velocities."""
+    def _compute_odom_yaw_rate(self) -> Optional[float]:
+        """Compute yaw rate (rad/s) from wheel odometry using latest encoder-derived velocities.
+
+        Returns:
+            Optional[float]: Yaw rate if encoder readings are available; None otherwise.
+        """
         # Left motors: 0,1; Right motors: 2,3 (as configured in RobotController)
         left_indices = (0, 1)
         right_indices = (2, 3)
@@ -484,11 +493,9 @@ class TriangleSlamNavigator:
             reading = self._motor.get_last_reading(idx)
             if reading is not None and math.isfinite(reading.velocity_rad_s):
                 right_velocities.append(float(reading.velocity_rad_s))
-        # Fall back to commanded angular if no readings (should be rare)
+        # If we lack readings from either side, we cannot compute odom yaw reliably
         if not left_velocities or not right_velocities:
-            # Approximate from last commanded angular in RobotController if needed
-            # Here, fallback to zero (will be overridden by gyro if available)
-            return 0.0
+            return None
         wheel_radius = self._robot.wheel_radius
         track_width = self._robot.track_width
         v_l = (sum(left_velocities) / len(left_velocities)) * wheel_radius
