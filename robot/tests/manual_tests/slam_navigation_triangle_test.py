@@ -78,6 +78,7 @@ from src.control.pid import PIDController
 from src.control.robot_controller import Pose2D, RobotController
 from src.sensors.encoders import EncoderReading, GpioZeroEncoderHardware, QuadratureEncoder
 from src.sensors.lidar import LidarMeasurement, RPLidarSerial
+from src.sensors.imu import MPU9250
 from src.slam.occupancy_grid import OccupancyGrid
 from src.slam.particle_filter import ParticleFilter
 from src.slam.slam_manager import SlamManager
@@ -116,6 +117,10 @@ DEFAULT_LIDAR_MAX_RANGE: float = 5.0
 STATE_HZ: float = 10.0
 MAP_HZ: float = 2.0
 SLAM_HZ: float = 5.0
+DEFAULT_FUSION_ALPHA: float = 0.9  # weight on gyro yaw rate in complementary fusion
+DEFAULT_IMU_RATE_HZ: float = 100.0
+DEFAULT_IMU_BUS: int = 1
+DEFAULT_IMU_ADDRESS: int = 0x68
 
 
 # -----------------------------
@@ -209,6 +214,7 @@ class TriangleSlamNavigator:
         self,
         *,
         lidar: RPLidarSerial,
+        imu: MPU9250 | None,
         motor_controller: MotorController,
         robot_controller: RobotController,
         slam: SlamManager,
@@ -218,9 +224,11 @@ class TriangleSlamNavigator:
         slam_update_hz: float,
         map_hz: float,
         state_hz: float,
+        fusion_alpha: float,
         logger: logging.Logger,
     ) -> None:
         self._lidar = lidar
+        self._imu = imu
         self._motor = motor_controller
         self._robot = robot_controller
         self._slam = slam
@@ -230,6 +238,7 @@ class TriangleSlamNavigator:
         self._slam_period = 1.0 / float(slam_update_hz)
         self._map_period = 1.0 / float(map_hz)
         self._state_period = 1.0 / float(state_hz)
+        self._fusion_alpha = float(fusion_alpha)
 
         self._vertices = list(planned_vertices)
         self._waypoint_index = 0
@@ -237,6 +246,7 @@ class TriangleSlamNavigator:
         self._last_pose_for_slam: Optional[Pose2D] = None
         self._latest_scan: List[LidarMeasurement] = []
         self._running = False
+        self._theta_fused: Optional[float] = None
 
     async def run(self) -> None:
         self._running = True
@@ -277,8 +287,33 @@ class TriangleSlamNavigator:
             # Progress goals
             if not self._robot.goal_active and self._vertices:
                 self._issue_next_waypoint()
-            # Update controller and integrate pose
+            # Update controller and integrate pose (wheel odometry drives x,y)
             self._robot.update(dt=loop_interval)
+            # Fuse yaw rate from IMU and wheel odometry, override heading
+            try:
+                theta_prev = self._theta_fused if self._theta_fused is not None else self._robot.pose.theta
+                omega_odom = self._compute_odom_yaw_rate()
+                omega_gyro = None
+                if self._imu is not None:
+                    sample = self._imu.read_sample()
+                    omega_gyro = float(sample.angular_velocity_rad_s.z)
+                # Complementary fusion of yaw rate
+                if omega_gyro is not None and math.isfinite(omega_gyro):
+                    omega_fused = self._fusion_alpha * omega_gyro + (1.0 - self._fusion_alpha) * omega_odom
+                else:
+                    omega_fused = omega_odom
+                theta_new = _wrap_angle(theta_prev + omega_fused * loop_interval)
+                # Override heading while preserving x,y from wheel odometry
+                current_pose = self._robot.pose
+                self._robot._pose = Pose2D(  # type: ignore[attr-defined]
+                    x=current_pose.x,
+                    y=current_pose.y,
+                    theta=theta_new,
+                )
+                self._theta_fused = theta_new
+            except Exception:
+                # On any fusion error, keep odometry heading
+                pass
             self._trajectory.append((self._robot.pose.x, self._robot.pose.y))
             # Loop pacing
             elapsed = asyncio.get_running_loop().time() - start
@@ -383,6 +418,32 @@ class TriangleSlamNavigator:
             },
         }
         await self._viewer.send_update(payload)
+
+    def _compute_odom_yaw_rate(self) -> float:
+        """Compute yaw rate (rad/s) from wheel odometry using latest encoder-derived velocities."""
+        # Left motors: 0,1; Right motors: 2,3 (as configured in RobotController)
+        left_indices = (0, 1)
+        right_indices = (2, 3)
+        left_velocities: List[float] = []
+        right_velocities: List[float] = []
+        for idx in left_indices:
+            reading = self._motor.get_last_reading(idx)
+            if reading is not None and math.isfinite(reading.velocity_rad_s):
+                left_velocities.append(float(reading.velocity_rad_s))
+        for idx in right_indices:
+            reading = self._motor.get_last_reading(idx)
+            if reading is not None and math.isfinite(reading.velocity_rad_s):
+                right_velocities.append(float(reading.velocity_rad_s))
+        # Fall back to commanded angular if no readings (should be rare)
+        if not left_velocities or not right_velocities:
+            # Approximate from last commanded angular in RobotController if needed
+            # Here, fallback to zero (will be overridden by gyro if available)
+            return 0.0
+        wheel_radius = self._robot.wheel_radius
+        track_width = self._robot.track_width
+        v_l = (sum(left_velocities) / len(left_velocities)) * wheel_radius
+        v_r = (sum(right_velocities) / len(right_velocities)) * wheel_radius
+        return (v_r - v_l) / track_width
 
 
 # -----------------------------
@@ -524,6 +585,16 @@ async def run_test(args: argparse.Namespace) -> None:
     lidar = RPLidarSerial(port=args.lidar_port, baud_rate=args.lidar_baud, serial_timeout=args.lidar_timeout)
     await lidar.start()
 
+    # IMU (with calibration inside initialize)
+    imu: MPU9250 | None = None
+    try:
+        imu = MPU9250(bus=args.imu_bus, address=args.imu_address, sample_rate_hz=args.imu_rate)
+        imu.initialize()  # opens I2C, configures DLPF, calibrates gyro bias
+        logger.info("IMU initialized on I2C bus %d addr 0x%02X", args.imu_bus, args.imu_address)
+    except Exception as exc:
+        logger.warning("IMU init failed (%s). Proceeding with wheel odometry only.", exc)
+        imu = None
+
     # Motors/encoders and robot controller
     driver, motor_controller, robot, encoders = _build_motor_driver_and_controller(
         supply_voltage=args.supply_voltage,
@@ -560,6 +631,7 @@ async def run_test(args: argparse.Namespace) -> None:
     # Navigator
     navigator = TriangleSlamNavigator(
         lidar=lidar,
+        imu=imu,
         motor_controller=motor_controller,
         robot_controller=robot,
         slam=slam,
@@ -569,6 +641,7 @@ async def run_test(args: argparse.Namespace) -> None:
         slam_update_hz=SLAM_HZ,
         map_hz=MAP_HZ,
         state_hz=STATE_HZ,
+        fusion_alpha=args.fusion_alpha,
         logger=logger,
     )
 
@@ -669,6 +742,21 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
 
     parser.add_argument("--particles", type=int, default=DEFAULT_PARTICLES, help="Particle filter count (100-500)")
     parser.add_argument("--lidar-max-range", type=float, default=DEFAULT_LIDAR_MAX_RANGE, help="LIDAR max range (m)")
+    # IMU and fusion options
+    parser.add_argument("--imu-bus", type=int, default=DEFAULT_IMU_BUS, help="I2C bus for IMU (default: 1)")
+    parser.add_argument(
+        "--imu-address",
+        type=lambda x: int(x, 0),
+        default=DEFAULT_IMU_ADDRESS,
+        help="IMU I2C address (0x68/0x69), accepts hex like 0x68",
+    )
+    parser.add_argument("--imu-rate", type=float, default=DEFAULT_IMU_RATE_HZ, help="IMU internal sample rate (Hz)")
+    parser.add_argument(
+        "--fusion-alpha",
+        type=float,
+        default=DEFAULT_FUSION_ALPHA,
+        help="Complementary fusion weight for gyro yaw rate (0-1, higher trusts gyro)",
+    )
 
     parser.add_argument(
         "--log-level", type=str, default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"], help="Log level"
