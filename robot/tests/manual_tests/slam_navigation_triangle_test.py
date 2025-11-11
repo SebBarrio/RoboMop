@@ -125,18 +125,23 @@ SLAM_HZ: float = 5.0
 @dataclass(slots=True)
 class ViewerClient:
     url: str
-    websocket: Optional[websockets.WebSocketClientProtocol] = None
+    websocket: Optional[Any] = None
     logger: logging.Logger = logging.getLogger("triangle_stream")
 
     async def connect(self) -> None:
-        if self.websocket and not self.websocket.closed:
-            return
+        # If we have a stale connection reference, close it before reconnecting
+        if self.websocket is not None and not self._is_open(self.websocket):
+            try:
+                await self.websocket.close()
+            except Exception:
+                pass
+            self.websocket = None
         self.logger.info("Connecting to triangle viewer at %s", self.url)
         self.websocket = await websockets.connect(self.url, max_size=10 * 1024 * 1024)
         self.logger.info("Connected to triangle viewer")
 
     async def send_update(self, payload: Dict[str, Any]) -> None:
-        if self.websocket is None or self.websocket.closed:
+        if self.websocket is None or not self._is_open(self.websocket):
             await self.connect()
         assert self.websocket is not None
         try:
@@ -156,6 +161,33 @@ class ViewerClient:
             except Exception:
                 pass
             self.websocket = None
+
+    @staticmethod
+    def _is_open(ws: Any) -> bool:
+        """Compat check across websockets versions to determine if the connection is open."""
+        try:
+            closed = getattr(ws, "closed", None)
+            if isinstance(closed, bool):
+                return not closed
+        except Exception:
+            pass
+        try:
+            is_open = getattr(ws, "open", None)
+            if isinstance(is_open, bool):
+                return is_open
+        except Exception:
+            pass
+        try:
+            state = getattr(ws, "state", None)
+            if isinstance(state, str):
+                return state.upper() == "OPEN"
+            name = getattr(state, "name", None)
+            if isinstance(name, str):
+                return name.upper() == "OPEN"
+        except Exception:
+            pass
+        # Fallback: assume open; send() will raise if it's not
+        return True
 
 
 class EncoderFeedbackAdapter(EncoderFeedback):
@@ -489,7 +521,7 @@ async def run_test(args: argparse.Namespace) -> None:
     logger.info("Initializing hardware...")
 
     # LIDAR
-    lidar = RPLidarSerial(port=args.lidar_port, baud_rate=args.lidar_baud)
+    lidar = RPLidarSerial(port=args.lidar_port, baud_rate=args.lidar_baud, serial_timeout=args.lidar_timeout)
     await lidar.start()
 
     # Motors/encoders and robot controller
@@ -612,6 +644,12 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     )
     parser.add_argument("--lidar-baud", type=int, default=1_000_000, help="RPLIDAR baud rate")
     parser.add_argument("--lidar-pwm", type=int, default=660, help="RPLIDAR motor PWM (A1/A2 models)")
+    parser.add_argument(
+        "--lidar-timeout",
+        type=float,
+        default=2.0,
+        help="RPLIDAR serial read timeout (s); increase if you see timeouts",
+    )
 
     parser.add_argument("--supply-voltage", type=float, default=DEFAULT_SUPPLY_VOLTAGE, help="Motor supply voltage (V)")
     parser.add_argument("--loop-interval", type=float, default=DEFAULT_LOOP_INTERVAL, help="Motor loop interval (s)")
