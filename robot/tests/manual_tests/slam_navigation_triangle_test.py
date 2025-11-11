@@ -339,6 +339,7 @@ class TriangleSlamNavigator:
     async def _imu_loop(self) -> None:
         """Consume IMU samples asynchronously and maintain latest yaw rate with sign/clamp."""
         assert self._imu is not None
+        sample_count = 0
         try:
             async for sample in self._imu.iter_samples():
                 if not self._running:
@@ -367,6 +368,15 @@ class TriangleSlamNavigator:
                 max_rate = getattr(self, "_max_gyro_rate", DEFAULT_MAX_GYRO_RATE_RAD_S)
                 omega = max(-max_rate, min(omega, max_rate))
                 self._imu_latest_yaw_rate = omega
+                # Debug: show consumer activity and queue size periodically
+                sample_count += 1
+                if (sample_count % 10) == 0:
+                    try:
+                        q = getattr(self._imu, "_queue", None)
+                        size = q.qsize() if q is not None else -1
+                        print(f"[IMU DEBUG] consumed sample; omega={omega:.3f} rad/s; queue size={size}")
+                    except Exception:
+                        pass
         except Exception:
             self._logger.exception("IMU loop failed; disabling IMU fusion")
             self._imu = None
@@ -562,9 +572,9 @@ def _build_motor_driver_and_controller(
         winding_resistance=2.0,
         loop_interval=loop_interval,
         pid=PIDSettings(
-            kp=0.4,
-            ki=1.2,
-            kd=0.0,
+            kp=0.45,
+            ki=0.2,
+            kd=0.01,
             integrator_limit=supply_voltage,
             output_limits=(-supply_voltage, supply_voltage),
         ),

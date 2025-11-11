@@ -411,11 +411,6 @@ class MPU9250:
             """Enqueue item, dropping it silently if queue is full."""
             try:
                 self._queue.put_nowait(item)
-                try:
-                    # Debug: print queue size each time a sample is enqueued
-                    print(f"[IMU DEBUG] enqueued sample; queue size={self._queue.qsize()}")
-                except Exception:
-                    pass
             except asyncio.QueueFull:
                 pass  # Drop sample when queue is full
         
