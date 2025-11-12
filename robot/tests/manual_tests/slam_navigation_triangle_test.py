@@ -277,13 +277,14 @@ class TriangleSlamNavigator:
                 self._imu_task = None
 
     async def _run_all_tasks(self) -> None:
-        tasks = [
-            asyncio.create_task(self._control_loop(), name="control-loop"),
-            asyncio.create_task(self._slam_loop(), name="slam-loop"),
-            asyncio.create_task(self._viewer_loop(), name="viewer-loop"),
-        ]
+        tasks: list[asyncio.Task[None]] = []
+        tasks.append(asyncio.create_task(self._control_loop(), name="control-loop"))
+        tasks.append(asyncio.create_task(self._slam_loop(), name="slam-loop"))
+        if self._viewer is not None:
+            tasks.append(asyncio.create_task(self._viewer_loop(), name="viewer-loop"))
         try:
-            await asyncio.wait(tasks, return_when=asyncio.FIRST_EXCEPTION)
+            # Run indefinitely until externally cancelled
+            await asyncio.gather(*tasks)
         finally:
             for task in tasks:
                 if not task.done():
@@ -294,7 +295,7 @@ class TriangleSlamNavigator:
                 except asyncio.CancelledError:
                     pass
                 except Exception:
-                    self._logger.exception("Task %s failed", task.get_name())
+                    self._logger.exception("Task %s failed during shutdown", task.get_name())
 
     async def _control_loop(self) -> None:
         """High-rate robot control loop and waypoint progression."""
@@ -309,7 +310,13 @@ class TriangleSlamNavigator:
             if not self._robot.goal_active and self._vertices:
                 self._issue_next_waypoint()
             # Update controller and integrate pose (wheel odometry drives x,y)
-            self._robot.update(dt=loop_interval)
+            try:
+                self._robot.update(dt=loop_interval)
+            except Exception:
+                self._logger.exception("RobotController.update failed")
+                # Small backoff to avoid tight error loop
+                await asyncio.sleep(loop_interval)
+                continue
             # Fuse yaw rate from IMU and wheel odometry, override heading
             try:
                 theta_prev = self._theta_fused if self._theta_fused is not None else self._robot.pose.theta
@@ -442,7 +449,12 @@ class TriangleSlamNavigator:
         self._last_pose_for_slam = Pose2D(self._robot.pose.x, self._robot.pose.y, self._robot.pose.theta)
         while self._running:
             # Read one full revolution
-            scan = await self._lidar.read_scan()
+            try:
+                scan = await self._lidar.read_scan()
+            except Exception:
+                self._logger.exception("LIDAR read_scan failed; retrying")
+                await asyncio.sleep(0.1)
+                continue
             self._latest_scan = scan
             if not scan:
                 continue
@@ -486,12 +498,15 @@ class TriangleSlamNavigator:
         self._logger.info("Starting viewer loop: state=%.1f Hz, map=%.1f Hz", 1.0 / state_period, 1.0 / map_period)
         while self._running:
             now = asyncio.get_running_loop().time()
-            if now >= next_state:
-                await self._send_state_update()
-                next_state = now + state_period
-            if now >= next_map:
-                await self._send_map_update()
-                next_map = now + map_period
+            try:
+                if now >= next_state:
+                    await self._send_state_update()
+                    next_state = now + state_period
+                if now >= next_map:
+                    await self._send_map_update()
+                    next_map = now + map_period
+            except Exception:
+                self._logger.exception("Viewer loop encountered an error; continuing")
             await asyncio.sleep(0.01)
 
     async def _send_state_update(self) -> None:
