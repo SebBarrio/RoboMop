@@ -346,6 +346,9 @@ class TriangleSlamNavigator:
             if now_loop - self._last_debug_log_time >= 0.1:
                 self._last_debug_log_time = now_loop
                 try:
+                    # Controller command debug
+                    lin_cmd = getattr(self._robot, "_linear_cmd", None)
+                    ang_cmd = getattr(self._robot, "_angular_cmd", None)
                     r0 = self._motor.get_last_reading(0)
                     r1 = self._motor.get_last_reading(1)
                     r2 = self._motor.get_last_reading(2)
@@ -379,6 +382,10 @@ class TriangleSlamNavigator:
                         f"omega_gyro={f'{omega_gyro_dbg:.3f}' if omega_gyro_dbg is not None else 'None'} rad/s, "
                         f"omega_fused={f'{omega_fused_dbg:.3f}' if omega_fused_dbg is not None else 'None'} rad/s, "
                         f"theta={self._robot.pose.theta:.3f} rad"
+                    )
+                    print(
+                        f"[CTRL] lin_cmd={f'{lin_cmd:.3f}' if isinstance(lin_cmd,(int,float)) else 'None'} m/s, "
+                        f"ang_cmd={f'{ang_cmd:.3f}' if isinstance(ang_cmd,(int,float)) else 'None'} rad/s"
                     )
                 except Exception:
                     pass
