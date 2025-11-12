@@ -92,7 +92,7 @@ from src.slam.slam_manager import SlamManager
 MOTOR_CHANNELS: Tuple[Tuple[int, int], ...] = ((0, 1), (2, 3), (5, 4), (7, 6))
 ENCODER_PINS: Tuple[Tuple[int, int], ...] = ((5, 6), (13, 26))  # two encoders
 EXPECTED_MOTOR_TO_ENCODER: Dict[int, int] = {0: 0, 1: 0, 2: 1, 3: 1}
-ENCODER_PPR: int = 400
+ENCODER_DEFAULT_CPR: int = 1440
 PWM_FREQUENCY_HZ: int = 1000
 
 DEFAULT_SUPPLY_VOLTAGE: float = 12.0
@@ -381,7 +381,8 @@ class TriangleSlamNavigator:
                         f"omega_odom={f'{omega_odom_dbg:.3f}' if omega_odom_dbg is not None else 'None'} rad/s, "
                         f"omega_gyro={f'{omega_gyro_dbg:.3f}' if omega_gyro_dbg is not None else 'None'} rad/s, "
                         f"omega_fused={f'{omega_fused_dbg:.3f}' if omega_fused_dbg is not None else 'None'} rad/s, "
-                        f"theta={self._robot.pose.theta:.3f} rad"
+                        f"theta={self._robot.pose.theta:.3f} rad, "
+                        f"pose=({self._robot.pose.x:.3f}, {self._robot.pose.y:.3f})"
                     )
                     print(
                         f"[CTRL] lin_cmd={f'{lin_cmd:.3f}' if isinstance(lin_cmd,(int,float)) else 'None'} m/s, "
@@ -599,6 +600,9 @@ def _build_motor_driver_and_controller(
     track_width_m: float,
     max_linear: float,
     max_angular: float,
+    encoder_cpr: int,
+    invert_left_encoder: bool,
+    invert_right_encoder: bool,
 ) -> Tuple[MotorDriver, MotorController, RobotController, List[QuadratureEncoder]]:
     # PCA9685
     i2c = busio.I2C(board.SCL, board.SDA)
@@ -615,14 +619,15 @@ def _build_motor_driver_and_controller(
     # Encoders (two units; left and right)
     circumference = 2.0 * math.pi * wheel_radius_m
     gpio_encoders: List[QuadratureEncoder] = []
-    for pin_a, pin_b in ENCODER_PINS:
+    for idx, (pin_a, pin_b) in enumerate(ENCODER_PINS):
         hw = GpioZeroEncoderHardware(pin_a=pin_a, pin_b=pin_b, max_steps=0, rotary_cls=RotaryEncoder)
+        invert = invert_left_encoder if idx == 0 else invert_right_encoder
         enc = QuadratureEncoder(
             hardware=hw,
-            counts_per_revolution=ENCODER_PPR,
+            counts_per_revolution=encoder_cpr,
             gear_ratio=1.0,
             wheel_circumference_m=circumference,
-            invert=False,
+            invert=invert,
         )
         enc.zero()
         gpio_encoders.append(enc)
@@ -735,6 +740,9 @@ async def run_test(args: argparse.Namespace) -> None:
         track_width_m=args.track_width,
         max_linear=args.max_linear,
         max_angular=args.max_angular,
+        encoder_cpr=args.encoder_cpr,
+        invert_left_encoder=args.invert_left_encoder,
+        invert_right_encoder=args.invert_right_encoder,
     )
 
     # SLAM
@@ -932,6 +940,23 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         type=float,
         default=DEFAULT_MAX_GYRO_RATE_RAD_S,
         help="Clamp magnitude of gyro yaw rate (rad/s) to this value",
+    )
+    # Encoder options
+    parser.add_argument(
+        "--encoder-cpr",
+        type=int,
+        default=ENCODER_DEFAULT_CPR,
+        help="Counts per revolution for wheel encoder (default: 1440)",
+    )
+    parser.add_argument(
+        "--invert-left-encoder",
+        action="store_true",
+        help="Invert sign of the LEFT encoder (make forward motion positive)",
+    )
+    parser.add_argument(
+        "--invert-right-encoder",
+        action="store_true",
+        help="Invert sign of the RIGHT encoder (make forward motion positive)",
     )
 
     parser.add_argument(
