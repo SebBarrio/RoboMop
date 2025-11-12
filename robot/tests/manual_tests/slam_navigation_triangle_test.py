@@ -78,6 +78,7 @@ from src.control.pid import PIDController
 from src.control.robot_controller import Pose2D, RobotController
 from src.sensors.encoders import EncoderReading, GpioZeroEncoderHardware, QuadratureEncoder
 from src.sensors.lidar import LidarMeasurement, RPLidarSerial
+from src.sensors.imu import MPU9250, ImuSample
 from src.slam.occupancy_grid import OccupancyGrid
 from src.slam.particle_filter import ParticleFilter
 from src.slam.slam_manager import SlamManager
@@ -209,6 +210,7 @@ class TriangleSlamNavigator:
         self,
         *,
         lidar: RPLidarSerial,
+        imu: Optional[MPU9250],
         motor_controller: MotorController,
         robot_controller: RobotController,
         slam: SlamManager,
@@ -218,9 +220,11 @@ class TriangleSlamNavigator:
         slam_update_hz: float,
         map_hz: float,
         state_hz: float,
+        imu_warmup_samples: int,
         logger: logging.Logger,
     ) -> None:
         self._lidar = lidar
+        self._imu = imu
         self._motor = motor_controller
         self._robot = robot_controller
         self._slam = slam
@@ -230,6 +234,9 @@ class TriangleSlamNavigator:
         self._slam_period = 1.0 / float(slam_update_hz)
         self._map_period = 1.0 / float(map_hz)
         self._state_period = 1.0 / float(state_hz)
+        self._imu_warmup_samples = int(max(0, imu_warmup_samples))
+        self._imu_ready = False
+        self._imu_yaw: Optional[float] = None
 
         self._vertices = list(planned_vertices)
         self._waypoint_index = 0
@@ -251,6 +258,8 @@ class TriangleSlamNavigator:
             asyncio.create_task(self._slam_loop(), name="slam-loop"),
             asyncio.create_task(self._viewer_loop(), name="viewer-loop"),
         ]
+        if self._imu is not None:
+            tasks.append(asyncio.create_task(self._imu_loop(), name="imu-loop"))
         try:
             await asyncio.wait(tasks, return_when=asyncio.FIRST_EXCEPTION)
         finally:
@@ -279,6 +288,10 @@ class TriangleSlamNavigator:
                 self._issue_next_waypoint()
             # Update controller and integrate pose
             self._robot.update(dt=loop_interval)
+            # Override heading with IMU yaw when available (IMU primary for theta)
+            if self._imu_ready and self._imu_yaw is not None:
+                pose = self._robot.pose
+                self._robot.reset_pose(Pose2D(pose.x, pose.y, self._imu_yaw))
             self._trajectory.append((self._robot.pose.x, self._robot.pose.y))
             # Loop pacing
             elapsed = asyncio.get_running_loop().time() - start
@@ -384,6 +397,33 @@ class TriangleSlamNavigator:
         }
         await self._viewer.send_update(payload)
 
+    async def _imu_loop(self) -> None:
+        """Continuously read IMU and provide yaw (theta) to the controller."""
+        assert self._imu is not None
+        self._logger.info("Starting IMU loop (sample_rate=%.1f Hz)", float(getattr(self._imu, "_sample_rate_hz", 0.0)))
+        # Start async sampling thread
+        await self._imu.start()
+        warmup_remaining = self._imu_warmup_samples
+        # Warmup: collect initial samples while robot is stationary to converge offsets
+        if warmup_remaining > 0:
+            self._logger.info("IMU warmup: collecting %d samples; keep robot stationary", warmup_remaining)
+        try:
+            async for sample in self._imu.iter_samples():
+                # Use IMU yaw as primary theta (already wrapped to [-pi, pi] in API)
+                try:
+                    self._imu_yaw = float(sample.orientation.yaw)
+                except Exception:
+                    # Defensive parsing guard
+                    pass
+                if warmup_remaining > 0:
+                    warmup_remaining -= 1
+                    if warmup_remaining == 0:
+                        self._imu_ready = True
+                        self._logger.info("IMU warmup complete; switching to IMU yaw for heading")
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            self._logger.exception("IMU loop failed")
 
 # -----------------------------
 # Main setup/teardown
@@ -520,6 +560,17 @@ async def run_test(args: argparse.Namespace) -> None:
     logger = logging.getLogger("triangle_test")
     logger.info("Initializing hardware...")
 
+    # IMU (optional but recommended)
+    imu: Optional[MPU9250] = None
+    try:
+        imu = MPU9250(bus=args.imu_bus, address=args.imu_address, sample_rate_hz=args.imu_rate)
+        # initialize() is called inside start(), but invoking it here gives earlier calibration/logs if desired
+        imu.initialize()
+        logger.info("IMU initialized on I2C bus %d addr 0x%02X", args.imu_bus, args.imu_address)
+    except Exception as exc:
+        logger.error("Failed to initialize IMU: %s (continuing without IMU)", exc)
+        imu = None
+
     # LIDAR
     lidar = RPLidarSerial(port=args.lidar_port, baud_rate=args.lidar_baud, serial_timeout=args.lidar_timeout)
     await lidar.start()
@@ -560,6 +611,7 @@ async def run_test(args: argparse.Namespace) -> None:
     # Navigator
     navigator = TriangleSlamNavigator(
         lidar=lidar,
+        imu=imu,
         motor_controller=motor_controller,
         robot_controller=robot,
         slam=slam,
@@ -569,6 +621,7 @@ async def run_test(args: argparse.Namespace) -> None:
         slam_update_hz=SLAM_HZ,
         map_hz=MAP_HZ,
         state_hz=STATE_HZ,
+        imu_warmup_samples=args.imu_warmup_samples,
         logger=logger,
     )
 
@@ -615,6 +668,12 @@ async def run_test(args: argparse.Namespace) -> None:
                 enc.close()
             except Exception:
                 logger.exception("Error while closing encoder")
+        # Stop IMU
+        if imu is not None:
+            try:
+                await imu.stop()
+            except Exception:
+                logger.exception("Error while stopping IMU")
         # Stop LIDAR
         try:
             await lidar.stop()
@@ -669,6 +728,22 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
 
     parser.add_argument("--particles", type=int, default=DEFAULT_PARTICLES, help="Particle filter count (100-500)")
     parser.add_argument("--lidar-max-range", type=float, default=DEFAULT_LIDAR_MAX_RANGE, help="LIDAR max range (m)")
+
+    # IMU options
+    parser.add_argument("--imu-bus", type=int, default=1, help="I2C bus for IMU (default: 1)")
+    parser.add_argument(
+        "--imu-address",
+        type=lambda x: int(x, 0),
+        default=0x68,
+        help="IMU I2C address (0x68/0x69). Accepts hex like 0x68",
+    )
+    parser.add_argument("--imu-rate", type=float, default=100.0, help="IMU sample rate Hz")
+    parser.add_argument(
+        "--imu-warmup-samples",
+        type=int,
+        default=150,
+        help="IMU warmup samples to collect while stationary before using yaw",
+    )
 
     parser.add_argument(
         "--log-level", type=str, default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"], help="Log level"
