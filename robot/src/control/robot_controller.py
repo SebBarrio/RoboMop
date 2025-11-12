@@ -94,10 +94,6 @@ class RobotController:
         self._linear_cmd = 0.0
         self._angular_cmd = 0.0
 
-    def set_heading(self, theta: float) -> None:
-        """Safely set the current heading while preserving x,y coordinates."""
-        self._pose = Pose2D(self._pose.x, self._pose.y, _wrap_angle(theta))
-
     def set_velocity_command(self, *, linear: float, angular: float) -> None:
         self._goal_active = False
         self._goal = None
