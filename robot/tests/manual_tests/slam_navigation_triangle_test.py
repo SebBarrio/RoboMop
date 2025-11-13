@@ -541,21 +541,6 @@ def _build_slam(
     return slam
 
 
-async def _preflight_checks(
-    *,
-    lidar: RPLidarSerial,
-    logger: logging.Logger,
-) -> None:
-    logger.info("Running preflight checks (LIDAR info/health)...")
-    try:
-        info = await lidar.get_device_info()
-        health = await lidar.get_health()
-        logger.info("RPLIDAR info: %s", info.hex())
-        logger.info("RPLIDAR health: %s", health.hex())
-    except Exception as exc:
-        logger.warning("RPLIDAR info/health check failed: %s (continuing)", exc)
-
-
 async def run_test(args: argparse.Namespace) -> None:
     logger = logging.getLogger("triangle_test")
     logger.info("Initializing hardware...")
@@ -605,8 +590,7 @@ async def run_test(args: argparse.Namespace) -> None:
     # Close the loop visually
     planned.append(planned[0])
 
-    logger.info("Preflight checks...")
-    await _preflight_checks(lidar=lidar, logger=logger)
+    logger.info("LIDAR started and ready for navigation")
 
     # Navigator
     navigator = TriangleSlamNavigator(
