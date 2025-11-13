@@ -446,6 +446,12 @@ def _build_motor_driver_and_controller(
     track_width_m: float,
     max_linear: float,
     max_angular: float,
+    pos_kp: float,
+    pos_ki: float,
+    pos_kd: float,
+    head_kp: float,
+    head_ki: float,
+    head_kd: float,
 ) -> Tuple[MotorDriver, MotorController, RobotController, List[QuadratureEncoder]]:
     # PCA9685
     i2c = busio.I2C(board.SCL, board.SDA)
@@ -494,9 +500,9 @@ def _build_motor_driver_and_controller(
     feedback = EncoderFeedbackAdapter(gpio_encoders)
     motor_controller = MotorController(driver=driver, encoder_feedback=feedback, config=motor_cfg)
     # High-level robot controller
-    position_pid = PIDController(kp=0.8, ki=0.05, kd=0.1, integrator_limit=0.5, output_limits=(-max_linear, max_linear))
+    position_pid = PIDController(kp=pos_kp, ki=pos_ki, kd=pos_kd, integrator_limit=0.5, output_limits=(-max_linear, max_linear))
     heading_pid = PIDController(
-        kp=2.0, ki=0.1, kd=0.2, integrator_limit=0.8, output_limits=(-max_angular, max_angular)
+        kp=head_kp, ki=head_ki, kd=head_kd, integrator_limit=0.8, output_limits=(-max_angular, max_angular)
     )
     robot = RobotController(
         motor_controller=motor_controller,
@@ -568,6 +574,12 @@ async def run_test(args: argparse.Namespace) -> None:
         track_width_m=args.track_width,
         max_linear=args.max_linear,
         max_angular=args.max_angular,
+        pos_kp=args.pos_kp,
+        pos_ki=args.pos_ki,
+        pos_kd=args.pos_kd,
+        head_kp=args.head_kp,
+        head_ki=args.head_ki,
+        head_kd=args.head_kd,
     )
 
     # SLAM
@@ -728,6 +740,14 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         default=150,
         help="IMU warmup samples to collect while stationary before using yaw",
     )
+
+    # PID tuning (tightened defaults)
+    parser.add_argument("--pos-kp", type=float, default=1.2, help="Position PID Kp (default: 1.2)")
+    parser.add_argument("--pos-ki", type=float, default=0.02, help="Position PID Ki (default: 0.02)")
+    parser.add_argument("--pos-kd", type=float, default=0.2, help="Position PID Kd (default: 0.2)")
+    parser.add_argument("--head-kp", type=float, default=3.0, help="Heading PID Kp (default: 3.0)")
+    parser.add_argument("--head-ki", type=float, default=0.05, help="Heading PID Ki (default: 0.05)")
+    parser.add_argument("--head-kd", type=float, default=0.3, help="Heading PID Kd (default: 0.3)")
 
     parser.add_argument(
         "--log-level", type=str, default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"], help="Log level"
