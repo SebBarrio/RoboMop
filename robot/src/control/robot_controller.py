@@ -19,6 +19,16 @@ class Pose2D:
     theta: float = 0.0
 
 
+@dataclass(slots=True)
+class CommandSnapshot:
+    """Current linear/angular commands and wheel setpoints."""
+
+    linear_command_mps: float
+    angular_command_rps: float
+    left_wheel_target_rad_s: float
+    right_wheel_target_rad_s: float
+
+
 class RobotController:
     """High-level velocity controller that wraps the low-level motor loop."""
 
@@ -64,6 +74,8 @@ class RobotController:
         self._pose = Pose2D()
         self._linear_cmd = 0.0
         self._angular_cmd = 0.0
+        self._last_left_target = 0.0
+        self._last_right_target = 0.0
         self._goal: Pose2D | None = None
         self._goal_heading: float | None = None
         self._goal_active = False
@@ -154,6 +166,8 @@ class RobotController:
 
     def _apply_velocity_targets(self) -> None:
         left_speed, right_speed = self._inverse_kinematics(self._linear_cmd, self._angular_cmd)
+        self._last_left_target = left_speed
+        self._last_right_target = right_speed
         targets: dict[int, float] = {}
         for index in self._left_indices:
             targets[index] = left_speed
@@ -219,6 +233,15 @@ class RobotController:
         if not velocities:
             return None
         return sum(velocities) / len(velocities)
+
+    def get_command_snapshot(self) -> CommandSnapshot:
+        """Return the latest commanded linear/angular speeds and wheel targets."""
+        return CommandSnapshot(
+            linear_command_mps=self._linear_cmd,
+            angular_command_rps=self._angular_cmd,
+            left_wheel_target_rad_s=self._last_left_target,
+            right_wheel_target_rad_s=self._last_right_target,
+        )
 
 
 def _wrap_angle(angle: float) -> float:

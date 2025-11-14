@@ -29,15 +29,17 @@ from __future__ import annotations
 import argparse
 import asyncio
 import base64
+import csv
 import gzip
 import json
 import logging
 import math
 import signal
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, TextIO, Tuple
 
 import numpy as np
 
@@ -75,7 +77,7 @@ from src.control.motor_controller import (
 )
 from src.control.pwm_controller import MotorChannelConfig, MotorDriver
 from src.control.pid import PIDController
-from src.control.robot_controller import Pose2D, RobotController
+from src.control.robot_controller import CommandSnapshot, Pose2D, RobotController
 from src.sensors.encoders import EncoderReading, GpioZeroEncoderHardware, QuadratureEncoder
 from src.sensors.lidar import LidarMeasurement, RPLidarSerial
 from src.sensors.imu import MPU9250, ImuSample
@@ -191,6 +193,61 @@ class ViewerClient:
         return True
 
 
+class SpeedLogWriter:
+    def __init__(self, path: Path) -> None:
+        self._path = path
+        self._file: TextIO = path.open("w", newline="")
+        self._writer = csv.writer(self._file)
+        self._writer.writerow(
+            [
+                "wall_time_epoch_s",
+                "monotonic_time_s",
+                "linear_speed_mps",
+                "angular_speed_rps",
+                "linear_cmd_mps",
+                "angular_cmd_rps",
+                "left_wheel_target_rad_s",
+                "right_wheel_target_rad_s",
+                "pose_x_m",
+                "pose_y_m",
+                "theta_rad",
+            ]
+        )
+        self._file.flush()
+
+    def log_sample(
+        self,
+        *,
+        monotonic_time: float,
+        linear_speed: float,
+        angular_speed: float,
+        pose: Pose2D,
+        command: CommandSnapshot,
+    ) -> None:
+        self._writer.writerow(
+            [
+                f"{time.time():.6f}",
+                f"{monotonic_time:.6f}",
+                f"{linear_speed:.6f}",
+                f"{angular_speed:.6f}",
+                f"{command.linear_command_mps:.6f}",
+                f"{command.angular_command_rps:.6f}",
+                f"{command.left_wheel_target_rad_s:.6f}",
+                f"{command.right_wheel_target_rad_s:.6f}",
+                f"{pose.x:.6f}",
+                f"{pose.y:.6f}",
+                f"{pose.theta:.6f}",
+            ]
+        )
+        self._file.flush()
+
+    def close(self) -> None:
+        try:
+            self._file.close()
+        except Exception:
+            pass
+
+
 class EncoderFeedbackAdapter(EncoderFeedback):
     def __init__(self, encoders: Sequence[QuadratureEncoder]) -> None:
         self._encoders = list(encoders)
@@ -216,6 +273,7 @@ class TriangleSlamNavigator:
         slam: SlamManager,
         planned_vertices: Sequence[Tuple[float, float]],
         viewer: Optional[ViewerClient],
+        speed_logger: Optional[SpeedLogWriter],
         lidar_max_range: float,
         slam_update_hz: float,
         map_hz: float,
@@ -229,6 +287,7 @@ class TriangleSlamNavigator:
         self._robot = robot_controller
         self._slam = slam
         self._viewer = viewer
+        self._speed_logger = speed_logger
         self._logger = logger
         self._lidar_max_range = float(lidar_max_range)
         self._slam_period = 1.0 / float(slam_update_hz)
@@ -244,6 +303,8 @@ class TriangleSlamNavigator:
         self._last_pose_for_slam: Optional[Pose2D] = None
         self._latest_scan: List[LidarMeasurement] = []
         self._running = False
+        self._last_speed_pose: Optional[Pose2D] = None
+        self._last_speed_time: Optional[float] = None
 
     async def run(self) -> None:
         self._running = True
@@ -293,6 +354,7 @@ class TriangleSlamNavigator:
                 pose = self._robot.pose
                 self._robot.reset_pose(Pose2D(pose.x, pose.y, self._imu_yaw))
             self._trajectory.append((self._robot.pose.x, self._robot.pose.y))
+            self._log_speed_sample(asyncio.get_running_loop().time())
             # Loop pacing
             elapsed = asyncio.get_running_loop().time() - start
             await asyncio.sleep(max(0.0, loop_interval - elapsed))
@@ -345,6 +407,32 @@ class TriangleSlamNavigator:
                 self._logger.exception("SLAM step failed")
             # Rate pacing (we already block on scan; small sleep to avoid tight loop if scan is fast)
             await asyncio.sleep(0.0)
+
+    def _log_speed_sample(self, timestamp: float) -> None:
+        if self._speed_logger is None:
+            return
+        pose = self._robot.pose
+        if self._last_speed_pose is None or self._last_speed_time is None:
+            self._last_speed_pose = Pose2D(pose.x, pose.y, pose.theta)
+            self._last_speed_time = timestamp
+            return
+        dt = timestamp - self._last_speed_time
+        if dt <= 0.0:
+            return
+        dx = pose.x - self._last_speed_pose.x
+        dy = pose.y - self._last_speed_pose.y
+        linear_speed = math.hypot(dx, dy) / dt
+        angular_speed = _wrap_angle(pose.theta - self._last_speed_pose.theta) / dt
+        command = self._robot.get_command_snapshot()
+        self._speed_logger.log_sample(
+            monotonic_time=timestamp,
+            linear_speed=linear_speed,
+            angular_speed=angular_speed,
+            pose=pose,
+            command=command,
+        )
+        self._last_speed_pose = Pose2D(pose.x, pose.y, pose.theta)
+        self._last_speed_time = timestamp
 
     async def _viewer_loop(self) -> None:
         if self._viewer is None:
@@ -605,6 +693,21 @@ async def run_test(args: argparse.Namespace) -> None:
     if viewer is not None:
         await viewer.connect()
 
+    # Speed logger
+    speed_logger: Optional[SpeedLogWriter] = None
+    speed_log_csv = args.speed_log_csv.strip()
+    if speed_log_csv:
+        speed_log_path = Path(speed_log_csv)
+        if not speed_log_path.is_absolute():
+            speed_log_path = (_ROBOT_DIR / speed_log_path).resolve()
+        try:
+            speed_log_path.parent.mkdir(parents=True, exist_ok=True)
+            speed_logger = SpeedLogWriter(speed_log_path)
+            logger.info("Logging speed samples to %s", speed_log_path)
+        except Exception as exc:
+            logger.error("Failed to initialize speed log file %s: %s", speed_log_path, exc)
+            speed_logger = None
+
     # Planned triangle
     planned = build_triangle_vertices(args.triangle_side)
     # Close the loop visually
@@ -621,6 +724,7 @@ async def run_test(args: argparse.Namespace) -> None:
         slam=slam,
         planned_vertices=planned,
         viewer=viewer,
+        speed_logger=speed_logger,
         lidar_max_range=args.lidar_max_range,
         slam_update_hz=SLAM_HZ,
         map_hz=MAP_HZ,
@@ -689,6 +793,11 @@ async def run_test(args: argparse.Namespace) -> None:
                 await viewer.close()
             except Exception:
                 logger.exception("Error while closing viewer")
+        if speed_logger is not None:
+            try:
+                speed_logger.close()
+            except Exception:
+                logger.exception("Error while closing speed log")
 
 
 def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
@@ -698,6 +807,12 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         type=str,
         default="ws://10.21.83.244:8765",
         help="Triangle viewer WebSocket URL (ws://host:port). Empty to disable streaming.",
+    )
+    parser.add_argument(
+        "--speed-log-csv",
+        type=str,
+        default="",
+        help="Optional CSV path for logging linear/angular speeds (empty to disable).",
     )
     parser.add_argument(
         "--lidar-port",
