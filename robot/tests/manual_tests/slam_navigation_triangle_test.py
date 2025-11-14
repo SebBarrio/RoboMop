@@ -446,6 +446,7 @@ def _build_motor_driver_and_controller(
     track_width_m: float,
     max_linear: float,
     max_angular: float,
+    heading_gate_deg: float,
     pos_kp: float,
     pos_ki: float,
     pos_kd: float,
@@ -514,6 +515,7 @@ def _build_motor_driver_and_controller(
         heading_pid=heading_pid,
         max_linear_speed=max_linear,
         max_angular_speed=max_angular,
+        heading_gate=math.radians(heading_gate_deg),
     )
     return driver, motor_controller, robot, gpio_encoders
 
@@ -574,6 +576,7 @@ async def run_test(args: argparse.Namespace) -> None:
         track_width_m=args.track_width,
         max_linear=args.max_linear,
         max_angular=args.max_angular,
+        heading_gate_deg=args.heading_gate_deg,
         pos_kp=args.pos_kp,
         pos_ki=args.pos_ki,
         pos_kd=args.pos_kd,
@@ -748,6 +751,12 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument("--head-kp", type=float, default=3.0, help="Heading PID Kp (default: 3.0)")
     parser.add_argument("--head-ki", type=float, default=0.05, help="Heading PID Ki (default: 0.05)")
     parser.add_argument("--head-kd", type=float, default=0.3, help="Heading PID Kd (default: 0.3)")
+    parser.add_argument(
+        "--heading-gate-deg",
+        type=float,
+        default=25.0,
+        help="Heading gate in degrees before allowing forward motion toward a goal (default: 25°)",
+    )
 
     parser.add_argument(
         "--log-level", type=str, default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"], help="Log level"
