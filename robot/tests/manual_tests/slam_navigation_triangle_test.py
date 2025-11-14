@@ -483,12 +483,12 @@ def _build_motor_driver_and_controller(
     # Motor controller config (feedforward with conservative defaults)
     motor_cfg = MotorControllerConfig(
         motor_to_encoder=EXPECTED_MOTOR_TO_ENCODER,
-        gear_ratio=1.0,
-        rotor_inertia=1.0e-4,
-        viscous_friction=1.0e-3,
-        torque_constant=0.05,
-        back_emf_constant=0.05,
-        winding_resistance=2.0,
+        gear_ratio=8.45,
+        rotor_inertia=0.001085,
+        viscous_friction=0.000467,
+        torque_constant=0.018803,
+        back_emf_constant=0.018803,
+        winding_resistance=0.091,
         loop_interval=loop_interval,
         pid=PIDSettings(
             kp=0.45,
