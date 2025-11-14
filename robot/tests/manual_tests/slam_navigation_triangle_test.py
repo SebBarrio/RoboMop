@@ -490,9 +490,9 @@ def _build_motor_driver_and_controller(
         winding_resistance=2.0,
         loop_interval=loop_interval,
         pid=PIDSettings(
-            kp=0.4,
-            ki=1.2,
-            kd=0.0,
+            kp=0.45,
+            ki=0.2,
+            kd=0.01,
             integrator_limit=supply_voltage,
             output_limits=(-supply_voltage, supply_voltage),
         ),
