@@ -446,6 +446,7 @@ def _build_motor_driver_and_controller(
     track_width_m: float,
     max_linear: float,
     max_angular: float,
+    motor_effort_scale: float,
     heading_gate_deg: float,
     pos_kp: float,
     pos_ki: float,
@@ -481,6 +482,9 @@ def _build_motor_driver_and_controller(
         enc.zero()
         gpio_encoders.append(enc)
     # Motor controller config (feedforward with conservative defaults)
+    # Scale integrator/output limits so we can clamp effective motor effort via CLI.
+    effort_scale = max(0.0, min(float(motor_effort_scale), 1.0))
+    max_effort_voltage = supply_voltage * effort_scale
     motor_cfg = MotorControllerConfig(
         motor_to_encoder=EXPECTED_MOTOR_TO_ENCODER,
         gear_ratio=8.45,
@@ -494,8 +498,8 @@ def _build_motor_driver_and_controller(
             kp=0.45,
             ki=0.2,
             kd=0.01,
-            integrator_limit=supply_voltage,
-            output_limits=(-supply_voltage, supply_voltage),
+            integrator_limit=max_effort_voltage,
+            output_limits=(-max_effort_voltage, max_effort_voltage),
         ),
     )
     feedback = EncoderFeedbackAdapter(gpio_encoders)
@@ -576,6 +580,7 @@ async def run_test(args: argparse.Namespace) -> None:
         track_width_m=args.track_width,
         max_linear=args.max_linear,
         max_angular=args.max_angular,
+        motor_effort_scale=args.motor_effort_scale,
         heading_gate_deg=args.heading_gate_deg,
         pos_kp=args.pos_kp,
         pos_ki=args.pos_ki,
@@ -727,6 +732,16 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
 
     parser.add_argument("--particles", type=int, default=DEFAULT_PARTICLES, help="Particle filter count (100-500)")
     parser.add_argument("--lidar-max-range", type=float, default=DEFAULT_LIDAR_MAX_RANGE, help="LIDAR max range (m)")
+
+    parser.add_argument(
+        "--motor-effort-scale",
+        type=float,
+        default=1.0,
+        help=(
+            "Scale factor in [0,1] applied to motor controller integrator and output voltage limits "
+            "to clamp effective motor effort (default: 1.0)."
+        ),
+    )
 
     # IMU options
     parser.add_argument("--imu-bus", type=int, default=1, help="I2C bus for IMU (default: 1)")
