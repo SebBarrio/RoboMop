@@ -20,7 +20,7 @@ from adafruit_pca9685 import PCA9685
 from gpiozero import RotaryEncoder
 
 # Constants from ControlLoopTest.py
-MOTOR_CHANNELS = ((0, 1), (2, 3), (4, 5), (6, 7))  # (forward, reverse) for motors 0-3
+MOTOR_CHANNELS = ((0, 1), (2, 3), (5, 4), (7, 6))  # (forward, reverse) for motors 0-3
 ENCODER_PINS = ((5, 6), (13, 26))  # (pin_a, pin_b) for encoders 0-1
 ENCODER_PPR = 400
 PWM_FREQUENCY = 1000
