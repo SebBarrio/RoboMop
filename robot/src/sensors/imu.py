@@ -406,14 +406,30 @@ class MPU9250:
         """Background thread for continuous sampling."""
         assert self._queue is not None
         assert self._loop is not None
-        
+
         def _safe_enqueue(item: ImuSample) -> None:
-            """Enqueue item, dropping it silently if queue is full."""
+            """Enqueue item, preferring the most recent data.
+
+            If the queue is full, drop the *oldest* sample to keep latency low,
+            then enqueue the new one.
+            """
+            queue = self._queue
+            if queue is None:
+                return
             try:
-                self._queue.put_nowait(item)
+                queue.put_nowait(item)
             except asyncio.QueueFull:
-                pass  # Drop sample when queue is full
-        
+                # Queue is full of older samples; drop one and retry once.
+                try:
+                    _ = queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    pass
+                try:
+                    queue.put_nowait(item)
+                except asyncio.QueueFull:
+                    # If we still can't enqueue, drop this sample.
+                    pass
+
         interval = 1.0 / self._sample_rate_hz
         next_deadline = time.perf_counter()
         while not self._stop_event.is_set():
