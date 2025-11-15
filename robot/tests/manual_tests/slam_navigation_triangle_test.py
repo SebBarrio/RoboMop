@@ -76,7 +76,6 @@ from src.control.motor_controller import (
     PIDSettings,
 )
 from src.control.pwm_controller import MotorChannelConfig, MotorDriver
-from src.control.pid import PIDController
 from src.control.robot_controller import CommandSnapshot, Pose2D, RobotController
 from src.sensors.encoders import EncoderReading, GpioZeroEncoderHardware, QuadratureEncoder
 from src.sensors.lidar import LidarMeasurement, RPLidarSerial
@@ -298,13 +297,26 @@ class TriangleSlamNavigator:
         self._imu_yaw: Optional[float] = None
 
         self._vertices = list(planned_vertices)
-        self._waypoint_index = 0
         self._trajectory: List[Tuple[float, float]] = []
         self._last_pose_for_slam: Optional[Pose2D] = None
         self._latest_scan: List[LidarMeasurement] = []
         self._running = False
         self._last_speed_pose: Optional[Pose2D] = None
         self._last_speed_time: Optional[float] = None
+
+        # Pure pursuit path-tracking configuration/state
+        # Lookahead distance should be large enough to smooth turns but
+        # small enough to keep the robot close to the path.
+        self._lookahead_distance: float = 0.3
+        # Forward speed used by the pure pursuit controller (m/s).
+        self._pure_pursuit_speed: float = 0.2
+        # Pre-compute segment lengths for the polyline path.
+        self._segment_lengths: List[float] = []
+        if len(self._vertices) >= 2:
+            for i in range(len(self._vertices) - 1):
+                x0, y0 = self._vertices[i]
+                x1, y1 = self._vertices[i + 1]
+                self._segment_lengths.append(math.hypot(x1 - x0, y1 - y0))
 
     async def run(self) -> None:
         self._running = True
@@ -336,17 +348,14 @@ class TriangleSlamNavigator:
                     self._logger.exception("Task %s failed", task.get_name())
 
     async def _control_loop(self) -> None:
-        """High-rate robot control loop and waypoint progression."""
+        """High-rate robot control loop using pure pursuit path tracking."""
         loop_interval = self._motor.loop_interval
-        self._logger.info("Starting control loop at %.1f Hz", 1.0 / loop_interval)
-        # Issue first waypoint
-        if self._vertices:
-            self._issue_next_waypoint()
+        self._logger.info("Starting control loop at %.1f Hz (pure pursuit)", 1.0 / loop_interval)
         while self._running:
-            start = asyncio.get_running_loop().time()
-            # Progress goals
-            if not self._robot.goal_active and self._vertices:
-                self._issue_next_waypoint()
+            loop = asyncio.get_running_loop()
+            start = loop.time()
+            # Compute pure pursuit linear/angular commands
+            self._update_pure_pursuit(loop_interval)
             # Update controller and integrate pose
             self._robot.update(dt=loop_interval)
             # Override heading with IMU yaw when available (IMU primary for theta)
@@ -354,18 +363,128 @@ class TriangleSlamNavigator:
                 pose = self._robot.pose
                 self._robot.reset_pose(Pose2D(pose.x, pose.y, self._imu_yaw))
             self._trajectory.append((self._robot.pose.x, self._robot.pose.y))
-            self._log_speed_sample(asyncio.get_running_loop().time())
+            self._log_speed_sample(loop.time())
             # Loop pacing
-            elapsed = asyncio.get_running_loop().time() - start
+            elapsed = loop.time() - start
             await asyncio.sleep(max(0.0, loop_interval - elapsed))
 
-    def _issue_next_waypoint(self) -> None:
-        if self._waypoint_index >= len(self._vertices):
-            # Finished one triangle lap; restart to keep moving
-            self._waypoint_index = 0
-        x, y = self._vertices[self._waypoint_index]
-        self._robot.set_pose_goal(x=x, y=y)
-        self._waypoint_index += 1
+    def _update_pure_pursuit(self, dt: float) -> None:
+        """Compute pure pursuit (v, ω) commands and send them to the robot controller."""
+        # If we do not have a valid path, stop the robot.
+        if len(self._vertices) < 2 or not self._segment_lengths:
+            self._robot.set_velocity_command(linear=0.0, angular=0.0)
+            return
+
+        pose = self._robot.pose
+        lookahead_point = self._compute_lookahead_point(pose.x, pose.y)
+        if lookahead_point is None:
+            self._robot.set_velocity_command(linear=0.0, angular=0.0)
+            return
+
+        lx, ly = lookahead_point
+
+        # Transform lookahead point into robot frame (x-forward, y-left)
+        dx = lx - pose.x
+        dy = ly - pose.y
+        cos_h = math.cos(pose.theta)
+        sin_h = math.sin(pose.theta)
+        x_r = cos_h * dx + sin_h * dy
+        y_r = -sin_h * dx + cos_h * dy
+
+        # If the lookahead point is effectively on top of us, stop.
+        if abs(x_r) < 1e-4 and abs(y_r) < 1e-4:
+            self._robot.set_velocity_command(linear=0.0, angular=0.0)
+            return
+
+        # Angle to lookahead in robot frame
+        alpha = math.atan2(y_r, x_r)
+
+        lookahead = max(self._lookahead_distance, 1e-3)
+        curvature = 2.0 * math.sin(alpha) / lookahead
+
+        # Base forward speed (could be scaled with curvature for tighter turns).
+        v = self._pure_pursuit_speed
+        omega = curvature * v
+
+        self._robot.set_velocity_command(linear=v, angular=omega)
+
+    def _compute_lookahead_point(self, x: float, y: float) -> Optional[Tuple[float, float]]:
+        """Return the lookahead point along the triangular path for pure pursuit.
+
+        The algorithm finds the closest point on the polyline path to the robot,
+        then walks forward along the path by the configured lookahead distance.
+        """
+        if not self._segment_lengths:
+            return None
+
+        seg_index, s_on_seg, _, _ = self._closest_point_on_path(x, y)
+
+        remaining_lookahead = self._lookahead_distance
+        s_along = s_on_seg
+        num_segments = len(self._segment_lengths)
+
+        while remaining_lookahead > 0.0:
+            seg_len = self._segment_lengths[seg_index]
+            if seg_len < 1e-6:
+                # Degenerate segment; skip to the next one.
+                seg_index = (seg_index + 1) % num_segments
+                s_along = 0.0
+                continue
+
+            distance_to_end = seg_len - s_along
+            if remaining_lookahead <= distance_to_end:
+                # Lookahead point lies within this segment.
+                target_s = s_along + remaining_lookahead
+                x0, y0 = self._vertices[seg_index]
+                x1, y1 = self._vertices[seg_index + 1]
+                ratio = target_s / seg_len
+                lx = x0 + (x1 - x0) * ratio
+                ly = y0 + (y1 - y0) * ratio
+                return lx, ly
+
+            # Move to next segment
+            remaining_lookahead -= distance_to_end
+            seg_index = (seg_index + 1) % num_segments
+            s_along = 0.0
+
+        # Fallback (should not normally be hit): return final vertex.
+        last_x, last_y = self._vertices[-1]
+        return last_x, last_y
+
+    def _closest_point_on_path(
+        self, x: float, y: float
+    ) -> Tuple[int, float, float, float]:
+        """Return the closest point on the polyline path to (x, y).
+
+        Returns (segment_index, distance_along_segment, closest_x, closest_y).
+        """
+        best_index = 0
+        best_distance = float("inf")
+        best_s = 0.0
+        best_x = self._vertices[0][0]
+        best_y = self._vertices[0][1]
+
+        for i, seg_len in enumerate(self._segment_lengths):
+            if seg_len < 1e-6:
+                continue
+            x0, y0 = self._vertices[i]
+            x1, y1 = self._vertices[i + 1]
+            vx = x1 - x0
+            vy = y1 - y0
+            # Project robot position onto the segment line.
+            t = ((x - x0) * vx + (y - y0) * vy) / (seg_len * seg_len)
+            t_clamped = max(0.0, min(1.0, t))
+            cx = x0 + vx * t_clamped
+            cy = y0 + vy * t_clamped
+            d = math.hypot(x - cx, y - cy)
+            if d < best_distance:
+                best_distance = d
+                best_index = i
+                best_s = seg_len * t_clamped
+                best_x = cx
+                best_y = cy
+
+        return best_index, best_s, best_x, best_y
 
     async def _slam_loop(self) -> None:
         """Lower-rate loop that waits for full LIDAR scans and updates SLAM."""
@@ -535,13 +654,6 @@ def _build_motor_driver_and_controller(
     max_linear: float,
     max_angular: float,
     motor_effort_scale: float,
-    heading_gate_deg: float,
-    pos_kp: float,
-    pos_ki: float,
-    pos_kd: float,
-    head_kp: float,
-    head_ki: float,
-    head_kd: float,
 ) -> Tuple[MotorDriver, MotorController, RobotController, List[QuadratureEncoder]]:
     # PCA9685
     i2c = busio.I2C(board.SCL, board.SDA)
@@ -592,22 +704,14 @@ def _build_motor_driver_and_controller(
     )
     feedback = EncoderFeedbackAdapter(gpio_encoders)
     motor_controller = MotorController(driver=driver, encoder_feedback=feedback, config=motor_cfg)
-    # High-level robot controller
-    position_pid = PIDController(kp=pos_kp, ki=pos_ki, kd=pos_kd, integrator_limit=0.5, output_limits=(-max_linear, max_linear))
-    heading_pid = PIDController(
-        kp=head_kp, ki=head_ki, kd=head_kd, integrator_limit=0.8, output_limits=(-max_angular, max_angular)
-    )
     robot = RobotController(
         motor_controller=motor_controller,
         track_width=track_width_m,
         wheel_radius=wheel_radius_m,
         left_motor_indices=(0, 1),
         right_motor_indices=(2, 3),
-        position_pid=position_pid,
-        heading_pid=heading_pid,
         max_linear_speed=max_linear,
         max_angular_speed=max_angular,
-        heading_gate=math.radians(heading_gate_deg),
     )
     return driver, motor_controller, robot, gpio_encoders
 
@@ -669,13 +773,6 @@ async def run_test(args: argparse.Namespace) -> None:
         max_linear=args.max_linear,
         max_angular=args.max_angular,
         motor_effort_scale=args.motor_effort_scale,
-        heading_gate_deg=args.heading_gate_deg,
-        pos_kp=args.pos_kp,
-        pos_ki=args.pos_ki,
-        pos_kd=args.pos_kd,
-        head_kp=args.head_kp,
-        head_ki=args.head_ki,
-        head_kd=args.head_kd,
     )
 
     # SLAM
@@ -872,20 +969,6 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         type=int,
         default=150,
         help="IMU warmup samples to collect while stationary before using yaw",
-    )
-
-    # PID tuning (tightened defaults)
-    parser.add_argument("--pos-kp", type=float, default=1.2, help="Position PID Kp (default: 1.2)")
-    parser.add_argument("--pos-ki", type=float, default=0.02, help="Position PID Ki (default: 0.02)")
-    parser.add_argument("--pos-kd", type=float, default=0.2, help="Position PID Kd (default: 0.2)")
-    parser.add_argument("--head-kp", type=float, default=3.0, help="Heading PID Kp (default: 3.0)")
-    parser.add_argument("--head-ki", type=float, default=0.05, help="Heading PID Ki (default: 0.05)")
-    parser.add_argument("--head-kd", type=float, default=0.3, help="Heading PID Kd (default: 0.3)")
-    parser.add_argument(
-        "--heading-gate-deg",
-        type=float,
-        default=25.0,
-        help="Heading gate in degrees before allowing forward motion toward a goal (default: 25°)",
     )
 
     parser.add_argument(
