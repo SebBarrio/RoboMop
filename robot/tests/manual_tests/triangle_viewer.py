@@ -71,6 +71,15 @@ class TriangleViewer:
             color="orange",
             bbox=dict(facecolor="white", alpha=0.6, edgecolor="none"),
         )
+        self.imu_heading_text = self.ax.text(
+            0.02,
+            0.90,
+            "IMU: --°",
+            transform=self.ax.transAxes,
+            fontsize=10,
+            color="purple",
+            bbox=dict(facecolor="white", alpha=0.6, edgecolor="none"),
+        )
         
         self.ax.legend(loc="upper right", fontsize=10)
         
@@ -125,6 +134,11 @@ class TriangleViewer:
                         heading_rad=pose.get("theta"),
                         heading_deg=heading_deg,
                     )
+                    if "imuHeadingDeg" in data:
+                        imu_heading = data["imuHeadingDeg"]
+                        self.imu_heading_text.set_text(f"IMU: {imu_heading:.1f}°")
+                    else:
+                        self.imu_heading_text.set_text("IMU: --°")
                     
                     # Update LIDAR scan if present
                     if "lidarScan" in data and data["lidarScan"]:

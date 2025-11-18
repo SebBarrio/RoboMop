@@ -270,32 +270,63 @@ async def _initialize_and_warmup_imu(
     return bias
 
 
-async def _imu_sampling_loop(
-    imu: MPU9250,
-    *,
-    fusion: HeadingFusion,
-    sample_rate_hz: float,
-    stop_event: asyncio.Event,
-    logger: logging.Logger,
-) -> None:
-    """Continuously read IMU samples and feed yaw into the fusion helper."""
+class ImuSampler(threading.Thread):
+    """Dedicated thread that samples the IMU at a fixed cadence."""
 
-    period = 1.0 / sample_rate_hz if sample_rate_hz > 0.0 else 0.02
-    try:
-        while not stop_event.is_set():
-            loop = asyncio.get_running_loop()
-            start = loop.time()
+    def __init__(
+        self,
+        imu: MPU9250,
+        fusion: HeadingFusion,
+        *,
+        sample_rate_hz: float,
+        logger: logging.Logger,
+    ) -> None:
+        super().__init__(name="imu-sampler", daemon=True)
+        self._imu = imu
+        self._fusion = fusion
+        self._logger = logger
+        self._period = 1.0 / sample_rate_hz if sample_rate_hz > 0.0 else 0.05
+        self._stop_event = threading.Event()
+        self._last_heading: Optional[float] = None
+        self._last_update: float = 0.0
+
+    def run(self) -> None:
+        next_deadline = time.perf_counter()
+        while not self._stop_event.is_set():
             try:
-                sample = await loop.run_in_executor(None, imu.read_sample)
+                sample = self._imu.read_sample()
             except Exception as exc:  # pragma: no cover - hardware error path
-                logger.warning("IMU read failed: %s", exc)
-                await asyncio.sleep(0.1)
+                self._logger.warning("IMU read failed: %s", exc)
+                time.sleep(0.1)
+                next_deadline = time.perf_counter() + self._period
                 continue
-            fusion.update_from_imu(sample.orientation.yaw)
-            elapsed = loop.time() - start
-            await asyncio.sleep(max(0.0, period - elapsed))
-    finally:
-        await asyncio.to_thread(_close_imu_bus, imu, logger)
+
+            heading = sample.orientation.yaw
+            self._fusion.update_from_imu(heading)
+            self._last_heading = heading
+            self._last_update = time.time()
+
+            next_deadline += self._period
+            sleep_time = next_deadline - time.perf_counter()
+            if sleep_time > 0.0:
+                time.sleep(sleep_time)
+            else:
+                next_deadline = time.perf_counter() + self._period
+
+    def stop(self) -> None:
+        self._stop_event.set()
+        self.join(timeout=1.0)
+        _close_imu_bus(self._imu, self._logger)
+
+    def latest_heading_deg(self) -> Optional[float]:
+        if self._last_heading is None:
+            return None
+        return math.degrees(self._last_heading)
+
+    def seconds_since_update(self) -> Optional[float]:
+        if self._last_update <= 0.0:
+            return None
+        return time.time() - self._last_update
 
 
 def _close_imu_bus(imu: MPU9250, logger: logging.Logger) -> None:
@@ -327,6 +358,7 @@ class TriangleSlamNavigator:
         planned_vertices: Sequence[Tuple[float, float]],
         viewer: Optional[ViewerClient],
         heading_fusion: Optional[HeadingFusion],
+        imu_sampler: Optional[ImuSampler],
         lidar_max_range: float,
         slam_update_hz: float,
         map_hz: float,
@@ -339,6 +371,7 @@ class TriangleSlamNavigator:
         self._slam = slam
         self._viewer = viewer
         self._heading_fusion = heading_fusion
+        self._imu_sampler = imu_sampler
         self._logger = logger
         self._lidar_max_range = float(lidar_max_range)
         self._slam_period = 1.0 / float(slam_update_hz)
@@ -520,6 +553,13 @@ class TriangleSlamNavigator:
             "plannedVertices": list(self._vertices),
             "lidarScan": [[float(m.angle_radians), float(max(0.0, m.distance_m))] for m in self._latest_scan[-720:]],
         }
+        if self._imu_sampler is not None:
+            imu_heading = self._imu_sampler.latest_heading_deg()
+            if imu_heading is not None:
+                payload["imuHeadingDeg"] = imu_heading
+                age = self._imu_sampler.seconds_since_update()
+                if age is not None:
+                    payload["imuHeadingAgeSec"] = age
         await self._viewer.send_update(payload)
 
     async def _send_map_update(self) -> None:
@@ -680,8 +720,7 @@ async def run_test(args: argparse.Namespace) -> None:
 
     imu: Optional[MPU9250] = None
     heading_fusion: Optional[HeadingFusion] = None
-    imu_stop_event: Optional[asyncio.Event] = None
-    imu_task: Optional[asyncio.Task[None]] = None
+    imu_sampler: Optional[ImuSampler] = None
 
     # LIDAR
     lidar = RPLidarSerial(port=args.lidar_port, baud_rate=args.lidar_baud, serial_timeout=args.lidar_timeout)
@@ -698,17 +737,13 @@ async def run_test(args: argparse.Namespace) -> None:
                 logger=logger,
             )
             heading_fusion = HeadingFusion(blend=args.imu_heading_blend, yaw_bias=yaw_bias)
-            imu_stop_event = asyncio.Event()
-            imu_task = asyncio.create_task(
-                _imu_sampling_loop(
-                    imu,
-                    fusion=heading_fusion,
-                    sample_rate_hz=args.imu_rate,
-                    stop_event=imu_stop_event,
-                    logger=logger,
-                ),
-                name="imu-loop",
+            imu_sampler = ImuSampler(
+                imu=imu,
+                fusion=heading_fusion,
+                sample_rate_hz=args.imu_rate,
+                logger=logger,
             )
+            imu_sampler.start()
         except Exception:
             heading_fusion = None
             imu = None
@@ -756,6 +791,7 @@ async def run_test(args: argparse.Namespace) -> None:
         planned_vertices=planned,
         viewer=viewer,
         heading_fusion=heading_fusion,
+        imu_sampler=imu_sampler,
         lidar_max_range=args.lidar_max_range,
         slam_update_hz=SLAM_HZ,
         map_hz=MAP_HZ,
@@ -791,13 +827,11 @@ async def run_test(args: argparse.Namespace) -> None:
         pass
     finally:
         logger.info("Shutting down...")
-        if imu_stop_event is not None:
-            imu_stop_event.set()
-        if imu_task is not None:
+        if imu_sampler is not None:
             try:
-                await imu_task
-            except asyncio.CancelledError:
-                pass
+                imu_sampler.stop()
+            except Exception:
+                logger.exception("Error while stopping IMU sampler")
         elif imu is not None:
             await asyncio.to_thread(_close_imu_bus, imu, logger)
         # Stop motors
