@@ -141,10 +141,14 @@ class MPU9250:
         address: int = 0x68,
         sample_rate_hz: float = 100.0,
         filter_alpha: float = 0.98,
+        gyro_scale_correction: float = 1.0,
+        enable_magnetometer: bool = True,
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         self._sample_rate_hz = sample_rate_hz
         self._filter_alpha = filter_alpha
+        self._gyro_scale_correction = gyro_scale_correction
+        self._want_magnetometer = enable_magnetometer
         self._sleep = sleep
 
         # I2C bus and addressing
@@ -220,18 +224,21 @@ class MPU9250:
         self._sleep(0.01)
 
         # Enable I2C bypass for direct AK8963 access and try to init magnetometer
-        try:
-            self._bus.write_byte_data(self._mpu_address, INT_PIN_CFG, 0x02)
-            self._sleep(0.01)
-            mag_id = self._bus.read_byte_data(AK8963_ADDRESS, AK8963_WHO_AM_I)
-            if mag_id == 0x48:
-                # 100Hz, 16-bit
-                self._bus.write_byte_data(AK8963_ADDRESS, AK8963_CNTL1, 0x16)
+        if self._want_magnetometer:
+            try:
+                self._bus.write_byte_data(self._mpu_address, INT_PIN_CFG, 0x02)
                 self._sleep(0.01)
-                self._magnetometer_enabled = True
-            else:
+                mag_id = self._bus.read_byte_data(AK8963_ADDRESS, AK8963_WHO_AM_I)
+                if mag_id == 0x48:
+                    # 100Hz, 16-bit
+                    self._bus.write_byte_data(AK8963_ADDRESS, AK8963_CNTL1, 0x16)
+                    self._sleep(0.01)
+                    self._magnetometer_enabled = True
+                else:
+                    self._magnetometer_enabled = False
+            except Exception:
                 self._magnetometer_enabled = False
-        except Exception:
+        else:
             self._magnetometer_enabled = False
 
         # Calibrate gyro while stationary
@@ -335,10 +342,11 @@ class MPU9250:
             gz_db = _apply_deadband(self._gyro_fz)
 
             # Convert gyro to rad/s for filter
+            # Apply optional manual scale correction
             angular_velocity = Vector3(
-                math.radians(gx_db),
-                math.radians(gy_db),
-                math.radians(gz_db),
+                math.radians(gx_db * self._gyro_scale_correction),
+                math.radians(gy_db * self._gyro_scale_correction),
+                math.radians(gz_db * self._gyro_scale_correction),
             )
 
             acceleration = Vector3(self._accel_fx, self._accel_fy, self._accel_fz)

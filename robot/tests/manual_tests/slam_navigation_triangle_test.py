@@ -764,7 +764,13 @@ async def run_test(args: argparse.Namespace) -> None:
     # IMU (optional)
     if args.use_imu:
         try:
-            imu = MPU9250(bus=args.imu_bus, address=args.imu_address, sample_rate_hz=args.imu_rate)
+            imu = MPU9250(
+                bus=args.imu_bus,
+                address=args.imu_address,
+                sample_rate_hz=args.imu_rate,
+                gyro_scale_correction=args.gyro_scale,
+                enable_magnetometer=args.use_mag,
+            )
             yaw_bias = await _initialize_and_warmup_imu(
                 imu,
                 warmup_seconds=args.imu_warmup,
@@ -943,6 +949,18 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument("--no-imu", dest="use_imu", action="store_false", help="Disable IMU")
     parser.add_argument("--imu-rate", type=float, default=100.0, help="IMU sampling rate for fusion (Hz)")
     parser.add_argument("--imu-warmup", type=float, default=10.0, help="IMU warmup duration before use (s)")
+    parser.add_argument(
+        "--gyro-scale",
+        type=float,
+        default=1.0,
+        help="Manual multiplier for gyro readings (e.g. 0.5 if angle is 2x)",
+    )
+    parser.add_argument(
+        "--use-mag",
+        action="store_true",
+        default=False,
+        help="Enable magnetometer (disabled by default to prevent magnetic interference)",
+    )
     parser.add_argument(
         "--imu-heading-blend",
         type=float,
