@@ -36,9 +36,11 @@ import math
 import signal
 import sys
 import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from collections import deque
+from typing import Any, Deque, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -345,9 +347,11 @@ class TriangleSlamNavigator:
 
         self._vertices = list(planned_vertices)
         self._waypoint_index = 0
-        self._trajectory: List[Tuple[float, float]] = []
+        self._trajectory: Deque[Tuple[float, float]] = deque(maxlen=2000)
+        self._trajectory_lock = threading.Lock()
+        self._pose_lock = threading.Lock()
+        self._pose_snapshot: Pose2D = Pose2D()
         self._last_pose_for_slam: Optional[Pose2D] = None
-        self._fused_pose: Optional[Pose2D] = None
         self._latest_scan: List[LidarMeasurement] = []
         self._running = False
 
@@ -360,13 +364,14 @@ class TriangleSlamNavigator:
 
     async def _run_all_tasks(self) -> None:
         tasks = [
-            asyncio.create_task(self._control_loop(), name="control-loop"),
+            asyncio.create_task(self._run_control_thread(), name="control-loop"),
             asyncio.create_task(self._slam_loop(), name="slam-loop"),
             asyncio.create_task(self._viewer_loop(), name="viewer-loop"),
         ]
         try:
             await asyncio.wait(tasks, return_when=asyncio.FIRST_EXCEPTION)
         finally:
+            self._running = False
             for task in tasks:
                 if not task.done():
                     task.cancel()
@@ -378,26 +383,35 @@ class TriangleSlamNavigator:
                 except Exception:
                     self._logger.exception("Task %s failed", task.get_name())
 
-    async def _control_loop(self) -> None:
-        """High-rate robot control loop and waypoint progression."""
+    async def _run_control_thread(self) -> None:
+        await asyncio.to_thread(self._control_loop_thread)
+
+    def _control_loop_thread(self) -> None:
+        """High-rate robot control loop running in a dedicated OS thread."""
         loop_interval = self._motor.loop_interval
-        self._logger.info("Starting control loop at %.1f Hz", 1.0 / loop_interval)
-        # Issue first waypoint
+        self._logger.info("Starting control loop thread at %.1f Hz", 1.0 / loop_interval)
         if self._vertices:
             self._issue_next_waypoint()
         self._update_fused_pose()
+        last_time = time.perf_counter()
+        next_tick = last_time + loop_interval
         while self._running:
-            start = asyncio.get_running_loop().time()
-            # Progress goals
+            now = time.perf_counter()
+            dt = max(1e-4, now - last_time)
+            last_time = now
+            try:
+                self._robot.update(dt=dt)
+            except Exception:
+                self._logger.exception("Robot controller update failed")
+            self._update_fused_pose()
             if not self._robot.goal_active and self._vertices:
                 self._issue_next_waypoint()
-            # Update controller and integrate pose
-            self._robot.update(dt=loop_interval)
-            pose = self._update_fused_pose()
-            self._trajectory.append((pose.x, pose.y))
-            # Loop pacing
-            elapsed = asyncio.get_running_loop().time() - start
-            await asyncio.sleep(max(0.0, loop_interval - elapsed))
+            sleep_time = next_tick - time.perf_counter()
+            if sleep_time > 0.0:
+                time.sleep(sleep_time)
+                next_tick += loop_interval
+            else:
+                next_tick = time.perf_counter() + loop_interval
 
     def _issue_next_waypoint(self) -> None:
         if self._waypoint_index >= len(self._vertices):
@@ -413,14 +427,32 @@ class TriangleSlamNavigator:
         if self._heading_fusion is not None:
             theta = self._heading_fusion.fuse(theta)
         fused = Pose2D(pose.x, pose.y, theta)
-        self._fused_pose = fused
+        self._set_pose_snapshot(fused)
+        self._append_trajectory(fused)
         return fused
+
+    def _set_pose_snapshot(self, pose: Pose2D) -> None:
+        with self._pose_lock:
+            self._pose_snapshot = pose
+
+    def _get_pose_snapshot(self) -> Pose2D:
+        with self._pose_lock:
+            snapshot = self._pose_snapshot
+        return Pose2D(snapshot.x, snapshot.y, snapshot.theta)
+
+    def _append_trajectory(self, pose: Pose2D) -> None:
+        with self._trajectory_lock:
+            self._trajectory.append((pose.x, pose.y))
+
+    def _get_recent_trajectory(self) -> List[Tuple[float, float]]:
+        with self._trajectory_lock:
+            return list(self._trajectory)
 
     async def _slam_loop(self) -> None:
         """Lower-rate loop that waits for full LIDAR scans and updates SLAM."""
         self._logger.info("Starting SLAM loop at %.1f Hz (scan-blocking)", 1.0 / self._slam_period)
         # Initialize last pose for odometry delta
-        fused = self._fused_pose or self._robot.pose
+        fused = self._get_pose_snapshot()
         self._last_pose_for_slam = Pose2D(fused.x, fused.y, fused.theta)
         while self._running:
             # Read one full revolution
@@ -433,8 +465,7 @@ class TriangleSlamNavigator:
             # Compute body-frame odometry delta since last SLAM step
             assert self._last_pose_for_slam is not None
             prev = self._last_pose_for_slam
-            curr_source = self._fused_pose or self._robot.pose
-            curr = Pose2D(curr_source.x, curr_source.y, curr_source.theta)
+            curr = self._get_pose_snapshot()
             dx_world = curr.x - prev.x
             dy_world = curr.y - prev.y
             dtheta = _wrap_angle(curr.theta - prev.theta)
@@ -480,12 +511,12 @@ class TriangleSlamNavigator:
     async def _send_state_update(self) -> None:
         if self._viewer is None:
             return
-        pose = self._fused_pose or self._robot.pose
+        pose = self._get_pose_snapshot()
         payload: Dict[str, Any] = {
             "type": "triangle_update",
             "pose": {"x": pose.x, "y": pose.y, "theta": pose.theta},
             "poseHeadingDeg": math.degrees(pose.theta),
-            "trajectory": list(self._trajectory[-2000:]),
+            "trajectory": self._get_recent_trajectory(),
             "plannedVertices": list(self._vertices),
             "lidarScan": [[float(m.angle_radians), float(max(0.0, m.distance_m))] for m in self._latest_scan[-720:]],
         }
@@ -842,7 +873,7 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument("--use-imu", dest="use_imu", action="store_true", default=True, help="Enable IMU fusion")
     parser.add_argument("--no-imu", dest="use_imu", action="store_false", help="Disable IMU")
     parser.add_argument("--imu-rate", type=float, default=100.0, help="IMU sampling rate for fusion (Hz)")
-    parser.add_argument("--imu-warmup", type=float, default=2.0, help="IMU warmup duration before use (s)")
+    parser.add_argument("--imu-warmup", type=float, default=10.0, help="IMU warmup duration before use (s)")
     parser.add_argument(
         "--imu-heading-blend",
         type=float,
