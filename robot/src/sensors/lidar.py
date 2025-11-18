@@ -80,18 +80,26 @@ class RPLidarSerial:
     async def __aexit__(self, exc_type, exc, tb) -> None:
         await self.stop()
 
-    async def start(self) -> None:
-        """Open the serial port, reset device, and start measurement streaming."""
-
+    async def connect(self) -> None:
+        """Open the serial port without starting scanning."""
         if self._serial is not None:
-            print(f"LIDAR already started on {self._port}")
             return
-
-        print(f"Starting RPLIDAR on {self._port} at {self._baud_rate} baud")
+            
+        print(f"Opening RPLIDAR serial port {self._port} at {self._baud_rate} baud")
         self._loop = asyncio.get_running_loop()
         await asyncio.to_thread(self._open_serial)
         print("✓ Serial port opened")
-        
+
+    async def start(self) -> None:
+        """Open the serial port (if needed), reset device, and start measurement streaming."""
+
+        if self._serial is None:
+            await self.connect()
+            
+        if self._reader_thread is not None:
+            print(f"LIDAR scan already running on {self._port}")
+            return
+
         # Reset device to ensure clean state
         print("Resetting LIDAR device...")
         await asyncio.to_thread(self._send_command, self.CMD_RESET)
@@ -139,8 +147,8 @@ class RPLidarSerial:
         self._reader_thread.start()
         print("✓ RPLIDAR reader thread started")
 
-    async def stop(self) -> None:
-        """Stop scanning and close the serial connection."""
+    async def stop(self, close_serial: bool = True) -> None:
+        """Stop scanning and optionally close the serial connection."""
 
         if self._serial is None:
             return
@@ -152,12 +160,16 @@ class RPLidarSerial:
         self._stop_event.set()
         if self._reader_thread is not None:
             self._reader_thread.join(timeout=2.0)
-        await asyncio.to_thread(self._close_serial)
+        
+        if close_serial:
+            await asyncio.to_thread(self._close_serial)
+            
         if self._queue is not None:
             await self._queue.put(None)
         self._packet_size = 0
         self._queue = None
-        self._loop = None
+        if close_serial:
+            self._loop = None
         self._reader_thread = None
         print("✓ RPLIDAR stopped")
 

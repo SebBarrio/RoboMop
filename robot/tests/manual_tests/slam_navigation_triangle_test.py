@@ -731,8 +731,14 @@ async def run_test(args: argparse.Namespace) -> None:
 
     # LIDAR
     lidar = RPLidarSerial(port=args.lidar_port, baud_rate=args.lidar_baud, serial_timeout=args.lidar_timeout)
-    await lidar.start()
+    await lidar.connect()
+    # Ensure we are not scanning so we can run preflight checks cleanly
+    await lidar.stop(close_serial=False)
 
+    # Preflight checks
+    logger.info("Preflight checks...")
+    await _preflight_checks(lidar=lidar, logger=logger)
+    
     # IMU (optional)
     if args.use_imu:
         try:
@@ -786,8 +792,8 @@ async def run_test(args: argparse.Namespace) -> None:
     # Close the loop visually
     planned.append(planned[0])
 
-    logger.info("Preflight checks...")
-    await _preflight_checks(lidar=lidar, logger=logger)
+    logger.info("Starting LIDAR scan...")
+    await lidar.start()
 
     # Navigator
     navigator = TriangleSlamNavigator(
