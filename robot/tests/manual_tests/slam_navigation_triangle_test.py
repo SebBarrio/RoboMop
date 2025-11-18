@@ -501,7 +501,17 @@ class TriangleSlamNavigator:
             if not scan:
                 continue
             # Build scan array
-            scan_array = np.array([[m.angle_radians, max(0.0, float(m.distance_m))] for m in scan], dtype=float)
+            # Filter out low-quality measurements (quality=0) to avoid "ghost" obstacles/rays
+            scan_array = np.array(
+                [
+                    [m.angle_radians, max(0.0, float(m.distance_m))]
+                    for m in scan
+                    if m.quality > 0
+                ],
+                dtype=float,
+            )
+            if scan_array.size == 0:
+                continue
             # Compute body-frame odometry delta since last SLAM step
             assert self._last_pose_for_slam is not None
             prev = self._last_pose_for_slam

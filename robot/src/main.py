@@ -547,7 +547,11 @@ class RobotApp:
             self._sensor_fusion.update_omega(w_meas)
             self._velocity = {"linear": v_meas, "angular": w_meas}
             # SLAM integration
-            lidar_measurements = [(m.angle_radians, m.distance_m) for m in snapshot.lidar_scan]
+            lidar_measurements = [
+                (m.angle_radians, m.distance_m)
+                for m in snapshot.lidar_scan
+                if m.quality > 0
+            ]
             self._latest_lidar_scan = lidar_measurements
             if lidar_measurements:
                 dx_body = v_meas * dt
@@ -642,7 +646,9 @@ class RobotApp:
                     self._sensor_fusion.update_omega(omega_meas)
 
                 lidar_measurements = [
-                    (m.angle_radians, m.distance_m) for m in snapshot.lidar_scan
+                    (m.angle_radians, m.distance_m)
+                    for m in snapshot.lidar_scan
+                    if m.quality > 0
                 ]
                 
                 # Cache LIDAR scan for visualization
