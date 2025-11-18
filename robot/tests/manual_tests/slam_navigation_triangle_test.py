@@ -313,6 +313,10 @@ class TriangleSlamNavigator:
         self._min_turn_speed: float = 0.03
         self._curvature_slowdown_threshold: float = 1.2
         self._pivot_curvature_threshold: float = 2.4
+        self._pivot_exit_curvature: float = 0.8 * self._pivot_curvature_threshold
+        self._pivot_active: bool = False
+        self._pivot_direction_sign: float = 0.0
+        self._lookahead_forward_epsilon: float = 0.02
         self._path_regression_margin: float = 0.5 * self._lookahead_distance
         self._last_command_log_time: float = 0.0
         # Pre-compute segment lengths for the polyline path.
@@ -424,15 +428,23 @@ class TriangleSlamNavigator:
         v_cmd = min(self._pure_pursuit_speed, self._max_linear_speed)
         curv_mag = abs(curvature)
 
+        # Handle active pivot mode with hysteresis before evaluating new triggers.
+        if self._pivot_active:
+            if x_r >= self._lookahead_forward_epsilon and curv_mag <= self._pivot_exit_curvature:
+                self._pivot_active = False
+            else:
+                self._apply_pivot_command(curvature=curvature, reason="active")
+                return
+
+        # Trigger pivot when the lookahead point falls behind the robot.
+        if x_r < 0.0 and abs(y_r) > 1e-3:
+            self._start_pivot(direction_hint=y_r, reason="behind")
+            self._apply_pivot_command(curvature=curvature, reason="behind")
+            return
+
         if curv_mag >= self._pivot_curvature_threshold:
-            omega_cmd = math.copysign(self._max_angular_speed, curvature)
-            self._robot.set_velocity_command(linear=0.0, angular=omega_cmd)
-            self._log_velocity_command(
-                linear=0.0,
-                angular=omega_cmd,
-                curvature=curvature,
-                mode="pivot",
-            )
+            self._start_pivot(direction_hint=curvature, reason="curvature")
+            self._apply_pivot_command(curvature=curvature, reason="curvature")
             return
 
         if curv_mag > self._curvature_slowdown_threshold:
@@ -606,13 +618,34 @@ class TriangleSlamNavigator:
     def _log_velocity_command(self, *, linear: float, angular: float, curvature: float, mode: str) -> None:
         """Emit periodic logs for commanded linear/angular velocity."""
         now = time.monotonic()
-        if mode != "pivot" and now - self._last_command_log_time < 0.5:
+        is_pivot_mode = mode.startswith("pivot")
+        if not is_pivot_mode and now - self._last_command_log_time < 0.5:
             return
         self._last_command_log_time = now
         msg = f"{mode} command: v={linear:.3f} m/s, ω={angular:.3f} rad/s, κ={curvature:.3f} 1/m"
         self._logger.info(msg)
-        if mode == "pivot":
+        if is_pivot_mode:
             print(f"[pivot] {msg}")
+
+    def _start_pivot(self, *, direction_hint: float, reason: str) -> None:
+        sign = 1.0 if direction_hint >= 0.0 else -1.0
+        if sign == 0.0:
+            sign = 1.0
+        self._pivot_direction_sign = sign
+        self._pivot_active = True
+        self._logger.info("Entering pivot mode (%s), dir=%+.0f", reason, sign)
+
+    def _apply_pivot_command(self, *, curvature: float, reason: str) -> None:
+        if self._pivot_direction_sign == 0.0:
+            self._pivot_direction_sign = 1.0 if curvature >= 0.0 else -1.0
+        omega_cmd = self._pivot_direction_sign * self._max_angular_speed
+        self._robot.set_velocity_command(linear=0.0, angular=omega_cmd)
+        self._log_velocity_command(
+            linear=0.0,
+            angular=omega_cmd,
+            curvature=curvature,
+            mode=f"pivot:{reason}",
+        )
 
     async def _viewer_loop(self) -> None:
         if self._viewer is None:
