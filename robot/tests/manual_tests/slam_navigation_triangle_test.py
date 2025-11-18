@@ -233,9 +233,10 @@ class EncoderFeedbackAdapter(EncoderFeedback):
 class HeadingFusion:
     """Blends IMU yaw with wheel-odometry heading for improved estimates."""
 
-    def __init__(self, *, blend: float, yaw_bias: float = 0.0) -> None:
+    def __init__(self, *, blend: float, yaw_bias: float = 0.0, invert: bool = False) -> None:
         self._blend = max(0.0, min(1.0, blend))
         self._yaw_bias = yaw_bias
+        self._invert = invert
         self._latest_yaw: Optional[float] = None
         self._lock = threading.Lock()
 
@@ -243,6 +244,8 @@ class HeadingFusion:
         self._yaw_bias = bias
 
     def update_from_imu(self, raw_yaw: float) -> None:
+        if self._invert:
+            raw_yaw = -raw_yaw
         corrected = _wrap_angle(raw_yaw - self._yaw_bias)
         with self._lock:
             self._latest_yaw = corrected
@@ -279,6 +282,7 @@ async def _initialize_and_warmup_imu(
     warmup_seconds: float,
     sample_rate_hz: float,
     logger: logging.Logger,
+    invert: bool = False,
 ) -> float:
     """Initialize the IMU, run calibration, and collect samples to estimate yaw bias."""
 
@@ -292,7 +296,10 @@ async def _initialize_and_warmup_imu(
     yaw_samples: list[float] = []
     for _ in range(total_samples):
         sample = await loop.run_in_executor(None, imu.read_sample)
-        yaw_samples.append(sample.orientation.yaw)
+        yaw = sample.orientation.yaw
+        if invert:
+            yaw = -yaw
+        yaw_samples.append(yaw)
         await asyncio.sleep(max(0.0, 1.0 / sample_rate_hz))
     bias = _mean_angle(yaw_samples)
     logger.info("IMU warmup complete (yaw bias %.3f rad)", bias)
@@ -920,8 +927,13 @@ async def run_test(args: argparse.Namespace) -> None:
                 warmup_seconds=args.imu_warmup,
                 sample_rate_hz=args.imu_rate,
                 logger=logger,
+                invert=args.invert_imu,
             )
-            heading_fusion = HeadingFusion(blend=args.imu_heading_blend, yaw_bias=yaw_bias)
+            heading_fusion = HeadingFusion(
+                blend=args.imu_heading_blend,
+                yaw_bias=yaw_bias,
+                invert=args.invert_imu,
+            )
             imu_sampler = ImuSampler(
                 imu=imu,
                 fusion=heading_fusion,
@@ -1120,6 +1132,7 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     )
     parser.add_argument("--imu-bus", type=int, default=1, help="I2C bus number for IMU")
     parser.add_argument("--imu-address", type=lambda x: int(x, 0), default=0x68, help="IMU I2C address (hex, default 0x68)")
+    parser.add_argument("--invert-imu", action="store_true", default=True, help="Invert IMU yaw polarity")
 
     parser.add_argument(
         "--log-level", type=str, default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"], help="Log level"
