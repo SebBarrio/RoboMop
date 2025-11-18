@@ -310,6 +310,12 @@ class TriangleSlamNavigator:
         self._lookahead_distance: float = 0.3
         # Forward speed used by the pure pursuit controller (m/s).
         self._pure_pursuit_speed: float = 0.2
+        self._min_tracking_speed: float = 0.05
+        self._heading_gate_rad: float = math.radians(40.0)
+        self._turn_in_place_gain: float = 2.0  # rad/s per rad
+        self._curvature_speed_gain: float = 0.5
+        self._max_linear_speed: float = getattr(self._robot, "max_linear_speed", DEFAULT_MAX_LINEAR)
+        self._max_angular_speed: float = getattr(self._robot, "max_angular_speed", DEFAULT_MAX_ANGULAR)
         # Pre-compute segment lengths for the polyline path.
         self._segment_lengths: List[float] = []
         if len(self._vertices) >= 2:
@@ -398,13 +404,29 @@ class TriangleSlamNavigator:
 
         # Angle to lookahead in robot frame
         alpha = math.atan2(y_r, x_r)
+        abs_alpha = abs(alpha)
 
         lookahead = max(self._lookahead_distance, 1e-3)
+
+        # If heading error is large, rotate in place before driving forward.
+        if abs_alpha >= self._heading_gate_rad:
+            omega = math.copysign(
+                min(self._max_angular_speed, self._turn_in_place_gain * abs_alpha),
+                alpha,
+            )
+            self._robot.set_velocity_command(linear=0.0, angular=omega)
+            return
+
         curvature = 2.0 * math.sin(alpha) / lookahead
 
-        # Base forward speed (could be scaled with curvature for tighter turns).
-        v = self._pure_pursuit_speed
+        # Scale linear speed down as curvature/heading error grows to avoid oscillations.
+        heading_scale = max(0.0, math.cos(alpha))
+        curvature_scale = 1.0 / (1.0 + self._curvature_speed_gain * abs(curvature))
+        v = self._pure_pursuit_speed * heading_scale * curvature_scale
+        v = max(self._min_tracking_speed, min(v, self._max_linear_speed))
+
         omega = curvature * v
+        omega = max(-self._max_angular_speed, min(self._max_angular_speed, omega))
 
         self._robot.set_velocity_command(linear=v, angular=omega)
 
