@@ -171,9 +171,14 @@ class SlamManager:
         for angle, distance in scan:
             if not math.isfinite(distance) or distance <= 0.0:
                 continue
-            clipped_distance = min(distance, self._max_range)
-            hit_x = sensor_x + clipped_distance * math.cos(sensor_heading + angle)
-            hit_y = sensor_y + clipped_distance * math.sin(sensor_heading + angle)
+            
+            # Ignore measurements beyond max_range for localization to avoid
+            # hallucinating walls at the clipping boundary.
+            if distance > self._max_range:
+                continue
+
+            hit_x = sensor_x + distance * math.cos(sensor_heading + angle)
+            hit_y = sensor_y + distance * math.sin(sensor_heading + angle)
             cell = self._world_to_cell(hit_x, hit_y)
             if cell is None:
                 score -= 0.5
@@ -185,7 +190,8 @@ class SlamManager:
             elif occupancy == OccupancyGrid.UNKNOWN_VALUE:
                 score += 0.4
             else:
-                score += 0.1
+                # Penalize hits in known free space
+                score -= 0.1
         return score
 
     def _sensor_in_world(
