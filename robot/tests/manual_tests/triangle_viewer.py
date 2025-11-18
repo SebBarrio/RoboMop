@@ -29,11 +29,15 @@ import os
 import socketserver
 import threading
 import webbrowser
-from typing import Set
+from typing import Set, Any
 from pathlib import Path
 
 import websockets
-from websockets.server import WebSocketServerProtocol
+try:
+    from websockets.asyncio.server import ServerConnection
+except ImportError:
+    # Fallback for older versions if needed, but we target 15.0+
+    ServerConnection = Any
 
 # Configure logging
 logging.basicConfig(
@@ -50,7 +54,7 @@ HTML_FILE = "triangle_viewer.html"
 class ViewerState:
     """Shared state for the viewer application."""
     def __init__(self):
-        self.clients: Set[WebSocketServerProtocol] = set()
+        self.clients: Set[ServerConnection] = set()
         self.robot_connected = False
 
 state = ViewerState()
@@ -84,11 +88,14 @@ def run_http_server(host: str, port: int):
     """Run the HTTP server in a background thread."""
     # Allow reusing address to avoid "Address already in use" errors on restart
     socketserver.TCPServer.allow_reuse_address = True
-    with socketserver.TCPServer((host, port), ViewerHttpHandler) as httpd:
-        logger.info(f"HTTP Server running at http://{host}:{port}")
-        httpd.serve_forever()
+    try:
+        with socketserver.TCPServer((host, port), ViewerHttpHandler) as httpd:
+            logger.info(f"HTTP Server running at http://{host}:{port}")
+            httpd.serve_forever()
+    except Exception as e:
+        logger.error(f"Failed to start HTTP server: {e}")
 
-async def broadcast_update(message: str, sender: WebSocketServerProtocol):
+async def broadcast_update(message: str, sender: ServerConnection):
     """Relay message to all connected clients except the sender."""
     if not state.clients:
         return
@@ -97,24 +104,43 @@ async def broadcast_update(message: str, sender: WebSocketServerProtocol):
     recipients = [client for client in state.clients if client != sender]
     
     if recipients:
-        # Broadcast
-        websockets.broadcast(recipients, message)
+        try:
+            # Broadcast
+            websockets.broadcast(recipients, message)
+            # logger.info(f"Broadcasted message to {len(recipients)} clients")
+        except Exception as e:
+            logger.error(f"Broadcast failed: {e}")
 
-async def handle_client(websocket: WebSocketServerProtocol):
+async def handle_client(websocket: ServerConnection):
     """Handle a new WebSocket connection."""
     state.clients.add(websocket)
-    remote_addr = websocket.remote_address
+    remote_addr = getattr(websocket, 'remote_address', 'unknown')
     
     # Identify client type from User-Agent
-    ua = websocket.request_headers.get("User-Agent", "Unknown")
+    ua = "Unknown"
+    try:
+        # Try new API (v14+)
+        if hasattr(websocket, 'request') and websocket.request:
+            ua = websocket.request.headers.get("User-Agent", "Unknown")
+        # Try legacy API (v10-13)
+        elif hasattr(websocket, 'request_headers'):
+            ua = websocket.request_headers.get("User-Agent", "Unknown")
+        else:
+             # Fallback or debug
+             logger.debug(f"Could not find headers. Dir: {dir(websocket)}")
+    except Exception as e:
+        logger.warning(f"Error reading User-Agent: {e}")
+
     client_type = "Robot" if "Python" in ua or "websockets" in ua else "Viewer"
     
-    logger.info(f"{client_type} connected: {remote_addr}")
+    logger.info(f"{client_type} connected: {remote_addr} (UA: {ua})")
+    logger.info(f"Total clients: {len(state.clients)}")
     
     try:
         async for message in websocket:
             # We assume any message received is a data update from the Robot
             # We immediately relay it to all other clients (Browsers)
+            # logger.info(f"Received {len(message)} bytes from {client_type}")
             await broadcast_update(message, websocket)
             
     except websockets.exceptions.ConnectionClosed:
@@ -122,8 +148,10 @@ async def handle_client(websocket: WebSocketServerProtocol):
     except Exception as e:
         logger.error(f"Error handling client {remote_addr}: {e}")
     finally:
-        state.clients.remove(websocket)
+        if websocket in state.clients:
+            state.clients.remove(websocket)
         logger.info(f"{client_type} disconnected: {remote_addr}")
+        logger.info(f"Total clients: {len(state.clients)}")
 
 async def main():
     parser = argparse.ArgumentParser(description="Triangle Test Web Viewer")
@@ -146,12 +174,16 @@ async def main():
     
     # Auto-open browser
     if not args.no_browser:
+        # Wait a bit for server to start
+        await asyncio.sleep(1)
         url = f"http://localhost:{args.http_port}"
         logger.info(f"Opening browser at {url}...")
-        webbrowser.open(url)
+        # Use threading to not block
+        threading.Thread(target=webbrowser.open, args=(url,), daemon=True).start()
 
     logger.info("Waiting for robot connection...")
     
+    # Note: websockets.serve automatically uses asyncio server in newer versions if context supports it
     async with websockets.serve(
         handle_client, 
         args.host, 

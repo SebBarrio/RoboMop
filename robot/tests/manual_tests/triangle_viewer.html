@@ -322,6 +322,18 @@
     // Configuration
     const WS_URL = `ws://${window.location.hostname}:8765`;
     
+    // State (Moved up to be available for theme init)
+    const state = {
+        pose: { x: 0, y: 0, theta: 0 },
+        trajectory: [],
+        plannedVertices: [],
+        lidarScan: [],
+        map: null, // { width, height, resolution, origin, data: Uint8Array }
+        imuHeadingDeg: null,
+        connected: false,
+        lastUpdate: 0
+    };
+
     // Theme Management
     const themeConfig = {
         dark: {
@@ -379,18 +391,6 @@
 
     // Initialize Theme
     applyTheme(currentTheme);
-
-    // State
-    const state = {
-        pose: { x: 0, y: 0, theta: 0 },
-        trajectory: [],
-        plannedVertices: [],
-        lidarScan: [],
-        map: null, // { width, height, resolution, origin, data: Uint8Array }
-        imuHeadingDeg: null,
-        connected: false,
-        lastUpdate: 0
-    };
 
     // Viewport
     const view = {
