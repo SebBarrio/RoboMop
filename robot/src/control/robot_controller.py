@@ -93,6 +93,14 @@ class RobotController:
         return self._wheel_radius
 
     @property
+    def max_linear_speed(self) -> float:
+        return self._max_linear
+
+    @property
+    def max_angular_speed(self) -> float:
+        return self._max_angular
+
+    @property
     def goal_active(self) -> bool:
         return self._goal_active
 

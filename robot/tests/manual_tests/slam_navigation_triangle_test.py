@@ -310,6 +310,10 @@ class TriangleSlamNavigator:
         self._lookahead_distance: float = 0.3
         # Forward speed used by the pure pursuit controller (m/s).
         self._pure_pursuit_speed: float = 0.2
+        self._min_turn_speed: float = 0.03
+        self._curvature_slowdown_threshold: float = 1.2
+        self._pivot_curvature_threshold: float = 2.4
+        self._pivot_linear_cutoff: float = 0.035
         # Pre-compute segment lengths for the polyline path.
         self._segment_lengths: List[float] = []
         self._segment_prefix: List[float] = []
@@ -326,6 +330,9 @@ class TriangleSlamNavigator:
         # Track path progress monotonically to avoid oscillating between segments.
         self._lap_offset: float = 0.0
         self._path_progress_mod: float = 0.0
+
+        self._max_linear_speed: float = self._robot.max_linear_speed
+        self._max_angular_speed: float = self._robot.max_angular_speed
 
     async def run(self) -> None:
         self._running = True
@@ -412,11 +419,24 @@ class TriangleSlamNavigator:
         lookahead = max(self._lookahead_distance, 1e-3)
         curvature = 2.0 * math.sin(alpha) / lookahead
 
-        # Base forward speed (could be scaled with curvature for tighter turns).
-        v = self._pure_pursuit_speed
-        omega = curvature * v
+        v_cmd = min(self._pure_pursuit_speed, self._max_linear_speed)
+        curv_mag = abs(curvature)
 
-        self._robot.set_velocity_command(linear=v, angular=omega)
+        if curv_mag > self._curvature_slowdown_threshold:
+            scale = self._curvature_slowdown_threshold / curv_mag
+            v_cmd = max(self._min_turn_speed, v_cmd * scale)
+
+        omega_cmd = curvature * v_cmd
+        if abs(omega_cmd) > self._max_angular_speed:
+            limit_scale = self._max_angular_speed / max(abs(omega_cmd), 1e-6)
+            v_cmd *= limit_scale
+            omega_cmd = curvature * v_cmd
+
+        if curv_mag >= self._pivot_curvature_threshold and v_cmd <= self._pivot_linear_cutoff:
+            v_cmd = 0.0
+            omega_cmd = math.copysign(self._max_angular_speed, curvature)
+
+        self._robot.set_velocity_command(linear=v_cmd, angular=omega_cmd)
 
     def _compute_lookahead_point(self) -> Optional[Tuple[float, float]]:
         """Return the lookahead point located ahead of the current path progress."""
