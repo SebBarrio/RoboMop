@@ -29,17 +29,15 @@ from __future__ import annotations
 import argparse
 import asyncio
 import base64
-import csv
 import gzip
 import json
 import logging
 import math
 import signal
 import sys
-import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, TextIO, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -76,10 +74,10 @@ from src.control.motor_controller import (
     PIDSettings,
 )
 from src.control.pwm_controller import MotorChannelConfig, MotorDriver
-from src.control.robot_controller import CommandSnapshot, Pose2D, RobotController
+from src.control.pid import PIDController
+from src.control.robot_controller import Pose2D, RobotController
 from src.sensors.encoders import EncoderReading, GpioZeroEncoderHardware, QuadratureEncoder
 from src.sensors.lidar import LidarMeasurement, RPLidarSerial
-from src.sensors.imu import MPU9250, ImuSample
 from src.slam.occupancy_grid import OccupancyGrid
 from src.slam.particle_filter import ParticleFilter
 from src.slam.slam_manager import SlamManager
@@ -116,7 +114,7 @@ DEFAULT_PARTICLES: int = 200
 DEFAULT_LIDAR_MAX_RANGE: float = 5.0
 
 STATE_HZ: float = 10.0
-MAP_HZ: float = 0.5
+MAP_HZ: float = 2.0
 SLAM_HZ: float = 5.0
 
 
@@ -192,61 +190,6 @@ class ViewerClient:
         return True
 
 
-class SpeedLogWriter:
-    def __init__(self, path: Path) -> None:
-        self._path = path
-        self._file: TextIO = path.open("w", newline="")
-        self._writer = csv.writer(self._file)
-        self._writer.writerow(
-            [
-                "wall_time_epoch_s",
-                "monotonic_time_s",
-                "linear_speed_mps",
-                "angular_speed_rps",
-                "linear_cmd_mps",
-                "angular_cmd_rps",
-                "left_wheel_target_rad_s",
-                "right_wheel_target_rad_s",
-                "pose_x_m",
-                "pose_y_m",
-                "theta_rad",
-            ]
-        )
-        self._file.flush()
-
-    def log_sample(
-        self,
-        *,
-        monotonic_time: float,
-        linear_speed: float,
-        angular_speed: float,
-        pose: Pose2D,
-        command: CommandSnapshot,
-    ) -> None:
-        self._writer.writerow(
-            [
-                f"{time.time():.6f}",
-                f"{monotonic_time:.6f}",
-                f"{linear_speed:.6f}",
-                f"{angular_speed:.6f}",
-                f"{command.linear_command_mps:.6f}",
-                f"{command.angular_command_rps:.6f}",
-                f"{command.left_wheel_target_rad_s:.6f}",
-                f"{command.right_wheel_target_rad_s:.6f}",
-                f"{pose.x:.6f}",
-                f"{pose.y:.6f}",
-                f"{pose.theta:.6f}",
-            ]
-        )
-        self._file.flush()
-
-    def close(self) -> None:
-        try:
-            self._file.close()
-        except Exception:
-            pass
-
-
 class EncoderFeedbackAdapter(EncoderFeedback):
     def __init__(self, encoders: Sequence[QuadratureEncoder]) -> None:
         self._encoders = list(encoders)
@@ -266,78 +209,34 @@ class TriangleSlamNavigator:
         self,
         *,
         lidar: RPLidarSerial,
-        imu: Optional[MPU9250],
         motor_controller: MotorController,
         robot_controller: RobotController,
         slam: SlamManager,
         planned_vertices: Sequence[Tuple[float, float]],
         viewer: Optional[ViewerClient],
-        speed_logger: Optional[SpeedLogWriter],
         lidar_max_range: float,
         slam_update_hz: float,
         map_hz: float,
         state_hz: float,
-        imu_warmup_samples: int,
         logger: logging.Logger,
     ) -> None:
         self._lidar = lidar
-        self._imu = imu
         self._motor = motor_controller
         self._robot = robot_controller
         self._slam = slam
         self._viewer = viewer
-        self._speed_logger = speed_logger
         self._logger = logger
         self._lidar_max_range = float(lidar_max_range)
         self._slam_period = 1.0 / float(slam_update_hz)
         self._map_period = 1.0 / float(map_hz)
         self._state_period = 1.0 / float(state_hz)
-        self._imu_warmup_samples = int(max(0, imu_warmup_samples))
-        self._imu_ready = False
-        self._imu_yaw: Optional[float] = None
 
         self._vertices = list(planned_vertices)
+        self._waypoint_index = 0
         self._trajectory: List[Tuple[float, float]] = []
         self._last_pose_for_slam: Optional[Pose2D] = None
         self._latest_scan: List[LidarMeasurement] = []
         self._running = False
-        self._last_speed_pose: Optional[Pose2D] = None
-        self._last_speed_time: Optional[float] = None
-
-        # Pure pursuit path-tracking configuration/state
-        # Lookahead distance should be large enough to smooth turns but
-        # small enough to keep the robot close to the path.
-        self._lookahead_distance: float = 0.3
-        # Forward speed used by the pure pursuit controller (m/s).
-        self._pure_pursuit_speed: float = 0.2
-        self._min_turn_speed: float = 0.03
-        self._curvature_slowdown_threshold: float = 1.2
-        self._pivot_curvature_threshold: float = 2.4
-        self._pivot_exit_curvature: float = 0.8 * self._pivot_curvature_threshold
-        self._pivot_active: bool = False
-        self._pivot_direction_sign: float = 0.0
-        self._lookahead_forward_epsilon: float = 0.02
-        self._path_regression_margin: float = 0.5 * self._lookahead_distance
-        self._last_command_log_time: float = 0.0
-        # Pre-compute segment lengths for the polyline path.
-        self._segment_lengths: List[float] = []
-        self._segment_prefix: List[float] = []
-        self._path_length: float = 0.0
-        if len(self._vertices) >= 2:
-            for i in range(len(self._vertices) - 1):
-                x0, y0 = self._vertices[i]
-                x1, y1 = self._vertices[i + 1]
-                length = math.hypot(x1 - x0, y1 - y0)
-                self._segment_lengths.append(length)
-                self._segment_prefix.append(self._path_length)
-                self._path_length += length
-
-        # Track path progress monotonically to avoid oscillating between segments.
-        self._lap_offset: float = 0.0
-        self._path_progress_mod: float = 0.0
-
-        self._max_linear_speed: float = self._robot.max_linear_speed
-        self._max_angular_speed: float = self._robot.max_angular_speed
 
     async def run(self) -> None:
         self._running = True
@@ -350,11 +249,8 @@ class TriangleSlamNavigator:
         tasks = [
             asyncio.create_task(self._control_loop(), name="control-loop"),
             asyncio.create_task(self._slam_loop(), name="slam-loop"),
+            asyncio.create_task(self._viewer_loop(), name="viewer-loop"),
         ]
-        if self._viewer is not None:
-            tasks.append(asyncio.create_task(self._viewer_loop(), name="viewer-loop"))
-        if self._imu is not None:
-            tasks.append(asyncio.create_task(self._imu_loop(), name="imu-loop"))
         try:
             await asyncio.wait(tasks, return_when=asyncio.FIRST_EXCEPTION)
         finally:
@@ -370,183 +266,31 @@ class TriangleSlamNavigator:
                     self._logger.exception("Task %s failed", task.get_name())
 
     async def _control_loop(self) -> None:
-        """High-rate robot control loop using pure pursuit path tracking."""
+        """High-rate robot control loop and waypoint progression."""
         loop_interval = self._motor.loop_interval
-        self._logger.info("Starting control loop at %.1f Hz (pure pursuit)", 1.0 / loop_interval)
+        self._logger.info("Starting control loop at %.1f Hz", 1.0 / loop_interval)
+        # Issue first waypoint
+        if self._vertices:
+            self._issue_next_waypoint()
         while self._running:
-            loop = asyncio.get_running_loop()
-            start = loop.time()
-            # Compute pure pursuit linear/angular commands
-            self._update_pure_pursuit(loop_interval)
+            start = asyncio.get_running_loop().time()
+            # Progress goals
+            if not self._robot.goal_active and self._vertices:
+                self._issue_next_waypoint()
             # Update controller and integrate pose
             self._robot.update(dt=loop_interval)
-            # Override heading with IMU yaw when available (IMU primary for theta)
-            if self._imu_ready and self._imu_yaw is not None:
-                pose = self._robot.pose
-                self._robot.reset_pose(Pose2D(pose.x, pose.y, self._imu_yaw))
             self._trajectory.append((self._robot.pose.x, self._robot.pose.y))
-            self._log_speed_sample(loop.time())
             # Loop pacing
-            elapsed = loop.time() - start
+            elapsed = asyncio.get_running_loop().time() - start
             await asyncio.sleep(max(0.0, loop_interval - elapsed))
 
-    def _update_pure_pursuit(self, dt: float) -> None:
-        """Compute pure pursuit (v, ω) commands and send them to the robot controller."""
-        # If we do not have a valid path, stop the robot.
-        if len(self._vertices) < 2 or not self._segment_lengths:
-            self._robot.set_velocity_command(linear=0.0, angular=0.0)
-            return
-
-        pose = self._robot.pose
-        self._update_path_progress(pose.x, pose.y)
-        lookahead_point = self._compute_lookahead_point()
-        if lookahead_point is None:
-            self._robot.set_velocity_command(linear=0.0, angular=0.0)
-            return
-
-        lx, ly = lookahead_point
-
-        # Transform lookahead point into robot frame (x-forward, y-left)
-        dx = lx - pose.x
-        dy = ly - pose.y
-        cos_h = math.cos(pose.theta)
-        sin_h = math.sin(pose.theta)
-        x_r = cos_h * dx + sin_h * dy
-        y_r = -sin_h * dx + cos_h * dy
-
-        # If the lookahead point is effectively on top of us, stop.
-        if abs(x_r) < 1e-4 and abs(y_r) < 1e-4:
-            self._robot.set_velocity_command(linear=0.0, angular=0.0)
-            return
-
-        # Angle to lookahead in robot frame
-        alpha = math.atan2(y_r, x_r)
-
-        lookahead = max(self._lookahead_distance, 1e-3)
-        curvature = 2.0 * math.sin(alpha) / lookahead
-
-        v_cmd = min(self._pure_pursuit_speed, self._max_linear_speed)
-        curv_mag = abs(curvature)
-
-        # Handle active pivot mode with hysteresis before evaluating new triggers.
-        if self._pivot_active:
-            if x_r >= self._lookahead_forward_epsilon and curv_mag <= self._pivot_exit_curvature:
-                self._pivot_active = False
-            else:
-                self._apply_pivot_command(curvature=curvature, reason="active")
-                return
-
-        # Trigger pivot when the lookahead point falls behind the robot.
-        if x_r < 0.0 and abs(y_r) > 1e-3:
-            self._start_pivot(direction_hint=y_r, reason="behind")
-            self._apply_pivot_command(curvature=curvature, reason="behind")
-            return
-
-        if curv_mag >= self._pivot_curvature_threshold:
-            self._start_pivot(direction_hint=curvature, reason="curvature")
-            self._apply_pivot_command(curvature=curvature, reason="curvature")
-            return
-
-        if curv_mag > self._curvature_slowdown_threshold:
-            scale = self._curvature_slowdown_threshold / curv_mag
-            v_cmd = v_cmd * scale
-
-        v_cmd = max(self._min_turn_speed, v_cmd)
-
-        omega_cmd = curvature * v_cmd
-        if abs(omega_cmd) > self._max_angular_speed:
-            limit_scale = self._max_angular_speed / max(abs(omega_cmd), 1e-6)
-            v_cmd *= limit_scale
-            omega_cmd = curvature * v_cmd
-
-        self._robot.set_velocity_command(linear=v_cmd, angular=omega_cmd)
-        self._log_velocity_command(
-            linear=v_cmd,
-            angular=omega_cmd,
-            curvature=curvature,
-            mode="pure_pursuit",
-        )
-
-    def _compute_lookahead_point(self) -> Optional[Tuple[float, float]]:
-        """Return the lookahead point located ahead of the current path progress."""
-        if not self._segment_lengths or self._path_length <= 1e-9:
-            return None
-
-        distance_along_path = self._current_path_progress() + self._lookahead_distance
-        remaining = distance_along_path % self._path_length
-
-        for seg_index, seg_len in enumerate(self._segment_lengths):
-            if seg_len < 1e-6:
-                continue
-            if remaining <= seg_len:
-                ratio = remaining / seg_len
-                x0, y0 = self._vertices[seg_index]
-                x1, y1 = self._vertices[seg_index + 1]
-                return (x0 + (x1 - x0) * ratio, y0 + (y1 - y0) * ratio)
-            remaining -= seg_len
-
-        return self._vertices[-1]
-
-    def _update_path_progress(self, x: float, y: float) -> None:
-        """Update the monotonic progress parameter along the triangular path."""
-        if not self._segment_lengths or self._path_length <= 1e-9:
-            return
-
-        seg_index, s_on_seg, _, _ = self._closest_point_on_path(x, y)
-        seg_start = self._segment_prefix[seg_index]
-        new_mod = seg_start + s_on_seg
-        prev_mod = self._path_progress_mod
-        path_length = self._path_length
-
-        # Detect lap wrap when we move from end of path back to the start.
-        wrap_margin = min(self._lookahead_distance, 0.25 * path_length)
-        if prev_mod > path_length - wrap_margin and new_mod < wrap_margin:
-            self._lap_offset += path_length
-            self._path_progress_mod = new_mod
-            return
-
-        # Prevent regressions that would command backwards motion, but allow small corrections.
-        regression_margin = self._path_regression_margin
-        if new_mod >= prev_mod or prev_mod - new_mod <= regression_margin:
-            self._path_progress_mod = new_mod
-
-    def _current_path_progress(self) -> float:
-        return self._lap_offset + self._path_progress_mod
-
-    def _closest_point_on_path(
-        self, x: float, y: float
-    ) -> Tuple[int, float, float, float]:
-        """Return the closest point on the polyline path to (x, y).
-
-        Returns (segment_index, distance_along_segment, closest_x, closest_y).
-        """
-        best_index = 0
-        best_distance = float("inf")
-        best_s = 0.0
-        best_x = self._vertices[0][0]
-        best_y = self._vertices[0][1]
-
-        for i, seg_len in enumerate(self._segment_lengths):
-            if seg_len < 1e-6:
-                continue
-            x0, y0 = self._vertices[i]
-            x1, y1 = self._vertices[i + 1]
-            vx = x1 - x0
-            vy = y1 - y0
-            # Project robot position onto the segment line.
-            t = ((x - x0) * vx + (y - y0) * vy) / (seg_len * seg_len)
-            t_clamped = max(0.0, min(1.0, t))
-            cx = x0 + vx * t_clamped
-            cy = y0 + vy * t_clamped
-            d = math.hypot(x - cx, y - cy)
-            if d < best_distance:
-                best_distance = d
-                best_index = i
-                best_s = seg_len * t_clamped
-                best_x = cx
-                best_y = cy
-
-        return best_index, best_s, best_x, best_y
+    def _issue_next_waypoint(self) -> None:
+        if self._waypoint_index >= len(self._vertices):
+            # Finished one triangle lap; restart to keep moving
+            self._waypoint_index = 0
+        x, y = self._vertices[self._waypoint_index]
+        self._robot.set_pose_goal(x=x, y=y)
+        self._waypoint_index += 1
 
     async def _slam_loop(self) -> None:
         """Lower-rate loop that waits for full LIDAR scans and updates SLAM."""
@@ -588,64 +332,6 @@ class TriangleSlamNavigator:
                 self._logger.exception("SLAM step failed")
             # Rate pacing (we already block on scan; small sleep to avoid tight loop if scan is fast)
             await asyncio.sleep(0.0)
-
-    def _log_speed_sample(self, timestamp: float) -> None:
-        if self._speed_logger is None:
-            return
-        pose = self._robot.pose
-        if self._last_speed_pose is None or self._last_speed_time is None:
-            self._last_speed_pose = Pose2D(pose.x, pose.y, pose.theta)
-            self._last_speed_time = timestamp
-            return
-        dt = timestamp - self._last_speed_time
-        if dt <= 0.0:
-            return
-        dx = pose.x - self._last_speed_pose.x
-        dy = pose.y - self._last_speed_pose.y
-        linear_speed = math.hypot(dx, dy) / dt
-        angular_speed = _wrap_angle(pose.theta - self._last_speed_pose.theta) / dt
-        command = self._robot.get_command_snapshot()
-        self._speed_logger.log_sample(
-            monotonic_time=timestamp,
-            linear_speed=linear_speed,
-            angular_speed=angular_speed,
-            pose=pose,
-            command=command,
-        )
-        self._last_speed_pose = Pose2D(pose.x, pose.y, pose.theta)
-        self._last_speed_time = timestamp
-
-    def _log_velocity_command(self, *, linear: float, angular: float, curvature: float, mode: str) -> None:
-        """Emit periodic logs for commanded linear/angular velocity."""
-        now = time.monotonic()
-        is_pivot_mode = mode.startswith("pivot")
-        if not is_pivot_mode and now - self._last_command_log_time < 0.5:
-            return
-        self._last_command_log_time = now
-        msg = f"{mode} command: v={linear:.3f} m/s, ω={angular:.3f} rad/s, κ={curvature:.3f} 1/m"
-        self._logger.info(msg)
-        if is_pivot_mode:
-            print(f"[pivot] {msg}")
-
-    def _start_pivot(self, *, direction_hint: float, reason: str) -> None:
-        sign = 1.0 if direction_hint >= 0.0 else -1.0
-        if sign == 0.0:
-            sign = 1.0
-        self._pivot_direction_sign = sign
-        self._pivot_active = True
-        self._logger.info("Entering pivot mode (%s), dir=%+.0f", reason, sign)
-
-    def _apply_pivot_command(self, *, curvature: float, reason: str) -> None:
-        if self._pivot_direction_sign == 0.0:
-            self._pivot_direction_sign = 1.0 if curvature >= 0.0 else -1.0
-        omega_cmd = self._pivot_direction_sign * self._max_angular_speed
-        self._robot.set_velocity_command(linear=0.0, angular=omega_cmd)
-        self._log_velocity_command(
-            linear=0.0,
-            angular=omega_cmd,
-            curvature=curvature,
-            mode=f"pivot:{reason}",
-        )
 
     async def _viewer_loop(self) -> None:
         if self._viewer is None:
@@ -698,33 +384,6 @@ class TriangleSlamNavigator:
         }
         await self._viewer.send_update(payload)
 
-    async def _imu_loop(self) -> None:
-        """Continuously read IMU and provide yaw (theta) to the controller."""
-        assert self._imu is not None
-        self._logger.info("Starting IMU loop (sample_rate=%.1f Hz)", float(getattr(self._imu, "_sample_rate_hz", 0.0)))
-        # Start async sampling thread
-        await self._imu.start()
-        warmup_remaining = self._imu_warmup_samples
-        # Warmup: collect initial samples while robot is stationary to converge offsets
-        if warmup_remaining > 0:
-            self._logger.info("IMU warmup: collecting %d samples; keep robot stationary", warmup_remaining)
-        try:
-            async for sample in self._imu.iter_samples():
-                # Use IMU yaw as primary theta (already wrapped to [-pi, pi] in API)
-                try:
-                    self._imu_yaw = float(sample.orientation.yaw)
-                except Exception:
-                    # Defensive parsing guard
-                    pass
-                if warmup_remaining > 0:
-                    warmup_remaining -= 1
-                    if warmup_remaining == 0:
-                        self._imu_ready = True
-                        self._logger.info("IMU warmup complete; switching to IMU yaw for heading")
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            self._logger.exception("IMU loop failed")
 
 # -----------------------------
 # Main setup/teardown
@@ -747,7 +406,6 @@ def _build_motor_driver_and_controller(
     track_width_m: float,
     max_linear: float,
     max_angular: float,
-    motor_effort_scale: float,
 ) -> Tuple[MotorDriver, MotorController, RobotController, List[QuadratureEncoder]]:
     # PCA9685
     i2c = busio.I2C(board.SCL, board.SDA)
@@ -776,34 +434,38 @@ def _build_motor_driver_and_controller(
         enc.zero()
         gpio_encoders.append(enc)
     # Motor controller config (feedforward with conservative defaults)
-    # Scale integrator/output limits so we can clamp effective motor effort via CLI.
-    effort_scale = max(0.0, min(float(motor_effort_scale), 1.0))
-    max_effort_voltage = supply_voltage * effort_scale
     motor_cfg = MotorControllerConfig(
         motor_to_encoder=EXPECTED_MOTOR_TO_ENCODER,
-        gear_ratio=8.45,
-        rotor_inertia=0.001085,
-        viscous_friction=0.000467,
-        torque_constant=0.018803,
-        back_emf_constant=0.018803,
-        winding_resistance=0.091,
+        gear_ratio=1.0,
+        rotor_inertia=1.0e-4,
+        viscous_friction=1.0e-3,
+        torque_constant=0.05,
+        back_emf_constant=0.05,
+        winding_resistance=2.0,
         loop_interval=loop_interval,
         pid=PIDSettings(
-            kp=0.45,
-            ki=0.2,
-            kd=0.01,
-            integrator_limit=max_effort_voltage,
-            output_limits=(-max_effort_voltage, max_effort_voltage),
+            kp=0.4,
+            ki=1.2,
+            kd=0.0,
+            integrator_limit=supply_voltage,
+            output_limits=(-supply_voltage, supply_voltage),
         ),
     )
     feedback = EncoderFeedbackAdapter(gpio_encoders)
     motor_controller = MotorController(driver=driver, encoder_feedback=feedback, config=motor_cfg)
+    # High-level robot controller
+    position_pid = PIDController(kp=0.8, ki=0.05, kd=0.1, integrator_limit=0.5, output_limits=(-max_linear, max_linear))
+    heading_pid = PIDController(
+        kp=2.0, ki=0.1, kd=0.2, integrator_limit=0.8, output_limits=(-max_angular, max_angular)
+    )
     robot = RobotController(
         motor_controller=motor_controller,
         track_width=track_width_m,
         wheel_radius=wheel_radius_m,
         left_motor_indices=(0, 1),
         right_motor_indices=(2, 3),
+        position_pid=position_pid,
+        heading_pid=heading_pid,
         max_linear_speed=max_linear,
         max_angular_speed=max_angular,
     )
@@ -839,20 +501,24 @@ def _build_slam(
     return slam
 
 
+async def _preflight_checks(
+    *,
+    lidar: RPLidarSerial,
+    logger: logging.Logger,
+) -> None:
+    logger.info("Running preflight checks (LIDAR info/health)...")
+    try:
+        info = await lidar.get_device_info()
+        health = await lidar.get_health()
+        logger.info("RPLIDAR info: %s", info.hex())
+        logger.info("RPLIDAR health: %s", health.hex())
+    except Exception as exc:
+        logger.warning("RPLIDAR info/health check failed: %s (continuing)", exc)
+
+
 async def run_test(args: argparse.Namespace) -> None:
     logger = logging.getLogger("triangle_test")
     logger.info("Initializing hardware...")
-
-    # IMU (optional but recommended)
-    imu: Optional[MPU9250] = None
-    try:
-        imu = MPU9250(bus=args.imu_bus, address=args.imu_address, sample_rate_hz=args.imu_rate)
-        # initialize() is called inside start(), but invoking it here gives earlier calibration/logs if desired
-        imu.initialize()
-        logger.info("IMU initialized on I2C bus %d addr 0x%02X", args.imu_bus, args.imu_address)
-    except Exception as exc:
-        logger.error("Failed to initialize IMU: %s (continuing without IMU)", exc)
-        imu = None
 
     # LIDAR
     lidar = RPLidarSerial(port=args.lidar_port, baud_rate=args.lidar_baud, serial_timeout=args.lidar_timeout)
@@ -866,7 +532,6 @@ async def run_test(args: argparse.Namespace) -> None:
         track_width_m=args.track_width,
         max_linear=args.max_linear,
         max_angular=args.max_angular,
-        motor_effort_scale=args.motor_effort_scale,
     )
 
     # SLAM
@@ -884,43 +549,26 @@ async def run_test(args: argparse.Namespace) -> None:
     if viewer is not None:
         await viewer.connect()
 
-    # Speed logger
-    speed_logger: Optional[SpeedLogWriter] = None
-    speed_log_csv = args.speed_log_csv.strip()
-    if speed_log_csv:
-        speed_log_path = Path(speed_log_csv)
-        if not speed_log_path.is_absolute():
-            speed_log_path = (_ROBOT_DIR / speed_log_path).resolve()
-        try:
-            speed_log_path.parent.mkdir(parents=True, exist_ok=True)
-            speed_logger = SpeedLogWriter(speed_log_path)
-            logger.info("Logging speed samples to %s", speed_log_path)
-        except Exception as exc:
-            logger.error("Failed to initialize speed log file %s: %s", speed_log_path, exc)
-            speed_logger = None
-
     # Planned triangle
     planned = build_triangle_vertices(args.triangle_side)
     # Close the loop visually
     planned.append(planned[0])
 
-    logger.info("LIDAR started and ready for navigation")
+    logger.info("Preflight checks...")
+    await _preflight_checks(lidar=lidar, logger=logger)
 
     # Navigator
     navigator = TriangleSlamNavigator(
         lidar=lidar,
-        imu=imu,
         motor_controller=motor_controller,
         robot_controller=robot,
         slam=slam,
         planned_vertices=planned,
         viewer=viewer,
-        speed_logger=speed_logger,
         lidar_max_range=args.lidar_max_range,
         slam_update_hz=SLAM_HZ,
         map_hz=MAP_HZ,
         state_hz=STATE_HZ,
-        imu_warmup_samples=args.imu_warmup_samples,
         logger=logger,
     )
 
@@ -967,12 +615,6 @@ async def run_test(args: argparse.Namespace) -> None:
                 enc.close()
             except Exception:
                 logger.exception("Error while closing encoder")
-        # Stop IMU
-        if imu is not None:
-            try:
-                await imu.stop()
-            except Exception:
-                logger.exception("Error while stopping IMU")
         # Stop LIDAR
         try:
             await lidar.stop()
@@ -984,11 +626,6 @@ async def run_test(args: argparse.Namespace) -> None:
                 await viewer.close()
             except Exception:
                 logger.exception("Error while closing viewer")
-        if speed_logger is not None:
-            try:
-                speed_logger.close()
-            except Exception:
-                logger.exception("Error while closing speed log")
 
 
 def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
@@ -998,12 +635,6 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         type=str,
         default="ws://10.21.83.244:8765",
         help="Triangle viewer WebSocket URL (ws://host:port). Empty to disable streaming.",
-    )
-    parser.add_argument(
-        "--speed-log-csv",
-        type=str,
-        default="",
-        help="Optional CSV path for logging linear/angular speeds (empty to disable).",
     )
     parser.add_argument(
         "--lidar-port",
@@ -1038,32 +669,6 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
 
     parser.add_argument("--particles", type=int, default=DEFAULT_PARTICLES, help="Particle filter count (100-500)")
     parser.add_argument("--lidar-max-range", type=float, default=DEFAULT_LIDAR_MAX_RANGE, help="LIDAR max range (m)")
-
-    parser.add_argument(
-        "--motor-effort-scale",
-        type=float,
-        default=1.0,
-        help=(
-            "Scale factor in [0,1] applied to motor controller integrator and output voltage limits "
-            "to clamp effective motor effort (default: 1.0)."
-        ),
-    )
-
-    # IMU options
-    parser.add_argument("--imu-bus", type=int, default=1, help="I2C bus for IMU (default: 1)")
-    parser.add_argument(
-        "--imu-address",
-        type=lambda x: int(x, 0),
-        default=0x68,
-        help="IMU I2C address (0x68/0x69). Accepts hex like 0x68",
-    )
-    parser.add_argument("--imu-rate", type=float, default=100.0, help="IMU sample rate Hz")
-    parser.add_argument(
-        "--imu-warmup-samples",
-        type=int,
-        default=150,
-        help="IMU warmup samples to collect while stationary before using yaw",
-    )
 
     parser.add_argument(
         "--log-level", type=str, default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"], help="Log level"
