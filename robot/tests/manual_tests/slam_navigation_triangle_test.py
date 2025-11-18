@@ -226,7 +226,10 @@ class HeadingFusion:
             imu_yaw = self._latest_yaw
         if imu_yaw is None:
             return odom_theta
-        blended = (1.0 - self._blend) * odom_theta + self._blend * imu_yaw
+        # Calculate shortest angular difference from odom to IMU
+        diff = _wrap_angle(imu_yaw - odom_theta)
+        # Apply blend factor to the difference
+        blended = odom_theta + self._blend * diff
         return _wrap_angle(blended)
 
     def latest_heading(self) -> Optional[float]:
@@ -436,9 +439,13 @@ class TriangleSlamNavigator:
                 self._robot.update(dt=dt)
             except Exception:
                 self._logger.exception("Robot controller update failed")
-            self._update_fused_pose()
-            if not self._robot.goal_active and self._vertices:
-                self._issue_next_waypoint()
+
+            try:
+                self._update_fused_pose()
+                if not self._robot.goal_active and self._vertices:
+                    self._issue_next_waypoint()
+            except Exception:
+                self._logger.exception("Navigation/Fusion update failed")
             sleep_time = next_tick - time.perf_counter()
             if sleep_time > 0.0:
                 time.sleep(sleep_time)
