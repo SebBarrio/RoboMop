@@ -314,6 +314,7 @@ class TriangleSlamNavigator:
         self._curvature_slowdown_threshold: float = 1.2
         self._pivot_curvature_threshold: float = 2.4
         self._path_regression_margin: float = 0.5 * self._lookahead_distance
+        self._last_command_log_time: float = 0.0
         # Pre-compute segment lengths for the polyline path.
         self._segment_lengths: List[float] = []
         self._segment_prefix: List[float] = []
@@ -426,6 +427,12 @@ class TriangleSlamNavigator:
         if curv_mag >= self._pivot_curvature_threshold:
             omega_cmd = math.copysign(self._max_angular_speed, curvature)
             self._robot.set_velocity_command(linear=0.0, angular=omega_cmd)
+            self._log_velocity_command(
+                linear=0.0,
+                angular=omega_cmd,
+                curvature=curvature,
+                mode="pivot",
+            )
             return
 
         if curv_mag > self._curvature_slowdown_threshold:
@@ -441,6 +448,12 @@ class TriangleSlamNavigator:
             omega_cmd = curvature * v_cmd
 
         self._robot.set_velocity_command(linear=v_cmd, angular=omega_cmd)
+        self._log_velocity_command(
+            linear=v_cmd,
+            angular=omega_cmd,
+            curvature=curvature,
+            mode="pure_pursuit",
+        )
 
     def _compute_lookahead_point(self) -> Optional[Tuple[float, float]]:
         """Return the lookahead point located ahead of the current path progress."""
@@ -589,6 +602,17 @@ class TriangleSlamNavigator:
         )
         self._last_speed_pose = Pose2D(pose.x, pose.y, pose.theta)
         self._last_speed_time = timestamp
+
+    def _log_velocity_command(self, *, linear: float, angular: float, curvature: float, mode: str) -> None:
+        """Emit periodic logs for commanded linear/angular velocity."""
+        now = time.monotonic()
+        if mode != "pivot" and now - self._last_command_log_time < 0.5:
+            return
+        self._last_command_log_time = now
+        msg = f"{mode} command: v={linear:.3f} m/s, ω={angular:.3f} rad/s, κ={curvature:.3f} 1/m"
+        self._logger.info(msg)
+        if mode == "pivot":
+            print(f"[pivot] {msg}")
 
     async def _viewer_loop(self) -> None:
         if self._viewer is None:
