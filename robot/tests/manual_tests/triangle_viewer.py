@@ -33,6 +33,7 @@ import base64
 import gzip
 import json
 import logging
+import math
 import threading
 from typing import Any
 
@@ -60,6 +61,16 @@ class TriangleViewer:
         self.pose_marker, = self.ax.plot([], [], "go", markersize=12, label="Current Pose")
         self.start_marker, = self.ax.plot([], [], "g^", markersize=15, label="Start")
         self.lidar_scatter = self.ax.scatter([], [], c="cyan", s=10, alpha=0.7, label="LIDAR Scan", zorder=10)
+        self.heading_line, = self.ax.plot([], [], color="orange", linewidth=2.5, label="Heading")
+        self.heading_text = self.ax.text(
+            0.02,
+            0.95,
+            "Heading: --°",
+            transform=self.ax.transAxes,
+            fontsize=11,
+            color="orange",
+            bbox=dict(facecolor="white", alpha=0.6, edgecolor="none"),
+        )
         
         self.ax.legend(loc="upper right", fontsize=10)
         
@@ -107,6 +118,13 @@ class TriangleViewer:
                 if "pose" in data and data["pose"]:
                     pose = data["pose"]
                     self.pose_marker.set_data([pose["x"]], [pose["y"]])
+                    heading_deg = data.get("poseHeadingDeg")
+                    self._update_heading_indicator(
+                        pose_x=pose["x"],
+                        pose_y=pose["y"],
+                        heading_rad=pose.get("theta"),
+                        heading_deg=heading_deg,
+                    )
                     
                     # Update LIDAR scan if present
                     if "lidarScan" in data and data["lidarScan"]:
@@ -247,6 +265,28 @@ class TriangleViewer:
                     
         except Exception as exc:
             self.logger.debug("Error adjusting limits: %s", exc)
+
+    def _update_heading_indicator(
+        self,
+        *,
+        pose_x: float,
+        pose_y: float,
+        heading_rad: float | None,
+        heading_deg: float | None,
+    ) -> None:
+        """Update heading arrow and text annotation."""
+        if heading_rad is None:
+            self.heading_line.set_data([], [])
+            self.heading_text.set_text("Heading: --°")
+            return
+
+        arrow_length = 0.25  # meters
+        end_x = pose_x + arrow_length * math.cos(heading_rad)
+        end_y = pose_y + arrow_length * math.sin(heading_rad)
+        self.heading_line.set_data([pose_x, end_x], [pose_y, end_y])
+        if heading_deg is None:
+            heading_deg = math.degrees(heading_rad)
+        self.heading_text.set_text(f"Heading: {heading_deg:.1f}°")
 
 
 async def handle_client(websocket, viewer: TriangleViewer, logger: logging.Logger) -> None:

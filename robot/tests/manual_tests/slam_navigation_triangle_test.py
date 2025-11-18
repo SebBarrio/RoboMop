@@ -35,6 +35,7 @@ import logging
 import math
 import signal
 import sys
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -77,6 +78,7 @@ from src.control.pwm_controller import MotorChannelConfig, MotorDriver
 from src.control.pid import PIDController
 from src.control.robot_controller import Pose2D, RobotController
 from src.sensors.encoders import EncoderReading, GpioZeroEncoderHardware, QuadratureEncoder
+from src.sensors.imu import MPU9250
 from src.sensors.lidar import LidarMeasurement, RPLidarSerial
 from src.slam.occupancy_grid import OccupancyGrid
 from src.slam.particle_filter import ParticleFilter
@@ -200,6 +202,114 @@ class EncoderFeedbackAdapter(EncoderFeedback):
         return self._encoders[encoder_index].read()
 
 
+class HeadingFusion:
+    """Blends IMU yaw with wheel-odometry heading for improved estimates."""
+
+    def __init__(self, *, blend: float, yaw_bias: float = 0.0) -> None:
+        self._blend = max(0.0, min(1.0, blend))
+        self._yaw_bias = yaw_bias
+        self._latest_yaw: Optional[float] = None
+        self._lock = threading.Lock()
+
+    def set_yaw_bias(self, bias: float) -> None:
+        self._yaw_bias = bias
+
+    def update_from_imu(self, raw_yaw: float) -> None:
+        corrected = _wrap_angle(raw_yaw - self._yaw_bias)
+        with self._lock:
+            self._latest_yaw = corrected
+
+    def fuse(self, odom_theta: float) -> float:
+        with self._lock:
+            imu_yaw = self._latest_yaw
+        if imu_yaw is None:
+            return odom_theta
+        blended = (1.0 - self._blend) * odom_theta + self._blend * imu_yaw
+        return _wrap_angle(blended)
+
+    def latest_heading(self) -> Optional[float]:
+        with self._lock:
+            return self._latest_yaw
+
+
+def _mean_angle(values: Sequence[float]) -> float:
+    if not values:
+        return 0.0
+    sin_sum = sum(math.sin(v) for v in values)
+    cos_sum = sum(math.cos(v) for v in values)
+    if sin_sum == 0.0 and cos_sum == 0.0:
+        return 0.0
+    return math.atan2(sin_sum, cos_sum)
+
+
+async def _initialize_and_warmup_imu(
+    imu: MPU9250,
+    *,
+    warmup_seconds: float,
+    sample_rate_hz: float,
+    logger: logging.Logger,
+) -> float:
+    """Initialize the IMU, run calibration, and collect samples to estimate yaw bias."""
+
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(None, imu.initialize)
+    if warmup_seconds <= 0.0:
+        return 0.0
+
+    total_samples = max(10, int(warmup_seconds * sample_rate_hz))
+    logger.info("Warming up IMU for %.1f s (%d samples)...", warmup_seconds, total_samples)
+    yaw_samples: list[float] = []
+    for _ in range(total_samples):
+        sample = await loop.run_in_executor(None, imu.read_sample)
+        yaw_samples.append(sample.orientation.yaw)
+        await asyncio.sleep(max(0.0, 1.0 / sample_rate_hz))
+    bias = _mean_angle(yaw_samples)
+    logger.info("IMU warmup complete (yaw bias %.3f rad)", bias)
+    return bias
+
+
+async def _imu_sampling_loop(
+    imu: MPU9250,
+    *,
+    fusion: HeadingFusion,
+    sample_rate_hz: float,
+    stop_event: asyncio.Event,
+    logger: logging.Logger,
+) -> None:
+    """Continuously read IMU samples and feed yaw into the fusion helper."""
+
+    period = 1.0 / sample_rate_hz if sample_rate_hz > 0.0 else 0.02
+    try:
+        while not stop_event.is_set():
+            loop = asyncio.get_running_loop()
+            start = loop.time()
+            try:
+                sample = await loop.run_in_executor(None, imu.read_sample)
+            except Exception as exc:  # pragma: no cover - hardware error path
+                logger.warning("IMU read failed: %s", exc)
+                await asyncio.sleep(0.1)
+                continue
+            fusion.update_from_imu(sample.orientation.yaw)
+            elapsed = loop.time() - start
+            await asyncio.sleep(max(0.0, period - elapsed))
+    finally:
+        await asyncio.to_thread(_close_imu_bus, imu, logger)
+
+
+def _close_imu_bus(imu: MPU9250, logger: logging.Logger) -> None:
+    """Best-effort closure of the underlying SMBus."""
+
+    try:
+        bus = getattr(imu, "_bus", None)
+        if bus is not None:
+            try:
+                bus.close()
+            finally:
+                setattr(imu, "_bus", None)
+    except Exception as exc:  # pragma: no cover - hardware cleanup path
+        logger.warning("Failed to close IMU bus: %s", exc)
+
+
 # -----------------------------
 # High-level test controller
 # -----------------------------
@@ -214,6 +324,7 @@ class TriangleSlamNavigator:
         slam: SlamManager,
         planned_vertices: Sequence[Tuple[float, float]],
         viewer: Optional[ViewerClient],
+        heading_fusion: Optional[HeadingFusion],
         lidar_max_range: float,
         slam_update_hz: float,
         map_hz: float,
@@ -225,6 +336,7 @@ class TriangleSlamNavigator:
         self._robot = robot_controller
         self._slam = slam
         self._viewer = viewer
+        self._heading_fusion = heading_fusion
         self._logger = logger
         self._lidar_max_range = float(lidar_max_range)
         self._slam_period = 1.0 / float(slam_update_hz)
@@ -235,6 +347,7 @@ class TriangleSlamNavigator:
         self._waypoint_index = 0
         self._trajectory: List[Tuple[float, float]] = []
         self._last_pose_for_slam: Optional[Pose2D] = None
+        self._fused_pose: Optional[Pose2D] = None
         self._latest_scan: List[LidarMeasurement] = []
         self._running = False
 
@@ -272,6 +385,7 @@ class TriangleSlamNavigator:
         # Issue first waypoint
         if self._vertices:
             self._issue_next_waypoint()
+        self._update_fused_pose()
         while self._running:
             start = asyncio.get_running_loop().time()
             # Progress goals
@@ -279,7 +393,8 @@ class TriangleSlamNavigator:
                 self._issue_next_waypoint()
             # Update controller and integrate pose
             self._robot.update(dt=loop_interval)
-            self._trajectory.append((self._robot.pose.x, self._robot.pose.y))
+            pose = self._update_fused_pose()
+            self._trajectory.append((pose.x, pose.y))
             # Loop pacing
             elapsed = asyncio.get_running_loop().time() - start
             await asyncio.sleep(max(0.0, loop_interval - elapsed))
@@ -292,11 +407,21 @@ class TriangleSlamNavigator:
         self._robot.set_pose_goal(x=x, y=y)
         self._waypoint_index += 1
 
+    def _update_fused_pose(self) -> Pose2D:
+        pose = self._robot.pose
+        theta = pose.theta
+        if self._heading_fusion is not None:
+            theta = self._heading_fusion.fuse(theta)
+        fused = Pose2D(pose.x, pose.y, theta)
+        self._fused_pose = fused
+        return fused
+
     async def _slam_loop(self) -> None:
         """Lower-rate loop that waits for full LIDAR scans and updates SLAM."""
         self._logger.info("Starting SLAM loop at %.1f Hz (scan-blocking)", 1.0 / self._slam_period)
         # Initialize last pose for odometry delta
-        self._last_pose_for_slam = Pose2D(self._robot.pose.x, self._robot.pose.y, self._robot.pose.theta)
+        fused = self._fused_pose or self._robot.pose
+        self._last_pose_for_slam = Pose2D(fused.x, fused.y, fused.theta)
         while self._running:
             # Read one full revolution
             scan = await self._lidar.read_scan()
@@ -308,7 +433,8 @@ class TriangleSlamNavigator:
             # Compute body-frame odometry delta since last SLAM step
             assert self._last_pose_for_slam is not None
             prev = self._last_pose_for_slam
-            curr = self._robot.pose
+            curr_source = self._fused_pose or self._robot.pose
+            curr = Pose2D(curr_source.x, curr_source.y, curr_source.theta)
             dx_world = curr.x - prev.x
             dy_world = curr.y - prev.y
             dtheta = _wrap_angle(curr.theta - prev.theta)
@@ -354,10 +480,11 @@ class TriangleSlamNavigator:
     async def _send_state_update(self) -> None:
         if self._viewer is None:
             return
-        pose = self._robot.pose
+        pose = self._fused_pose or self._robot.pose
         payload: Dict[str, Any] = {
             "type": "triangle_update",
             "pose": {"x": pose.x, "y": pose.y, "theta": pose.theta},
+            "poseHeadingDeg": math.degrees(pose.theta),
             "trajectory": list(self._trajectory[-2000:]),
             "plannedVertices": list(self._vertices),
             "lidarScan": [[float(m.angle_radians), float(max(0.0, m.distance_m))] for m in self._latest_scan[-720:]],
@@ -520,9 +647,41 @@ async def run_test(args: argparse.Namespace) -> None:
     logger = logging.getLogger("triangle_test")
     logger.info("Initializing hardware...")
 
+    imu: Optional[MPU9250] = None
+    heading_fusion: Optional[HeadingFusion] = None
+    imu_stop_event: Optional[asyncio.Event] = None
+    imu_task: Optional[asyncio.Task[None]] = None
+
     # LIDAR
     lidar = RPLidarSerial(port=args.lidar_port, baud_rate=args.lidar_baud, serial_timeout=args.lidar_timeout)
     await lidar.start()
+
+    # IMU (optional)
+    if args.use_imu:
+        try:
+            imu = MPU9250(bus=args.imu_bus, address=args.imu_address, sample_rate_hz=args.imu_rate)
+            yaw_bias = await _initialize_and_warmup_imu(
+                imu,
+                warmup_seconds=args.imu_warmup,
+                sample_rate_hz=args.imu_rate,
+                logger=logger,
+            )
+            heading_fusion = HeadingFusion(blend=args.imu_heading_blend, yaw_bias=yaw_bias)
+            imu_stop_event = asyncio.Event()
+            imu_task = asyncio.create_task(
+                _imu_sampling_loop(
+                    imu,
+                    fusion=heading_fusion,
+                    sample_rate_hz=args.imu_rate,
+                    stop_event=imu_stop_event,
+                    logger=logger,
+                ),
+                name="imu-loop",
+            )
+        except Exception:
+            heading_fusion = None
+            imu = None
+            logger.exception("Failed to initialize IMU; continuing without IMU fusion")
 
     # Motors/encoders and robot controller
     driver, motor_controller, robot, encoders = _build_motor_driver_and_controller(
@@ -565,6 +724,7 @@ async def run_test(args: argparse.Namespace) -> None:
         slam=slam,
         planned_vertices=planned,
         viewer=viewer,
+        heading_fusion=heading_fusion,
         lidar_max_range=args.lidar_max_range,
         slam_update_hz=SLAM_HZ,
         map_hz=MAP_HZ,
@@ -600,6 +760,15 @@ async def run_test(args: argparse.Namespace) -> None:
         pass
     finally:
         logger.info("Shutting down...")
+        if imu_stop_event is not None:
+            imu_stop_event.set()
+        if imu_task is not None:
+            try:
+                await imu_task
+            except asyncio.CancelledError:
+                pass
+        elif imu is not None:
+            await asyncio.to_thread(_close_imu_bus, imu, logger)
         # Stop motors
         try:
             motor_controller.stop_all()
@@ -669,6 +838,19 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
 
     parser.add_argument("--particles", type=int, default=DEFAULT_PARTICLES, help="Particle filter count (100-500)")
     parser.add_argument("--lidar-max-range", type=float, default=DEFAULT_LIDAR_MAX_RANGE, help="LIDAR max range (m)")
+
+    parser.add_argument("--use-imu", dest="use_imu", action="store_true", default=True, help="Enable IMU fusion")
+    parser.add_argument("--no-imu", dest="use_imu", action="store_false", help="Disable IMU")
+    parser.add_argument("--imu-rate", type=float, default=100.0, help="IMU sampling rate for fusion (Hz)")
+    parser.add_argument("--imu-warmup", type=float, default=2.0, help="IMU warmup duration before use (s)")
+    parser.add_argument(
+        "--imu-heading-blend",
+        type=float,
+        default=0.6,
+        help="Blend factor between odometry (0.0) and IMU yaw (1.0)",
+    )
+    parser.add_argument("--imu-bus", type=int, default=1, help="I2C bus number for IMU")
+    parser.add_argument("--imu-address", type=lambda x: int(x, 0), default=0x68, help="IMU I2C address (hex, default 0x68)")
 
     parser.add_argument(
         "--log-level", type=str, default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"], help="Log level"
