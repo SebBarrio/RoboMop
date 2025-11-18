@@ -466,8 +466,6 @@ class TriangleSlamNavigator:
         """High-rate robot control loop running in a dedicated OS thread."""
         loop_interval = self._motor.loop_interval
         self._logger.info("Starting control loop thread at %.1f Hz", 1.0 / loop_interval)
-        if self._vertices:
-            self._issue_next_waypoint()
         
         # Initial fused pose update
         self._update_fused_pose_and_reset_robot()
@@ -494,19 +492,18 @@ class TriangleSlamNavigator:
 
             dt = max(1e-4, now - last_time)
             last_time = now
-            try:
-                self._robot.update(dt=dt)
-            except Exception:
-                self._logger.exception("Robot controller update failed")
 
             try:
                 # Update fusion and FORCE the robot controller to adopt the fused heading
                 self._update_fused_pose_and_reset_robot()
                 
-                if not self._robot.goal_active and self._vertices:
-                    self._issue_next_waypoint()
+                if self._vertices:
+                    self._update_pure_pursuit_control()
+                    
+                self._robot.update(dt=dt)
             except Exception:
-                self._logger.exception("Navigation/Fusion update failed")
+                self._logger.exception("Control/Navigation update failed")
+
             sleep_time = next_tick - time.perf_counter()
             if sleep_time > 0.0:
                 time.sleep(sleep_time)
@@ -535,13 +532,83 @@ class TriangleSlamNavigator:
         self._set_pose_snapshot(fused)
         self._append_trajectory(fused)
 
-    def _issue_next_waypoint(self) -> None:
-        if self._waypoint_index >= len(self._vertices):
-            # Finished one triangle lap; restart to keep moving
-            self._waypoint_index = 0
-        x, y = self._vertices[self._waypoint_index]
-        self._robot.set_pose_goal(x=x, y=y)
+    def _update_pure_pursuit_control(self) -> None:
+        if not self._vertices:
+            return
+
+        pose = self._robot.pose
+        
+        # Pure Pursuit Parameters
+        lookahead = 0.3  # meters
+        cruise_speed = 0.2  # m/s
+        
+        # Identify current segment
+        target_idx = self._waypoint_index
+        # Previous waypoint is start of segment
+        prev_idx = (target_idx - 1) % len(self._vertices)
+        
+        p_start = np.array(self._vertices[prev_idx])
+        p_end = np.array(self._vertices[target_idx])
+        p_robot = np.array([pose.x, pose.y])
+        
+        segment_vec = p_end - p_start
+        segment_len = np.linalg.norm(segment_vec)
+        
+        if segment_len < 1e-3:
+            self._advance_waypoint()
+            return
+
+        segment_dir = segment_vec / segment_len
+        
+        # Project robot onto line segment
+        robot_vec = p_robot - p_start
+        proj_dist = np.dot(robot_vec, segment_dir)
+        
+        # Lookahead point logic
+        lookahead_dist_on_line = proj_dist + lookahead
+        
+        # Check distance to target vertex
+        dist_to_end = np.linalg.norm(p_end - p_robot)
+        
+        if dist_to_end < lookahead:
+            self._advance_waypoint()
+            return
+
+        # Clamp lookahead to segment length
+        clamp_dist = max(0.0, min(lookahead_dist_on_line, segment_len))
+        lookahead_pt = p_start + segment_dir * clamp_dist
+        
+        # Calculate curvature to lookahead point
+        dx = lookahead_pt[0] - pose.x
+        dy = lookahead_pt[1] - pose.y
+        
+        # Transform to robot frame
+        sin_t = math.sin(pose.theta)
+        cos_t = math.cos(pose.theta)
+        local_x = cos_t * dx + sin_t * dy
+        local_y = -sin_t * dx + cos_t * dy
+        
+        # Curvature = 2*y / L^2
+        l_sq = local_x**2 + local_y**2
+        if l_sq < 1e-4:
+            omega = 0.0
+        else:
+            curvature = 2.0 * local_y / l_sq
+            omega = cruise_speed * curvature
+            
+        # Clamp omega for safety
+        max_omega = self._robot.max_angular_speed
+        omega = max(-max_omega, min(max_omega, omega))
+        
+        self._robot.set_velocity_command(linear=cruise_speed, angular=omega)
+
+    def _advance_waypoint(self) -> None:
+        old_idx = self._waypoint_index
         self._waypoint_index += 1
+        if self._waypoint_index >= len(self._vertices):
+            # Loop back to 1 because 0 is same as last (closed loop visual artifact)
+            self._waypoint_index = 1
+        self._logger.info("Advancing waypoint: %d -> %d", old_idx, self._waypoint_index)
 
     # _update_fused_pose is replaced by _update_fused_pose_and_reset_robot
     
