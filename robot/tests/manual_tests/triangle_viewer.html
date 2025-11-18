@@ -302,7 +302,17 @@
                     <div class="legend-item"><div class="color-box" style="background: #666"></div>Map (Occupied)</div>
                 </div>
 
-                 <div class="panel">
+                <div class="panel">
+                    <h1>Controls</h1>
+                    <button id="estop-btn" class="btn" style="width: 100%; background-color: var(--danger); color: white; border-color: var(--danger);">
+                        <svg viewBox="0 0 24 24" style="margin-right: 6px;">
+                            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-1-13h2v6h-2zm0 8h2v2h-2z"></path>
+                        </svg>
+                        E-STOP (SPACE)
+                    </button>
+                </div>
+
+                <div class="panel">
                     <button id="center-btn" class="btn" style="width: 100%">
                         <svg viewBox="0 0 24 24" style="margin-right: 6px;">
                             <path d="M12 8c-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4-1.79-4-4-4zm8.94 3A8.994 8.994 0 0013 3.06V1h-2v2.06A8.994 8.994 0 003.06 11H1v2h2.06A8.994 8.994 0 0011 20.94V23h2v-2.06A8.994 8.994 0 0020.94 13H23v-2h-2.06zM12 19c-3.87 0-7-3.13-7-7s3.13-7 7-7 7 3.13 7 7-3.13 7-7 7z"></path>
@@ -414,10 +424,51 @@
     const headingValue = document.getElementById('heading-value');
     const imuValue = document.getElementById('imu-value');
     const centerBtn = document.getElementById('center-btn');
+    const estopBtn = document.getElementById('estop-btn');
 
     // Stats
     let frameCount = 0;
     let lastFpsTime = 0;
+
+    // E-Stop Logic
+    let estopEnabled = false;
+    
+    function setEstopState(enabled) {
+        estopEnabled = enabled;
+        if (estopEnabled) {
+             estopBtn.innerHTML = `
+                <svg viewBox="0 0 24 24" style="margin-right: 6px; width: 16px; height: 16px; fill: currentColor;">
+                    <path d="M8 5v14l11-7z"></path>
+                </svg>
+                RESUME (SPACE)`;
+             estopBtn.style.backgroundColor = "var(--accent)";
+             estopBtn.style.borderColor = "var(--accent)";
+        } else {
+             estopBtn.innerHTML = `
+                <svg viewBox="0 0 24 24" style="margin-right: 6px; width: 16px; height: 16px; fill: currentColor;">
+                    <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-1-13h2v6h-2zm0 8h2v2h-2z"></path>
+                </svg>
+                E-STOP (SPACE)`;
+             estopBtn.style.backgroundColor = "var(--danger)";
+             estopBtn.style.borderColor = "var(--danger)";
+        }
+    }
+
+    function toggleEstop() {
+        if (!ws || ws.readyState !== WebSocket.OPEN) return;
+        const newState = !estopEnabled;
+        setEstopState(newState); // Optimistic UI update
+        ws.send(JSON.stringify({ type: 'estop', enabled: newState }));
+    }
+
+    estopBtn.addEventListener('click', toggleEstop);
+
+    window.addEventListener('keydown', e => {
+        if (e.code === 'Space') {
+            e.preventDefault();
+            toggleEstop();
+        }
+    });
 
     // Resize Handler
     function resize() {
@@ -568,8 +619,10 @@
     }
 
     // WebSocket
+    let ws;
+
     function connect() {
-        const ws = new WebSocket(WS_URL);
+        ws = new WebSocket(WS_URL);
         
         ws.onopen = () => {
             state.connected = true;
@@ -588,6 +641,10 @@
         ws.onmessage = async (event) => {
             try {
                 const msg = JSON.parse(event.data);
+                if (msg.type === 'estop') {
+                    setEstopState(msg.enabled);
+                }
+                
                 if (msg.type === 'triangle_update') {
                     if (msg.pose) {
                         state.pose = msg.pose;

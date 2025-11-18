@@ -40,7 +40,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from collections import deque
-from typing import Any, Deque, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Deque, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -131,6 +131,11 @@ class ViewerClient:
     url: str
     websocket: Optional[Any] = None
     logger: logging.Logger = logging.getLogger("triangle_stream")
+    _callback: Optional[Callable[[Dict[str, Any]], None]] = None
+    _recv_task: Optional[asyncio.Task] = None
+
+    def set_callback(self, callback: Callable[[Dict[str, Any]], None]) -> None:
+        self._callback = callback
 
     async def connect(self) -> None:
         # If we have a stale connection reference, close it before reconnecting
@@ -143,6 +148,27 @@ class ViewerClient:
         self.logger.info("Connecting to triangle viewer at %s", self.url)
         self.websocket = await websockets.connect(self.url, max_size=10 * 1024 * 1024)
         self.logger.info("Connected to triangle viewer")
+        
+        if self._recv_task:
+            self._recv_task.cancel()
+        self._recv_task = asyncio.create_task(self._receive_loop())
+
+    async def _receive_loop(self) -> None:
+        while True:
+            if self.websocket is None or not self._is_open(self.websocket):
+                await asyncio.sleep(1)
+                continue
+            try:
+                async for message in self.websocket:
+                    if self._callback:
+                        try:
+                            data = json.loads(message)
+                            self._callback(data)
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+            await asyncio.sleep(1)
 
     async def send_update(self, payload: Dict[str, Any]) -> None:
         if self.websocket is None or not self._is_open(self.websocket):
@@ -390,6 +416,20 @@ class TriangleSlamNavigator:
         self._last_pose_for_slam: Optional[Pose2D] = None
         self._latest_scan: List[LidarMeasurement] = []
         self._running = False
+        self._estop_active = False
+
+    def set_estop(self, enabled: bool) -> None:
+        if enabled == self._estop_active:
+            return
+        self._estop_active = enabled
+        if enabled:
+            self._logger.warning("E-STOP ENABLED! Stopping motors.")
+            try:
+                self._motor.stop_all()
+            except Exception as e:
+                self._logger.error(f"Failed to stop motors on E-stop: {e}")
+        else:
+            self._logger.info("E-STOP DISABLED. Resuming.")
 
     async def run(self) -> None:
         self._running = True
@@ -436,6 +476,22 @@ class TriangleSlamNavigator:
         next_tick = last_time + loop_interval
         while self._running:
             now = time.perf_counter()
+            
+            if self._estop_active:
+                try:
+                     self._motor.stop_all()
+                except Exception:
+                     pass
+                # Maintain loop timing but skip PID update
+                last_time = now
+                sleep_time = next_tick - time.perf_counter()
+                if sleep_time > 0.0:
+                    time.sleep(sleep_time)
+                    next_tick += loop_interval
+                else:
+                    next_tick = time.perf_counter() + loop_interval
+                continue
+
             dt = max(1e-4, now - last_time)
             last_time = now
             try:
@@ -860,6 +916,13 @@ async def run_test(args: argparse.Namespace) -> None:
         state_hz=STATE_HZ,
         logger=logger,
     )
+
+    if viewer is not None:
+        def on_viewer_message(data: Dict[str, Any]) -> None:
+            if data.get("type") == "estop":
+                enabled = bool(data.get("enabled", False))
+                navigator.set_estop(enabled)
+        viewer.set_callback(on_viewer_message)
 
     # Graceful shutdown handler
     stop_event = asyncio.Event()
