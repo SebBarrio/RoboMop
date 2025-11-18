@@ -635,6 +635,13 @@ class RobotApp:
                             (left_vel.velocity_m_s or 0.0) + (right_vel.velocity_m_s or 0.0)
                         ) / 2.0
                     omega_meas = snapshot.imu_sample.angular_velocity_rad_s.z
+                    
+                    # Deadband gating to prevent drift when stationary
+                    if abs(avg_encoder_velocity) < 1e-3:
+                        avg_encoder_velocity = 0.0
+                    if abs(omega_meas) < 0.02:
+                        omega_meas = 0.0
+
                     # Use measured velocities for EKF prediction and telemetry
                     self._sensor_fusion.predict(
                         control_v=avg_encoder_velocity,

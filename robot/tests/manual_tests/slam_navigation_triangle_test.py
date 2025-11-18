@@ -524,9 +524,21 @@ class TriangleSlamNavigator:
             sin_h = math.sin(prev.theta)
             dx_body = cos_h * dx_world + sin_h * dy_world
             dy_body = -sin_h * dx_world + cos_h * dy_world
+
+            # Deadband gating to prevent drift when stationary
+            if abs(dx_body) < 2e-4:
+                dx_body = 0.0
+            if abs(dy_body) < 2e-4:
+                dy_body = 0.0
+            if abs(dtheta) < 0.004:
+                dtheta = 0.0
+
             control = np.array([dx_body, dy_body, dtheta], dtype=float)
-            # Process covariance (tuned conservatively)
-            cov = np.diag([0.01, 0.01, math.radians(2.0) ** 2])
+            # Process covariance (scaled by motion to prevent diffusion when stationary)
+            lin_sigma = max(1e-4, 0.2 * abs(dx_body))
+            side_sigma = max(1e-4, 0.1 * abs(dx_body))
+            ang_sigma = max(1e-3, 0.2 * abs(dtheta))
+            cov = np.diag([lin_sigma**2, side_sigma**2, ang_sigma**2])
             # Update SLAM
             try:
                 self._slam.step(
