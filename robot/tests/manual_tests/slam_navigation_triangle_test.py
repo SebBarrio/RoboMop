@@ -699,9 +699,12 @@ def _build_motor_driver_and_controller(
     feedback = EncoderFeedbackAdapter(gpio_encoders)
     motor_controller = MotorController(driver=driver, encoder_feedback=feedback, config=motor_cfg)
     # High-level robot controller
-    position_pid = PIDController(kp=0.8, ki=0.05, kd=0.1, integrator_limit=0.5, output_limits=(-max_linear, max_linear))
+    # Tuned for stability with fused IMU feedback (lower gains to prevent oscillation)
+    position_pid = PIDController(
+        kp=0.5, ki=0.05, kd=0.05, integrator_limit=0.5, output_limits=(-max_linear, max_linear)
+    )
     heading_pid = PIDController(
-        kp=2.0, ki=0.1, kd=0.2, integrator_limit=0.8, output_limits=(-max_angular, max_angular)
+        kp=1.2, ki=0.05, kd=0.1, integrator_limit=0.8, output_limits=(-max_angular, max_angular)
     )
     robot = RobotController(
         motor_controller=motor_controller,
