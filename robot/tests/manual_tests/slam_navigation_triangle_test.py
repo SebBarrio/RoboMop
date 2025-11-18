@@ -428,7 +428,10 @@ class TriangleSlamNavigator:
         self._logger.info("Starting control loop thread at %.1f Hz", 1.0 / loop_interval)
         if self._vertices:
             self._issue_next_waypoint()
-        self._update_fused_pose()
+        
+        # Initial fused pose update
+        self._update_fused_pose_and_reset_robot()
+        
         last_time = time.perf_counter()
         next_tick = last_time + loop_interval
         while self._running:
@@ -441,7 +444,9 @@ class TriangleSlamNavigator:
                 self._logger.exception("Robot controller update failed")
 
             try:
-                self._update_fused_pose()
+                # Update fusion and FORCE the robot controller to adopt the fused heading
+                self._update_fused_pose_and_reset_robot()
+                
                 if not self._robot.goal_active and self._vertices:
                     self._issue_next_waypoint()
             except Exception:
@@ -453,6 +458,27 @@ class TriangleSlamNavigator:
             else:
                 next_tick = time.perf_counter() + loop_interval
 
+    def _update_fused_pose_and_reset_robot(self) -> None:
+        """
+        Get current robot odometry, fuse it with IMU, and then
+        OVERWRITE the robot's internal pose with the fused result.
+        This ensures navigation decisions use the fused heading.
+        """
+        pose = self._robot.pose
+        theta = pose.theta
+        if self._heading_fusion is not None:
+            theta = self._heading_fusion.fuse(theta)
+        
+        # Create the fused pose
+        fused = Pose2D(pose.x, pose.y, theta)
+        
+        # CRITICAL: Update the robot controller's internal state so it knows its true heading
+        # We preserve x/y from odometry but force the fused theta
+        self._robot.reset_pose(fused)
+        
+        self._set_pose_snapshot(fused)
+        self._append_trajectory(fused)
+
     def _issue_next_waypoint(self) -> None:
         if self._waypoint_index >= len(self._vertices):
             # Finished one triangle lap; restart to keep moving
@@ -461,16 +487,8 @@ class TriangleSlamNavigator:
         self._robot.set_pose_goal(x=x, y=y)
         self._waypoint_index += 1
 
-    def _update_fused_pose(self) -> Pose2D:
-        pose = self._robot.pose
-        theta = pose.theta
-        if self._heading_fusion is not None:
-            theta = self._heading_fusion.fuse(theta)
-        fused = Pose2D(pose.x, pose.y, theta)
-        self._set_pose_snapshot(fused)
-        self._append_trajectory(fused)
-        return fused
-
+    # _update_fused_pose is replaced by _update_fused_pose_and_reset_robot
+    
     def _set_pose_snapshot(self, pose: Pose2D) -> None:
         with self._pose_lock:
             self._pose_snapshot = pose
