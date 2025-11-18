@@ -75,11 +75,10 @@ class ImuSample:
 class _ComplementaryFilter:
     """Complementary filter for sensor fusion."""
 
-    def __init__(self, sample_rate_hz: float, alpha: float) -> None:
+    def __init__(self, alpha: float) -> None:
         if not 0.0 < alpha < 1.0:
             raise ValueError("alpha must be between 0 and 1")
         self._alpha = alpha
-        self._dt = 1.0 / sample_rate_hz
         self._initialized = False
         self._roll = 0.0
         self._pitch = 0.0
@@ -95,6 +94,7 @@ class _ComplementaryFilter:
         acceleration: Vector3,
         angular_velocity: Vector3,
         magnetic_field: Optional[Vector3],
+        dt: float,
     ) -> Orientation:
         if not self._initialized:
             roll = math.atan2(acceleration.y, acceleration.z)
@@ -108,9 +108,9 @@ class _ComplementaryFilter:
             self._initialized = True
             return Orientation(roll=roll, pitch=pitch, yaw=yaw)
 
-        roll_gyro = self._roll + angular_velocity.x * self._dt
-        pitch_gyro = self._pitch + angular_velocity.y * self._dt
-        yaw_gyro = self._yaw + angular_velocity.z * self._dt
+        roll_gyro = self._roll + angular_velocity.x * dt
+        pitch_gyro = self._pitch + angular_velocity.y * dt
+        yaw_gyro = self._yaw + angular_velocity.z * dt
 
         roll_acc = math.atan2(acceleration.y, acceleration.z)
         pitch_acc = math.atan2(-acceleration.x, math.sqrt(acceleration.y**2 + acceleration.z**2))
@@ -170,7 +170,7 @@ class MPU9250:
         self._gyro_deadband = 0.5  # deg/s
 
         # Orientation filter and init/reference logic
-        self._filter = _ComplementaryFilter(sample_rate_hz, filter_alpha)
+        self._filter = _ComplementaryFilter(filter_alpha)
         self._orientation_initialized = False
         self._init_buffer: list[Vector3] = []
         self._init_samples_needed = 100
@@ -178,6 +178,8 @@ class MPU9250:
         self._frame_count = 0
         self._init_alpha = 0.5
         self._convergence_frames = 100
+        
+        self._last_sample_time = time.perf_counter()
 
         self._initialized = False
         self._lock = threading.Lock()
@@ -213,6 +215,7 @@ class MPU9250:
         self._bus.write_byte_data(self._mpu_address, PWR_MGMT_1, 0x00)
         self._sleep(0.1)
         self._bus.write_byte_data(self._mpu_address, CONFIG, 0x03)  # Gyro DLPF 41Hz
+        self._bus.write_byte_data(self._mpu_address, GYRO_CONFIG, 0x00)  # Gyro FS ±250dps (131 LSB/dps)
         self._bus.write_byte_data(self._mpu_address, ACCEL_CONFIG2, 0x03)  # Accel DLPF 41Hz
         self._sleep(0.01)
 
@@ -236,6 +239,7 @@ class MPU9250:
 
         # Reset EMA state
         self._filter_initialized = False
+        self._last_sample_time = time.perf_counter()
 
         self._initialized = True
 
@@ -379,7 +383,14 @@ class MPU9250:
                 self._filter.set_alpha(self._filter_alpha)
 
             # Update complementary filter
-            orientation_abs = self._filter.update(acceleration, angular_velocity, magnetic_vector)
+            now = time.perf_counter()
+            dt = now - self._last_sample_time
+            self._last_sample_time = now
+            # Clamp dt to avoid large jumps (e.g. after pause)
+            if dt > 0.2:
+                dt = 0.0  # Skip integration for this step
+
+            orientation_abs = self._filter.update(acceleration, angular_velocity, magnetic_vector, dt)
 
             # Report orientation relative to reference
             if self._reference_orientation is not None:
