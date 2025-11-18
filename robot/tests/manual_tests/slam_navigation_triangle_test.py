@@ -118,7 +118,7 @@ DEFAULT_PARTICLES: int = 200
 DEFAULT_LIDAR_MAX_RANGE: float = 5.0
 
 STATE_HZ: float = 10.0
-MAP_HZ: float = 2.0
+MAP_HZ: float = 1.0
 SLAM_HZ: float = 5.0
 
 

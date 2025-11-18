@@ -155,44 +155,93 @@ class SlamManager:
         return weights
 
     def _default_weight_model(self, scan: ScanArray) -> np.ndarray:
-        particles = self._filter.particles
-        scores = np.zeros(particles.shape[0], dtype=float)
-        for index, pose in enumerate(particles):
-            scores[index] = self._score_particle(pose, scan)
+        """Vectorized implementation of the weight model."""
+        particles = self._filter.particles  # (P, 3)
+        
+        # Filter invalid scan points first
+        valid_mask = (scan[:, 1] > 0) & (scan[:, 1] <= self._max_range)
+        valid_scan = scan[valid_mask]  # (S, 2)
+        
+        if valid_scan.shape[0] == 0:
+            return np.ones(particles.shape[0], dtype=float)
 
-        # Shift scores to ensure strictly positive weights and avoid underflow.
-        minimum = float(np.min(scores))
-        adjusted = scores - minimum + 1.0
+        # 1. Project sensor position for all particles
+        # sensor_pose is relative to robot: (sx, sy, stheta)
+        sx, sy, stheta = self._sensor_pose
+        
+        # Particle headings
+        p_theta = particles[:, 2]  # (P,)
+        cos_h = np.cos(p_theta)
+        sin_h = np.sin(p_theta)
+        
+        # Sensor world positions for each particle
+        # world_x = px + sx*cos(ph) - sy*sin(ph)
+        # world_y = py + sx*sin(ph) + sy*cos(ph)
+        sensor_x = particles[:, 0] + sx * cos_h - sy * sin_h  # (P,)
+        sensor_y = particles[:, 1] + sx * sin_h + sy * cos_h  # (P,)
+        
+        # 2. Calculate hit points for all particles x scans
+        # Broadcast: (P, 1) vs (1, S)
+        
+        # Global angles = particle_heading + sensor_theta + scan_angle
+        # (P, 1) + scalar + (1, S) -> (P, S)
+        scan_angles = valid_scan[:, 0]  # (S,)
+        global_angles = p_theta[:, np.newaxis] + stheta + scan_angles[np.newaxis, :]
+        
+        # Distances (1, S)
+        dists = valid_scan[:, 1][np.newaxis, :]
+        
+        # Hit positions (P, S)
+        hit_x = sensor_x[:, np.newaxis] + dists * np.cos(global_angles)
+        hit_y = sensor_y[:, np.newaxis] + dists * np.sin(global_angles)
+        
+        # 3. Convert to grid coordinates
+        ox, oy, _ = self._grid.origin
+        res = self._grid.resolution
+        
+        # Vectorized floor division
+        cols = np.floor((hit_x - ox) / res).astype(int)
+        rows = np.floor((hit_y - oy) / res).astype(int)
+        
+        # 4. Lookup grid values
+        h, w = self._grid.height, self._grid.width
+        
+        # Mask for in-bounds lookups
+        in_bounds = (rows >= 0) & (rows < h) & (cols >= 0) & (cols < w)
+        
+        # Initialize scores with out-of-bounds penalty (-0.5)
+        # Shape (P, S)
+        scores = np.full(rows.shape, -0.5, dtype=float)
+        
+        # Extract valid indices
+        valid_rows = rows[in_bounds]
+        valid_cols = cols[in_bounds]
+        
+        # Lookup in one go
+        grid_vals = self._grid.array[valid_rows, valid_cols]
+        
+        # Compute scores for valid points
+        # occupancy >= occupied_value -> +1.0
+        # occupancy == UNKNOWN -> +0.4
+        # else (free) -> -0.1
+        
+        # Vectorized scoring
+        # Default to free penalty
+        point_scores = np.full(grid_vals.shape, -0.1, dtype=float)
+        point_scores[grid_vals >= self._occupied_value] = 1.0
+        point_scores[grid_vals == OccupancyGrid.UNKNOWN_VALUE] = 0.4
+        
+        # Assign back to scores matrix
+        scores[in_bounds] = point_scores
+        
+        # 5. Sum scores per particle
+        total_scores = np.sum(scores, axis=1)  # (P,)
+        
+        # 6. Shift to positive weights
+        minimum = np.min(total_scores)
+        adjusted = total_scores - minimum + 1.0
+        
         return adjusted
-
-    def _score_particle(self, pose: np.ndarray, scan: ScanArray) -> float:
-        sensor_x, sensor_y, sensor_heading = self._sensor_in_world(pose, self._sensor_pose)
-        score = 0.0
-        for angle, distance in scan:
-            if not math.isfinite(distance) or distance <= 0.0:
-                continue
-            
-            # Ignore measurements beyond max_range for localization to avoid
-            # hallucinating walls at the clipping boundary.
-            if distance > self._max_range:
-                continue
-
-            hit_x = sensor_x + distance * math.cos(sensor_heading + angle)
-            hit_y = sensor_y + distance * math.sin(sensor_heading + angle)
-            cell = self._world_to_cell(hit_x, hit_y)
-            if cell is None:
-                score -= 0.5
-                continue
-            row, col = cell
-            occupancy = self._grid.get_cell(row, col)
-            if occupancy >= self._occupied_value:
-                score += 1.0
-            elif occupancy == OccupancyGrid.UNKNOWN_VALUE:
-                score += 0.4
-            else:
-                # Penalize hits in known free space
-                score -= 0.1
-        return score
 
     def _sensor_in_world(
         self, pose: np.ndarray, sensor_pose: np.ndarray
