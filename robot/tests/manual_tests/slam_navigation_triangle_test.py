@@ -310,19 +310,22 @@ class TriangleSlamNavigator:
         self._lookahead_distance: float = 0.3
         # Forward speed used by the pure pursuit controller (m/s).
         self._pure_pursuit_speed: float = 0.2
-        self._min_tracking_speed: float = 0.05
-        self._heading_gate_rad: float = math.radians(40.0)
-        self._turn_in_place_gain: float = 2.0  # rad/s per rad
-        self._curvature_speed_gain: float = 0.5
-        self._max_linear_speed: float = getattr(self._robot, "max_linear_speed", DEFAULT_MAX_LINEAR)
-        self._max_angular_speed: float = getattr(self._robot, "max_angular_speed", DEFAULT_MAX_ANGULAR)
         # Pre-compute segment lengths for the polyline path.
         self._segment_lengths: List[float] = []
+        self._segment_prefix: List[float] = []
+        self._path_length: float = 0.0
         if len(self._vertices) >= 2:
             for i in range(len(self._vertices) - 1):
                 x0, y0 = self._vertices[i]
                 x1, y1 = self._vertices[i + 1]
-                self._segment_lengths.append(math.hypot(x1 - x0, y1 - y0))
+                length = math.hypot(x1 - x0, y1 - y0)
+                self._segment_lengths.append(length)
+                self._segment_prefix.append(self._path_length)
+                self._path_length += length
+
+        # Track path progress monotonically to avoid oscillating between segments.
+        self._lap_offset: float = 0.0
+        self._path_progress_mod: float = 0.0
 
     async def run(self) -> None:
         self._running = True
@@ -382,7 +385,8 @@ class TriangleSlamNavigator:
             return
 
         pose = self._robot.pose
-        lookahead_point = self._compute_lookahead_point(pose.x, pose.y)
+        self._update_path_progress(pose.x, pose.y)
+        lookahead_point = self._compute_lookahead_point()
         if lookahead_point is None:
             self._robot.set_velocity_command(linear=0.0, angular=0.0)
             return
@@ -404,74 +408,60 @@ class TriangleSlamNavigator:
 
         # Angle to lookahead in robot frame
         alpha = math.atan2(y_r, x_r)
-        abs_alpha = abs(alpha)
 
         lookahead = max(self._lookahead_distance, 1e-3)
-
-        # If heading error is large, rotate in place before driving forward.
-        if abs_alpha >= self._heading_gate_rad:
-            omega = math.copysign(
-                min(self._max_angular_speed, self._turn_in_place_gain * abs_alpha),
-                alpha,
-            )
-            self._robot.set_velocity_command(linear=0.0, angular=omega)
-            return
-
         curvature = 2.0 * math.sin(alpha) / lookahead
 
-        # Scale linear speed down as curvature/heading error grows to avoid oscillations.
-        heading_scale = max(0.0, math.cos(alpha))
-        curvature_scale = 1.0 / (1.0 + self._curvature_speed_gain * abs(curvature))
-        v = self._pure_pursuit_speed * heading_scale * curvature_scale
-        v = max(self._min_tracking_speed, min(v, self._max_linear_speed))
-
+        # Base forward speed (could be scaled with curvature for tighter turns).
+        v = self._pure_pursuit_speed
         omega = curvature * v
-        omega = max(-self._max_angular_speed, min(self._max_angular_speed, omega))
 
         self._robot.set_velocity_command(linear=v, angular=omega)
 
-    def _compute_lookahead_point(self, x: float, y: float) -> Optional[Tuple[float, float]]:
-        """Return the lookahead point along the triangular path for pure pursuit.
-
-        The algorithm finds the closest point on the polyline path to the robot,
-        then walks forward along the path by the configured lookahead distance.
-        """
-        if not self._segment_lengths:
+    def _compute_lookahead_point(self) -> Optional[Tuple[float, float]]:
+        """Return the lookahead point located ahead of the current path progress."""
+        if not self._segment_lengths or self._path_length <= 1e-9:
             return None
 
-        seg_index, s_on_seg, _, _ = self._closest_point_on_path(x, y)
+        distance_along_path = self._current_path_progress() + self._lookahead_distance
+        remaining = distance_along_path % self._path_length
 
-        remaining_lookahead = self._lookahead_distance
-        s_along = s_on_seg
-        num_segments = len(self._segment_lengths)
-
-        while remaining_lookahead > 0.0:
-            seg_len = self._segment_lengths[seg_index]
+        for seg_index, seg_len in enumerate(self._segment_lengths):
             if seg_len < 1e-6:
-                # Degenerate segment; skip to the next one.
-                seg_index = (seg_index + 1) % num_segments
-                s_along = 0.0
                 continue
-
-            distance_to_end = seg_len - s_along
-            if remaining_lookahead <= distance_to_end:
-                # Lookahead point lies within this segment.
-                target_s = s_along + remaining_lookahead
+            if remaining <= seg_len:
+                ratio = remaining / seg_len
                 x0, y0 = self._vertices[seg_index]
                 x1, y1 = self._vertices[seg_index + 1]
-                ratio = target_s / seg_len
-                lx = x0 + (x1 - x0) * ratio
-                ly = y0 + (y1 - y0) * ratio
-                return lx, ly
+                return (x0 + (x1 - x0) * ratio, y0 + (y1 - y0) * ratio)
+            remaining -= seg_len
 
-            # Move to next segment
-            remaining_lookahead -= distance_to_end
-            seg_index = (seg_index + 1) % num_segments
-            s_along = 0.0
+        return self._vertices[-1]
 
-        # Fallback (should not normally be hit): return final vertex.
-        last_x, last_y = self._vertices[-1]
-        return last_x, last_y
+    def _update_path_progress(self, x: float, y: float) -> None:
+        """Update the monotonic progress parameter along the triangular path."""
+        if not self._segment_lengths or self._path_length <= 1e-9:
+            return
+
+        seg_index, s_on_seg, _, _ = self._closest_point_on_path(x, y)
+        seg_start = self._segment_prefix[seg_index]
+        new_mod = seg_start + s_on_seg
+        prev_mod = self._path_progress_mod
+        path_length = self._path_length
+
+        # Detect lap wrap when we move from end of path back to the start.
+        wrap_margin = min(self._lookahead_distance, 0.25 * path_length)
+        if prev_mod > path_length - wrap_margin and new_mod < wrap_margin:
+            self._lap_offset += path_length
+            self._path_progress_mod = new_mod
+            return
+
+        # Prevent regressions that would command backwards motion.
+        if new_mod >= prev_mod:
+            self._path_progress_mod = new_mod
+
+    def _current_path_progress(self) -> float:
+        return self._lap_offset + self._path_progress_mod
 
     def _closest_point_on_path(
         self, x: float, y: float
