@@ -313,7 +313,7 @@ class TriangleSlamNavigator:
         self._min_turn_speed: float = 0.03
         self._curvature_slowdown_threshold: float = 1.2
         self._pivot_curvature_threshold: float = 2.4
-        self._pivot_linear_cutoff: float = 0.035
+        self._path_regression_margin: float = 0.5 * self._lookahead_distance
         # Pre-compute segment lengths for the polyline path.
         self._segment_lengths: List[float] = []
         self._segment_prefix: List[float] = []
@@ -345,8 +345,9 @@ class TriangleSlamNavigator:
         tasks = [
             asyncio.create_task(self._control_loop(), name="control-loop"),
             asyncio.create_task(self._slam_loop(), name="slam-loop"),
-            asyncio.create_task(self._viewer_loop(), name="viewer-loop"),
         ]
+        if self._viewer is not None:
+            tasks.append(asyncio.create_task(self._viewer_loop(), name="viewer-loop"))
         if self._imu is not None:
             tasks.append(asyncio.create_task(self._imu_loop(), name="imu-loop"))
         try:
@@ -422,19 +423,22 @@ class TriangleSlamNavigator:
         v_cmd = min(self._pure_pursuit_speed, self._max_linear_speed)
         curv_mag = abs(curvature)
 
+        if curv_mag >= self._pivot_curvature_threshold:
+            omega_cmd = math.copysign(self._max_angular_speed, curvature)
+            self._robot.set_velocity_command(linear=0.0, angular=omega_cmd)
+            return
+
         if curv_mag > self._curvature_slowdown_threshold:
             scale = self._curvature_slowdown_threshold / curv_mag
-            v_cmd = max(self._min_turn_speed, v_cmd * scale)
+            v_cmd = v_cmd * scale
+
+        v_cmd = max(self._min_turn_speed, v_cmd)
 
         omega_cmd = curvature * v_cmd
         if abs(omega_cmd) > self._max_angular_speed:
             limit_scale = self._max_angular_speed / max(abs(omega_cmd), 1e-6)
             v_cmd *= limit_scale
             omega_cmd = curvature * v_cmd
-
-        if curv_mag >= self._pivot_curvature_threshold and v_cmd <= self._pivot_linear_cutoff:
-            v_cmd = 0.0
-            omega_cmd = math.copysign(self._max_angular_speed, curvature)
 
         self._robot.set_velocity_command(linear=v_cmd, angular=omega_cmd)
 
@@ -476,8 +480,9 @@ class TriangleSlamNavigator:
             self._path_progress_mod = new_mod
             return
 
-        # Prevent regressions that would command backwards motion.
-        if new_mod >= prev_mod:
+        # Prevent regressions that would command backwards motion, but allow small corrections.
+        regression_margin = self._path_regression_margin
+        if new_mod >= prev_mod or prev_mod - new_mod <= regression_margin:
             self._path_progress_mod = new_mod
 
     def _current_path_progress(self) -> float:
