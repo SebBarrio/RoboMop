@@ -192,7 +192,55 @@
         .btn:active {
             transform: scale(0.98);
         }
+
+        .btn-group {
+            display: flex;
+            gap: 8px;
+            width: 100%;
+        }
+
+        .btn-group .btn {
+            flex: 1;
+        }
+
+        .control-pad {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 8px;
+            margin-top: 12px;
+        }
+
+        .pad-btn {
+            aspect-ratio: 1;
+            padding: 0;
+            font-size: 18px;
+        }
         
+        .slider-container {
+            margin-top: 12px;
+        }
+        
+        .slider-label {
+            display: flex;
+            justify-content: space-between;
+            font-size: 11px;
+            color: var(--text-secondary);
+            margin-bottom: 4px;
+        }
+
+        input[type="range"] {
+            width: 100%;
+            accent-color: var(--accent);
+        }
+
+        .mode-badge {
+            font-size: 10px;
+            padding: 2px 6px;
+            border-radius: 4px;
+            background: rgba(255,255,255,0.1);
+            margin-left: auto;
+        }
+
         .icon-btn {
             padding: 8px;
             border-radius: 50%;
@@ -300,6 +348,50 @@
                     <div class="legend-item"><div class="color-box" style="background: #2196f3; border: 1px dashed rgba(128,128,128,0.5)"></div>Planned Path</div>
                     <div class="legend-item"><div class="color-box" style="background: #00bcd4"></div>Lidar Scan</div>
                     <div class="legend-item"><div class="color-box" style="background: #666"></div>Map (Occupied)</div>
+                </div>
+
+                <div class="panel">
+                    <h1>
+                        Control Mode
+                        <span id="mode-display" class="mode-badge">AUTO</span>
+                    </h1>
+                    <div class="btn-group">
+                        <button id="mode-auto-btn" class="btn" style="background-color: var(--accent); color: white; border-color: var(--accent);">Auto</button>
+                        <button id="mode-manual-btn" class="btn">Manual</button>
+                    </div>
+
+                    <div id="manual-controls" style="display: none; margin-top: 16px; border-top: 1px solid var(--panel-border); padding-top: 16px;">
+                        <div class="slider-container">
+                            <div class="slider-label">
+                                <span>Max Linear Speed</span>
+                                <span id="linear-val">0.2 m/s</span>
+                            </div>
+                            <input type="range" id="linear-slider" min="0.1" max="0.5" step="0.05" value="0.2">
+                        </div>
+                        
+                        <div class="slider-container">
+                            <div class="slider-label">
+                                <span>Max Angular Speed</span>
+                                <span id="angular-val">0.5 r/s</span>
+                            </div>
+                            <input type="range" id="angular-slider" min="0.2" max="1.5" step="0.1" value="0.5">
+                        </div>
+
+                        <div class="control-pad">
+                            <div></div>
+                            <button class="btn pad-btn" id="btn-fwd">▲</button>
+                            <div></div>
+                            <button class="btn pad-btn" id="btn-left">◀</button>
+                            <button class="btn pad-btn" id="btn-stop">■</button>
+                            <button class="btn pad-btn" id="btn-right">▶</button>
+                            <div></div>
+                            <button class="btn pad-btn" id="btn-back">▼</button>
+                            <div></div>
+                        </div>
+                        <div style="text-align: center; font-size: 10px; color: var(--text-secondary); margin-top: 8px;">
+                            Use WASD or Arrow Keys
+                        </div>
+                    </div>
                 </div>
 
                 <div class="panel">
@@ -433,6 +525,175 @@
     // E-Stop Logic
     let estopEnabled = false;
     
+    // Manual Control Logic
+    let controlMode = 'auto'; // 'auto' or 'manual'
+    let maxLinear = 0.2;
+    let maxAngular = 0.5;
+    
+    const modeAutoBtn = document.getElementById('mode-auto-btn');
+    const modeManualBtn = document.getElementById('mode-manual-btn');
+    const modeDisplay = document.getElementById('mode-display');
+    const manualControls = document.getElementById('manual-controls');
+    
+    const linearSlider = document.getElementById('linear-slider');
+    const angularSlider = document.getElementById('angular-slider');
+    const linearVal = document.getElementById('linear-val');
+    const angularVal = document.getElementById('angular-val');
+
+    function updateModeUI() {
+        if (controlMode === 'auto') {
+            modeAutoBtn.style.backgroundColor = 'var(--accent)';
+            modeAutoBtn.style.color = 'white';
+            modeAutoBtn.style.borderColor = 'var(--accent)';
+            modeManualBtn.style.backgroundColor = '';
+            modeManualBtn.style.color = '';
+            modeManualBtn.style.borderColor = '';
+            manualControls.style.display = 'none';
+            modeDisplay.innerText = 'AUTO';
+        } else {
+            modeAutoBtn.style.backgroundColor = '';
+            modeAutoBtn.style.color = '';
+            modeAutoBtn.style.borderColor = '';
+            modeManualBtn.style.backgroundColor = 'var(--accent)';
+            modeManualBtn.style.color = 'white';
+            modeManualBtn.style.borderColor = 'var(--accent)';
+            manualControls.style.display = 'block';
+            modeDisplay.innerText = 'MANUAL';
+        }
+    }
+
+    function setMode(mode) {
+        controlMode = mode;
+        updateModeUI();
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'control', command: 'set_mode', mode: mode }));
+        }
+    }
+
+    modeAutoBtn.addEventListener('click', () => setMode('auto'));
+    modeManualBtn.addEventListener('click', () => setMode('manual'));
+
+    linearSlider.addEventListener('input', (e) => {
+        maxLinear = parseFloat(e.target.value);
+        linearVal.innerText = `${maxLinear} m/s`;
+    });
+
+    angularSlider.addEventListener('input', (e) => {
+        maxAngular = parseFloat(e.target.value);
+        angularVal.innerText = `${maxAngular} r/s`;
+    });
+
+    // Manual Drive Logic
+    let currentLinear = 0;
+    let currentAngular = 0;
+    const keys = { w: false, a: false, s: false, d: false, arrowup: false, arrowleft: false, arrowdown: false, arrowright: false };
+
+    function sendVelocity() {
+        if (controlMode !== 'manual' || !ws || ws.readyState !== WebSocket.OPEN) return;
+        
+        // Simple mixing
+        let lin = 0;
+        let ang = 0;
+
+        if (keys.w || keys.arrowup) lin += maxLinear;
+        if (keys.s || keys.arrowdown) lin -= maxLinear;
+        if (keys.a || keys.arrowleft) ang += maxAngular;
+        if (keys.d || keys.arrowright) ang -= maxAngular;
+
+        if (lin !== currentLinear || ang !== currentAngular) {
+            currentLinear = lin;
+            currentAngular = ang;
+            ws.send(JSON.stringify({ 
+                type: 'control', 
+                command: 'velocity', 
+                linear: currentLinear, 
+                angular: currentAngular 
+            }));
+        }
+    }
+    
+    // Button handlers (Mouse)
+    const padBtns = {
+        'btn-fwd': { lin: 1, ang: 0 },
+        'btn-back': { lin: -1, ang: 0 },
+        'btn-left': { lin: 0, ang: 1 },
+        'btn-right': { lin: 0, ang: -1 },
+        'btn-stop': { lin: 0, ang: 0 }
+    };
+
+    Object.keys(padBtns).forEach(id => {
+        const btn = document.getElementById(id);
+        const val = padBtns[id];
+        
+        // Mouse down / Touch start
+        const start = (e) => {
+            e.preventDefault();
+            if (controlMode !== 'manual') return;
+            if (id === 'btn-stop') {
+                keys.w = keys.s = keys.a = keys.d = false;
+                currentLinear = 0;
+                currentAngular = 0;
+            } else {
+                if (val.lin !== 0) currentLinear = val.lin * maxLinear;
+                if (val.ang !== 0) currentAngular = val.ang * maxAngular;
+            }
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ 
+                    type: 'control', 
+                    command: 'velocity', 
+                    linear: currentLinear, 
+                    angular: currentAngular 
+                }));
+            }
+        };
+
+        // Mouse up / Touch end
+        const end = (e) => {
+             e.preventDefault();
+             if (controlMode !== 'manual') return;
+             // Stop only if this button was pressing (simple logic: release stops all for touch)
+             // Ideally we want multitouch, but for D-pad, release usually means stop
+             currentLinear = 0;
+             currentAngular = 0;
+             if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ 
+                    type: 'control', 
+                    command: 'velocity', 
+                    linear: 0, 
+                    angular: 0 
+                }));
+            }
+        };
+
+        if (id !== 'btn-stop') {
+            btn.addEventListener('mousedown', start);
+            btn.addEventListener('mouseup', end);
+            btn.addEventListener('mouseleave', end);
+            btn.addEventListener('touchstart', start);
+            btn.addEventListener('touchend', end);
+        } else {
+            btn.addEventListener('click', start);
+        }
+    });
+
+    // Keyboard handlers
+    window.addEventListener('keydown', e => {
+        if (e.repeat) return;
+        const k = e.key.toLowerCase();
+        if (keys.hasOwnProperty(k)) {
+            keys[k] = true;
+            sendVelocity();
+        }
+    });
+
+    window.addEventListener('keyup', e => {
+        const k = e.key.toLowerCase();
+        if (keys.hasOwnProperty(k)) {
+            keys[k] = false;
+            sendVelocity();
+        }
+    });
+
     function setEstopState(enabled) {
         estopEnabled = enabled;
         if (estopEnabled) {

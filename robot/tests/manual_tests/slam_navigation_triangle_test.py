@@ -420,10 +420,35 @@ class TriangleSlamNavigator:
         self._trajectory_lock = threading.Lock()
         self._pose_lock = threading.Lock()
         self._pose_snapshot: Pose2D = Pose2D()
+        self._slam_pose: Optional[Pose2D] = None
         self._last_pose_for_slam: Optional[Pose2D] = None
         self._latest_scan: List[LidarMeasurement] = []
         self._running = False
         self._estop_active = False
+        
+        # Control mode state
+        self._control_mode: str = "auto"  # "auto" or "manual"
+        self._manual_cmd: Tuple[float, float] = (0.0, 0.0)  # linear, angular
+        self._control_lock = threading.Lock()
+
+    def set_control_mode(self, mode: str) -> None:
+        with self._control_lock:
+            if mode not in ("auto", "manual"):
+                self._logger.warning("Invalid control mode: %s", mode)
+                return
+            if mode != self._control_mode:
+                self._logger.info("Switching control mode: %s -> %s", self._control_mode, mode)
+                self._control_mode = mode
+                # Reset commands when switching
+                self._manual_cmd = (0.0, 0.0)
+                if mode == "manual":
+                    # Cancel any active auto goals
+                    self._robot.cancel_goal()
+                    self._robot.set_velocity_command(linear=0.0, angular=0.0)
+
+    def set_manual_velocity(self, linear: float, angular: float) -> None:
+        with self._control_lock:
+            self._manual_cmd = (linear, angular)
 
     def set_estop(self, enabled: bool) -> None:
         if enabled == self._estop_active:
@@ -504,7 +529,18 @@ class TriangleSlamNavigator:
                 # Update fusion and FORCE the robot controller to adopt the fused heading
                 self._update_fused_pose_and_reset_robot()
                 
-                if self._vertices:
+                # Determine control source based on mode
+                is_manual = False
+                manual_linear, manual_angular = 0.0, 0.0
+                
+                with self._control_lock:
+                    if self._control_mode == "manual":
+                        is_manual = True
+                        manual_linear, manual_angular = self._manual_cmd
+                
+                if is_manual:
+                    self._robot.set_velocity_command(linear=manual_linear, angular=manual_angular)
+                elif self._vertices:
                     self._update_pure_pursuit_control()
                     
                 self._robot.update(dt=dt)
@@ -689,14 +725,6 @@ class TriangleSlamNavigator:
             dx_body = cos_h * dx_world + sin_h * dy_world
             dy_body = -sin_h * dx_world + cos_h * dy_world
 
-            # Deadband gating to prevent drift when stationary
-            if abs(dx_body) < 2e-4:
-                dx_body = 0.0
-            if abs(dy_body) < 2e-4:
-                dy_body = 0.0
-            if abs(dtheta) < 0.004:
-                dtheta = 0.0
-
             control = np.array([dx_body, dy_body, dtheta], dtype=float)
             # Process covariance (scaled by motion to prevent diffusion when stationary)
             lin_sigma = max(1e-4, 0.2 * abs(dx_body))
@@ -705,11 +733,13 @@ class TriangleSlamNavigator:
             cov = np.diag([lin_sigma**2, side_sigma**2, ang_sigma**2])
             # Update SLAM
             try:
-                self._slam.step(
+                slam_mean, _ = self._slam.step(
                     control=control,
                     process_covariance=cov,
                     scan=scan_array,
                 )
+                # Update SLAM pose for visualization
+                self._slam_pose = Pose2D(slam_mean[0], slam_mean[1], slam_mean[2])
                 self._last_pose_for_slam = Pose2D(curr.x, curr.y, curr.theta)
             except Exception:
                 self._logger.exception("SLAM step failed")
@@ -738,13 +768,17 @@ class TriangleSlamNavigator:
         if self._viewer is None:
             return
         pose = self._get_pose_snapshot()
+        # Use SLAM pose if available for visualization alignment with map
+        display_pose = self._slam_pose if self._slam_pose is not None else pose
+        
         payload: Dict[str, Any] = {
             "type": "triangle_update",
-            "pose": {"x": pose.x, "y": pose.y, "theta": pose.theta},
-            "poseHeadingDeg": math.degrees(pose.theta),
+            "pose": {"x": display_pose.x, "y": display_pose.y, "theta": display_pose.theta},
+            "poseHeadingDeg": math.degrees(display_pose.theta),
             "trajectory": self._get_recent_trajectory(),
             "plannedVertices": list(self._vertices),
             "lidarScan": [[float(m.angle_radians), float(max(0.0, m.distance_m))] for m in self._latest_scan[-720:]],
+            "odomPose": {"x": pose.x, "y": pose.y, "theta": pose.theta},
         }
         if self._imu_sampler is not None:
             imu_heading = self._imu_sampler.latest_heading_deg()
@@ -1014,9 +1048,20 @@ async def run_test(args: argparse.Namespace) -> None:
 
     if viewer is not None:
         def on_viewer_message(data: Dict[str, Any]) -> None:
-            if data.get("type") == "estop":
+            msg_type = data.get("type")
+            if msg_type == "estop":
                 enabled = bool(data.get("enabled", False))
                 navigator.set_estop(enabled)
+            elif msg_type == "control":
+                command = data.get("command")
+                if command == "set_mode":
+                    mode = str(data.get("mode", "auto"))
+                    navigator.set_control_mode(mode)
+                elif command == "velocity":
+                    lin = float(data.get("linear", 0.0))
+                    ang = float(data.get("angular", 0.0))
+                    navigator.set_manual_velocity(lin, ang)
+
         viewer.set_callback(on_viewer_message)
 
     # Graceful shutdown handler
