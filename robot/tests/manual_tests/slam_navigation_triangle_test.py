@@ -599,15 +599,31 @@ class TriangleSlamNavigator:
         l_sq = local_x**2 + local_y**2
         if l_sq < 1e-4:
             omega = 0.0
+            linear_cmd = cruise_speed
         else:
             curvature = 2.0 * local_y / l_sq
-            omega = cruise_speed * curvature
+            
+            # Calculate heading error to lookahead point
+            heading_error = math.atan2(local_y, local_x)
+            
+            # Scale linear speed based on heading error (slow down for turns)
+            # If error is > 60 degrees, pivot in place (linear=0)
+            if abs(heading_error) > math.pi / 3.0:
+                linear_cmd = 0.0
+                # Pivot speed
+                omega = math.copysign(0.5, heading_error)
+            else:
+                # Slow down as we turn: v = v_max * cos(heading_error)^2
+                scale = max(0.1, math.cos(heading_error) ** 2)
+                linear_cmd = cruise_speed * scale
+                # Use nominal cruise speed for curvature calculation to maintain path geometry
+                omega = cruise_speed * curvature
             
         # Clamp omega for safety
         max_omega = self._robot.max_angular_speed
         omega = max(-max_omega, min(max_omega, omega))
         
-        self._robot.set_velocity_command(linear=cruise_speed, angular=omega)
+        self._robot.set_velocity_command(linear=linear_cmd, angular=omega)
 
     def _advance_waypoint(self) -> None:
         old_idx = self._waypoint_index
