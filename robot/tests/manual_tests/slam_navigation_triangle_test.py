@@ -42,7 +42,7 @@ from pathlib import Path
 from collections import deque
 from typing import Any, Callable, Deque, Dict, List, Optional, Sequence, Tuple
 
-import numpy as np  # type: ignore[import]
+import numpy as np
 
 # Make 'src' importable when running this script directly
 _THIS_FILE = Path(__file__).resolve()
@@ -84,8 +84,6 @@ from src.sensors.imu import MPU9250
 from src.sensors.lidar import LidarMeasurement, RPLidarSerial
 from src.slam.occupancy_grid import OccupancyGrid
 from src.slam.particle_filter import ParticleFilter
-from src.slam.pose_fusion import PoseFusionEKF
-from src.slam.scan_matching import CorrelativeScanMatcher, ScanMatchResult, ScanMatchWindow
 from src.slam.slam_manager import SlamManager
 
 
@@ -401,11 +399,6 @@ class TriangleSlamNavigator:
         slam_update_hz: float,
         map_hz: float,
         state_hz: float,
-        pose_filter: Optional[PoseFusionEKF],
-        scan_matcher: Optional[CorrelativeScanMatcher],
-        scan_match_min_score: float,
-        scan_match_min_improvement: float,
-        imu_heading_variance: float,
         logger: logging.Logger,
     ) -> None:
         self._lidar = lidar
@@ -415,8 +408,6 @@ class TriangleSlamNavigator:
         self._viewer = viewer
         self._heading_fusion = heading_fusion
         self._imu_sampler = imu_sampler
-        self._pose_filter = pose_filter
-        self._imu_heading_variance = float(max(1e-6, imu_heading_variance))
         self._logger = logger
         self._lidar_max_range = float(lidar_max_range)
         self._slam_period = 1.0 / float(slam_update_hz)
@@ -431,16 +422,9 @@ class TriangleSlamNavigator:
         self._pose_snapshot: Pose2D = Pose2D()
         self._slam_pose: Optional[Pose2D] = None
         self._last_pose_for_slam: Optional[Pose2D] = None
-        self._last_raw_odometry: Optional[Pose2D] = None
         self._latest_scan: List[LidarMeasurement] = []
         self._running = False
         self._estop_active = False
-        self._pose_measurement_lock = threading.Lock()
-        self._pending_pose_measurement: Optional[Tuple[Pose2D, np.ndarray]] = None
-        self._scan_matcher = scan_matcher
-        self._scan_match_min_score = scan_match_min_score
-        self._scan_match_min_improvement = scan_match_min_improvement
-        self._latest_scan_match_score: Optional[float] = None
         
         # Control mode state
         self._control_mode: str = "auto"  # "auto" or "manual"
@@ -572,123 +556,24 @@ class TriangleSlamNavigator:
 
     def _update_fused_pose_and_reset_robot(self) -> None:
         """
-        Update the fused pose estimate (EKF + IMU) and reset the robot controller so navigation
-        uses the corrected pose for downstream planning.
+        Get current robot odometry, fuse it with IMU, and then
+        OVERWRITE the robot's internal pose with the fused result.
+        This ensures navigation decisions use the fused heading.
         """
-        fused = self._resolve_fused_pose()
+        pose = self._robot.pose
+        theta = pose.theta
+        if self._heading_fusion is not None:
+            theta = self._heading_fusion.fuse(theta)
+        
+        # Create the fused pose
+        fused = Pose2D(pose.x, pose.y, theta)
+        
+        # CRITICAL: Update the robot controller's internal state so it knows its true heading
+        # We preserve x/y from odometry but force the fused theta
         self._robot.reset_pose(fused)
+        
         self._set_pose_snapshot(fused)
         self._append_trajectory(fused)
-
-    def _resolve_fused_pose(self) -> Pose2D:
-        pose = self._robot.pose
-        if self._pose_filter is None:
-            theta = pose.theta
-            if self._heading_fusion is not None:
-                theta = self._heading_fusion.fuse(theta)
-            return Pose2D(pose.x, pose.y, theta)
-
-        if self._last_raw_odometry is None:
-            self._pose_filter.reset(pose)
-        else:
-            dx = pose.x - self._last_raw_odometry.x
-            dy = pose.y - self._last_raw_odometry.y
-            dtheta = _wrap_angle(pose.theta - self._last_raw_odometry.theta)
-            process_cov = self._compute_process_covariance(dx, dy, dtheta)
-            self._pose_filter.predict(dx, dy, dtheta, process_cov)
-
-        self._last_raw_odometry = Pose2D(pose.x, pose.y, pose.theta)
-        self._apply_heading_measurement()
-        self._apply_pending_pose_measurement()
-        return self._pose_filter.pose
-
-    def _compute_process_covariance(self, dx: float, dy: float, dtheta: float) -> np.ndarray:
-        lin_sigma = max(5e-3, 0.01 + 0.1 * abs(dx))
-        side_sigma = max(5e-3, 0.01 + 0.1 * abs(dy))
-        ang_sigma = max(math.radians(0.5), math.radians(1.0) + 0.2 * abs(dtheta))
-        return np.diag([lin_sigma**2, side_sigma**2, ang_sigma**2])
-
-    def _apply_heading_measurement(self) -> None:
-        if self._pose_filter is None or self._heading_fusion is None:
-            return
-        heading = self._heading_fusion.latest_heading()
-        if heading is None:
-            return
-        self._pose_filter.update_heading(heading, self._imu_heading_variance)
-
-    def _submit_pose_measurement(self, pose: Pose2D, covariance: np.ndarray) -> None:
-        if self._pose_filter is None:
-            return
-        with self._pose_measurement_lock:
-            self._pending_pose_measurement = (pose, covariance)
-
-    def _consume_pose_measurement(self) -> Optional[Tuple[Pose2D, np.ndarray]]:
-        with self._pose_measurement_lock:
-            measurement = self._pending_pose_measurement
-            self._pending_pose_measurement = None
-            return measurement
-
-    def _apply_pending_pose_measurement(self) -> None:
-        if self._pose_filter is None:
-            return
-        measurement = self._consume_pose_measurement()
-        if measurement is None:
-            return
-        pose, covariance = measurement
-        self._pose_filter.update_with_pose(pose, covariance)
-
-    def _handle_slam_measurement(self, mean: np.ndarray, covariance: np.ndarray) -> None:
-        if self._pose_filter is None:
-            return
-        try:
-            slam_cov = np.asarray(covariance, dtype=float)
-            if slam_cov.shape != (3, 3):
-                raise ValueError("invalid slam covariance shape")
-        except Exception:
-            slam_cov = np.eye(3, dtype=float) * 5e-4
-        else:
-            slam_cov = slam_cov + np.eye(3, dtype=float) * 1e-4
-        pose = Pose2D(float(mean[0]), float(mean[1]), float(mean[2]))
-        self._submit_pose_measurement(pose, slam_cov)
-
-    def _maybe_run_scan_matcher(self, pose: Pose2D, scan_array: np.ndarray) -> None:
-        if self._scan_matcher is None or self._pose_filter is None:
-            return
-        if self._slam_pose is None:
-            # Wait until the map has some structure
-            return
-        try:
-            result = self._scan_matcher.match(
-                (pose.x, pose.y, pose.theta),
-                scan_array,
-            )
-        except Exception:
-            self._latest_scan_match_score = None
-            self._logger.exception("Scan matching failed")
-            return
-        if result is None:
-            self._latest_scan_match_score = None
-            return
-        self._latest_scan_match_score = result.best_score
-        if not self._should_accept_scan_match(result):
-            return
-        covariance = self._scan_match_covariance(result)
-        matched_pose = Pose2D(result.best_pose[0], result.best_pose[1], result.best_pose[2])
-        self._submit_pose_measurement(matched_pose, covariance)
-
-    def _should_accept_scan_match(self, result: ScanMatchResult) -> bool:
-        if result.best_score < self._scan_match_min_score:
-            return False
-        if result.improvement() < self._scan_match_min_improvement:
-            return False
-        return True
-
-    def _scan_match_covariance(self, result: ScanMatchResult) -> np.ndarray:
-        improvement = max(1e-3, result.improvement())
-        confidence = max(0.05, min(1.0, improvement))
-        pos_sigma = max(0.01, 0.2 * (1.0 - confidence))
-        heading_sigma = max(math.radians(1.0), math.radians(10.0) * (1.0 - confidence))
-        return np.diag([pos_sigma**2, pos_sigma**2, heading_sigma**2])
 
     def _update_pure_pursuit_control(self) -> None:
         if not self._vertices:
@@ -831,7 +716,6 @@ class TriangleSlamNavigator:
             assert self._last_pose_for_slam is not None
             prev = self._last_pose_for_slam
             curr = self._get_pose_snapshot()
-            self._maybe_run_scan_matcher(curr, scan_array)
             dx_world = curr.x - prev.x
             dy_world = curr.y - prev.y
             dtheta = _wrap_angle(curr.theta - prev.theta)
@@ -849,14 +733,13 @@ class TriangleSlamNavigator:
             cov = np.diag([lin_sigma**2, side_sigma**2, ang_sigma**2])
             # Update SLAM
             try:
-                slam_mean, slam_cov = self._slam.step(
+                slam_mean, _ = self._slam.step(
                     control=control,
                     process_covariance=cov,
                     scan=scan_array,
                 )
                 # Update SLAM pose for visualization
                 self._slam_pose = Pose2D(slam_mean[0], slam_mean[1], slam_mean[2])
-                self._handle_slam_measurement(slam_mean, slam_cov)
                 self._last_pose_for_slam = Pose2D(curr.x, curr.y, curr.theta)
             except Exception:
                 self._logger.exception("SLAM step failed")
@@ -900,11 +783,6 @@ class TriangleSlamNavigator:
             ],
             "odomPose": {"x": pose.x, "y": pose.y, "theta": pose.theta},
         }
-        if self._pose_filter is not None:
-            cov = self._pose_filter.covariance
-            payload["poseCovarianceDiag"] = [float(cov[0, 0]), float(cov[1, 1]), float(cov[2, 2])]
-        if self._latest_scan_match_score is not None:
-            payload["scanMatchScore"] = float(self._latest_scan_match_score)
         if self._imu_sampler is not None:
             imu_heading = self._imu_sampler.latest_heading_deg()
             if imu_heading is not None:
@@ -1158,23 +1036,6 @@ async def run_test(args: argparse.Namespace) -> None:
         particles=args.particles,
         lidar_max_range=args.lidar_max_range,
     )
-    
-    pose_filter = PoseFusionEKF(initial_pose=Pose2D())
-    imu_heading_variance = math.radians(max(0.1, args.imu_heading_sigma_deg)) ** 2
-    scan_match_window = ScanMatchWindow(
-        max_translation=args.scan_match_translation,
-        translation_step=args.scan_match_step,
-        max_rotation=math.radians(args.scan_match_rotation),
-        rotation_step=math.radians(max(0.1, args.scan_match_rotation_step)),
-    )
-    scan_matcher: Optional[CorrelativeScanMatcher] = None
-    if not args.disable_scan_matching:
-        scan_matcher = CorrelativeScanMatcher(
-            grid=slam.occupancy_grid,
-            max_range=args.lidar_max_range,
-            window=scan_match_window,
-            out_of_bounds_penalty=0.5,
-        )
 
     # Viewer
     viewer = ViewerClient(url=args.viewer) if args.viewer else None
@@ -1203,11 +1064,6 @@ async def run_test(args: argparse.Namespace) -> None:
         slam_update_hz=SLAM_HZ,
         map_hz=MAP_HZ,
         state_hz=STATE_HZ,
-        pose_filter=pose_filter,
-        scan_matcher=scan_matcher,
-        scan_match_min_score=args.scan_match_min_score,
-        scan_match_min_improvement=args.scan_match_min_improvement,
-        imu_heading_variance=imu_heading_variance,
         logger=logger,
     )
 
@@ -1359,53 +1215,6 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument("--imu-bus", type=int, default=1, help="I2C bus number for IMU")
     parser.add_argument("--imu-address", type=lambda x: int(x, 0), default=0x68, help="IMU I2C address (hex, default 0x68)")
     parser.add_argument("--invert-imu", action="store_true", default=True, help="Invert IMU yaw polarity")
-    parser.add_argument(
-        "--imu-heading-sigma-deg",
-        type=float,
-        default=3.0,
-        help="Heading measurement sigma (deg) used by the EKF fusion step",
-    )
-    parser.add_argument(
-        "--disable-scan-matching",
-        action="store_true",
-        help="Disable scan-to-map correlative matching (debug only)",
-    )
-    parser.add_argument(
-        "--scan-match-translation",
-        type=float,
-        default=0.25,
-        help="Max translation window (m) used by the correlative scan matcher",
-    )
-    parser.add_argument(
-        "--scan-match-step",
-        type=float,
-        default=0.025,
-        help="Translation step size (m) for scan matching",
-    )
-    parser.add_argument(
-        "--scan-match-rotation",
-        type=float,
-        default=8.0,
-        help="Max rotation window (deg) for scan matching",
-    )
-    parser.add_argument(
-        "--scan-match-rotation-step",
-        type=float,
-        default=2.0,
-        help="Rotation step (deg) for scan matching",
-    )
-    parser.add_argument(
-        "--scan-match-min-score",
-        type=float,
-        default=0.05,
-        help="Minimum normalized occupancy score (0-1) to accept scan match corrections",
-    )
-    parser.add_argument(
-        "--scan-match-min-improvement",
-        type=float,
-        default=0.01,
-        help="Minimum score improvement required to apply a scan match correction",
-    )
 
     parser.add_argument(
         "--log-level", type=str, default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"], help="Log level"
