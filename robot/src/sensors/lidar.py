@@ -188,15 +188,14 @@ class RPLidarSerial:
                 if current:
                     yield current
                 break
-            # Detect new scan by start-bit toggle (per SDK, start bit toggles each revolution)
-            new_scan_by_toggle = (
-                prev_start_bit is not None and measurement.start_flag != prev_start_bit
-            )
+            # Detect new scan when the SDK raises the start flag (set only on first sample
+            # of each revolution per the Slamtec protocol).
+            new_scan_by_flag = measurement.start_flag and prev_start_bit is not None
             # Also detect by angle wrap-around for robustness
             new_scan_by_angle = (
                 prev_angle is not None and measurement.angle_radians < (prev_angle - 1.0)
             )
-            if current and (new_scan_by_toggle or new_scan_by_angle):
+            if current and (new_scan_by_flag or new_scan_by_angle):
                 yield current
                 current = []
             current.append(measurement)
@@ -216,13 +215,11 @@ class RPLidarSerial:
             measurement = await self._queue.get()
             if measurement is None:
                 return current if current else []
-            new_scan_by_toggle = (
-                prev_start_bit is not None and measurement.start_flag != prev_start_bit
-            )
+            new_scan_by_flag = measurement.start_flag and prev_start_bit is not None
             new_scan_by_angle = (
                 prev_angle is not None and measurement.angle_radians < (prev_angle - 1.0)
             )
-            if current and (new_scan_by_toggle or new_scan_by_angle):
+            if current and (new_scan_by_flag or new_scan_by_angle):
                 return current
             current.append(measurement)
             prev_start_bit = measurement.start_flag
