@@ -48,7 +48,7 @@ class RPLidarSerial:
 
     RESP_MEASUREMENT_TYPE_STANDARD = 0x81
 
-    DEFAULT_TIMEOUT = 2.0  # Increased from 1.0 to 2.0 for more reliable reads
+    DEFAULT_TIMEOUT = 2.0
     DEFAULT_BAUD_RATE = 1_000_000
     DEFAULT_MOTOR_PWM = 660
 
@@ -71,7 +71,6 @@ class RPLidarSerial:
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._queue: Optional[asyncio.Queue[LidarMeasurement | None]] = None
         self._packet_size = 0
-        self._last_start_bit: Optional[bool] = None
 
     async def __aenter__(self) -> "RPLidarSerial":
         await self.start()
@@ -112,9 +111,6 @@ class RPLidarSerial:
                 self._serial.reset_input_buffer()
         print("✓ Input buffer cleared")
         
-        # Note: Motor PWM is auto-managed by most RPLIDAR models when scan starts
-        # No need to explicitly control it
-        
         # Start scanning
         print("Starting scan...")
         try:
@@ -125,8 +121,6 @@ class RPLidarSerial:
                 raise RPLidarProtocolError(
                     f"Unsupported measurement type 0x{descriptor.data_type:02x}"
                 )
-            # For standard scan mode, packet size is always 5 bytes
-            # (the descriptor's data_length field is not used for continuous scan)
             self._packet_size = 5
         except Exception as exc:
             print(f"✗ Failed to start scan: {exc}")
@@ -155,7 +149,6 @@ class RPLidarSerial:
 
         print("Stopping RPLIDAR scan...")
         await asyncio.to_thread(self._send_command, self.CMD_STOP)
-        # Motor will stop automatically when scan stops
         
         self._stop_event.set()
         if self._reader_thread is not None:
@@ -188,10 +181,7 @@ class RPLidarSerial:
                 if current:
                     yield current
                 break
-            # Detect new scan when the SDK raises the start flag (set only on first sample
-            # of each revolution per the Slamtec protocol).
             new_scan_by_flag = measurement.start_flag and prev_start_bit is not None
-            # Also detect by angle wrap-around for robustness
             new_scan_by_angle = (
                 prev_angle is not None and measurement.angle_radians < (prev_angle - 1.0)
             )
@@ -226,14 +216,10 @@ class RPLidarSerial:
             prev_angle = measurement.angle_radians
 
     async def get_device_info(self) -> bytes:
-        """Return the raw payload from the get info command."""
-
         await asyncio.to_thread(self._send_command, self.CMD_GET_INFO)
         return await asyncio.to_thread(self._read_payload, expected_length=20)
 
     async def get_health(self) -> bytes:
-        """Return the raw payload from the get health command."""
-
         await asyncio.to_thread(self._send_command, self.CMD_GET_HEALTH)
         return await asyncio.to_thread(self._read_payload, expected_length=3)
 
@@ -259,123 +245,88 @@ class RPLidarSerial:
                 finally:
                     self._serial = None
 
-    def _set_motor_pwm(self, pwm: int) -> None:
-        """Set motor PWM to control LIDAR spinning speed.
-        
-        For RPLidar A1/A2 models, the motor needs to be controlled via PWM.
-        PWM value range: 0-1023 (0 = stop, 600-700 = typical operating speed)
-        """
-        if pwm == 0:
-            # Stop motor - just send the command without waiting for response
-            pwm_clamped = 0
-            payload = bytes([pwm_clamped & 0xFF, pwm_clamped >> 8])
-            self._send_command_with_payload(self.CMD_SET_MOTOR_PWM, payload)
-        else:
-            # Start motor - for A1/A2, we can just send a simple command
-            # Many RPLidar models will auto-start the motor when scan begins
-            # But we'll try to explicitly set it just to be sure
-            pwm_clamped = max(0, min(1023, pwm))
-            payload = bytes([pwm_clamped & 0xFF, pwm_clamped >> 8])
-            self._send_command_with_payload(self.CMD_SET_MOTOR_PWM, payload)
-
     def _begin_scan(self) -> _ResponseDescriptor:
-        """Begin scanning with proper reset and buffer clearing."""
-        # Stop any ongoing scan
         self._send_command(self.CMD_STOP)
         time.sleep(0.1)
-        
-        # Clear buffers
         with self._serial_lock:
             if self._serial is not None:
                 self._serial.reset_input_buffer()
         time.sleep(0.1)
-        
-        # Start scan
         self._send_command(self.CMD_SCAN)
         time.sleep(0.1)
-        
         return self._read_descriptor()
 
     def _reader_main(self) -> None:
-        """Background thread that continuously reads LIDAR measurement packets."""
+        """Background thread that continuously reads LIDAR measurement packets using bulk reads."""
         assert self._queue is not None
         assert self._loop is not None
         
         def _safe_enqueue(item: LidarMeasurement) -> None:
-            """Enqueue item, dropping it silently if queue is full."""
             try:
                 self._queue.put_nowait(item)
             except asyncio.QueueFull:
-                pass  # Drop measurement when queue is full
-        
+                pass 
+
         measurement_count = 0
-        error_count = 0
-        
+        buffer = bytearray()
+        PACKET_SIZE = 5
+        READ_CHUNK_SIZE = 4096
+
         while not self._stop_event.is_set():
             try:
-                packet = self._read_packet_with_resync()
-                measurement = self._decode_measurement(packet)
-                if measurement is None:
-                    # Failed to decode even after resync: count as error and continue
-                    error_count += 1
-                    if error_count < 5:
-                        print("Failed to decode measurement packet after resync; skipping")
-                    # Try auto-recover if persistent errors accumulate
-                    if error_count in (20, 50):
-                        try:
-                            print("Attempting to recover scan stream...")
-                            self._attempt_recover_scan()
-                            print("Recover attempt finished")
-                        except Exception as rec_exc:
-                            print(f"Recover attempt failed: {rec_exc}")
-                    if error_count > 100:
-                        print(f"Too many LIDAR errors ({error_count}), stopping reader thread")
-                        break
-                    continue
-                    
-                self._loop.call_soon_threadsafe(_safe_enqueue, measurement)
-                measurement_count += 1
-                # Reset error counter on successful decode
-                error_count = 0
+                # 1. Bulk Read from Serial
+                if self._serial is None:
+                    break
                 
-            except RPLidarProtocolError as exc:
-                error_count += 1
-                if error_count < 5:  # Log first few errors
-                    print(f"RPLidar protocol error in reader thread: {exc}")
-                if error_count > 100:  # Too many errors, give up
-                    print(f"Too many LIDAR errors ({error_count}), stopping reader thread")
-                    break
+                # Check waiting bytes to avoid blocking heavily in 'read'
+                waiting = self._serial.in_waiting
+                if waiting > 0:
+                    # Read all available data up to a safe chunk size
+                    chunk = self._serial.read(min(waiting, READ_CHUNK_SIZE))
+                    if chunk:
+                        buffer.extend(chunk)
+                else:
+                    # No data waiting, small sleep to yield CPU
+                    time.sleep(0.001)
+                    continue
+
+                # 2. Process Buffer
+                # We need at least 5 bytes for a packet
+                while len(buffer) >= PACKET_SIZE:
+                    # Optimistically check if the front of the buffer is a valid packet
+                    if self._looks_like_valid_packet(buffer, 0):
+                        # Decode packet
+                        packet = buffer[:PACKET_SIZE]
+                        measurement = self._decode_measurement(packet)
+                        
+                        if measurement:
+                            self._loop.call_soon_threadsafe(_safe_enqueue, measurement)
+                            measurement_count += 1
+                        
+                        # Remove consumed packet
+                        del buffer[:PACKET_SIZE]
+                    else:
+                        # Synchronization lost or noise: skip one byte and retry
+                        # (Sliding window search)
+                        del buffer[0]
+                        
             except Exception as exc:
-                error_count += 1
-                if error_count < 5:
-                    print(f"Unexpected error in LIDAR reader thread: {exc}")
-                if error_count > 100:
-                    print(f"Too many LIDAR errors ({error_count}), stopping reader thread")
-                    break
+                print(f"Error in LIDAR reader thread: {exc}")
+                time.sleep(0.1)  # Brief pause on error to prevent log spam
         
-        print(f"LIDAR reader thread exiting (read {measurement_count} measurements, {error_count} errors)")
+        print(f"LIDAR reader thread exiting (read {measurement_count} measurements)")
 
     def _read_descriptor(self) -> _ResponseDescriptor:
-        """Read response descriptor (7 bytes) from RPLIDAR.
-        
-        Format:
-        - Bytes 0-1: Sync bytes (0xA5 0x5A)
-        - Bytes 2-5: Data length (32-bit little-endian)
-        - Byte 6: Data type
-        """
-        # Try to read with timeout
         raw = self._read_exact(7)
         if len(raw) != 7:
             raise RPLidarProtocolError(f"Expected 7 bytes for descriptor, got {len(raw)}")
         
-        # Check sync bytes
         if raw[0] != self.SYNC_BYTE or raw[1] != self.RESPONSE_SYNC_BYTE:
             raise RPLidarProtocolError(
                 f"Invalid descriptor sync: got 0x{raw[0]:02x} 0x{raw[1]:02x}, "
                 f"expected 0x{self.SYNC_BYTE:02x} 0x{self.RESPONSE_SYNC_BYTE:02x}"
             )
         
-        # Parse data length (30 bits) and send mode (2 bits in byte 5 upper bits)
         size = raw[2] | (raw[3] << 8) | (raw[4] << 16) | ((raw[5] & 0x3F) << 24)
         sub_type = (raw[5] >> 6) & 0x03
         data_type = raw[6]
@@ -388,29 +339,8 @@ class RPLidarSerial:
             raise RPLidarProtocolError("Unexpected payload length")
         return self._read_exact(expected_length)
 
-    def _send_command(self, command: int, payload: bytes | None = None) -> None:
-        """Send command to RPLidar using simple 2-byte format for standard commands."""
-        # Standard scan commands (STOP, RESET, SCAN, GET_INFO, GET_HEALTH) use 2-byte format
+    def _send_command(self, command: int) -> None:
         frame = bytes([self.SYNC_BYTE, command])
-        with self._serial_lock:
-            if self._serial is None:
-                raise RuntimeError("Serial port not open")
-            self._serial.write(frame)
-            self._serial.flush()
-    
-    def _send_command_with_payload(self, command: int, payload: bytes) -> None:
-        """Send command with payload (e.g., motor PWM control).
-        
-        Format: [SYNC_BYTE, COMMAND, PAYLOAD_LENGTH, ...PAYLOAD, CHECKSUM]
-        """
-        frame = bytearray([self.SYNC_BYTE, command, len(payload)])
-        frame.extend(payload)
-        # Calculate checksum (XOR of all payload bytes)
-        checksum = 0
-        for byte in payload:
-            checksum ^= byte
-        frame.append(checksum)
-        
         with self._serial_lock:
             if self._serial is None:
                 raise RuntimeError("Serial port not open")
@@ -418,145 +348,49 @@ class RPLidarSerial:
             self._serial.flush()
 
     def _read_exact(self, size: int) -> bytes:
-        """Read exactly `size` bytes from the serial port.
-        
-        Uses blocking read with timeout. If timeout occurs, raises RPLidarProtocolError.
-        """
         if size <= 0:
             return b""
         with self._serial_lock:
             if self._serial is None:
                 raise RuntimeError("Serial port not open")
-            
-            # For more reliable reading, wait a bit if no data is immediately available
-            if self._serial.in_waiting == 0:
-                time.sleep(0.001)  # 1ms wait to allow data to arrive
-            
-            remaining = size
-            chunks = bytearray()
-            retry_count = 0
-            max_retries = 3
-            
-            while remaining > 0:
-                chunk = self._serial.read(remaining)
-                if not chunk:
-                    retry_count += 1
-                    if retry_count >= max_retries:
-                        raise RPLidarProtocolError(
-                            f"Timed out while reading from sensor "
-                            f"(expected {size} bytes, got {len(chunks)})"
-                        )
-                    time.sleep(0.01)  # Short wait before retry
-                    continue
-                chunks.extend(chunk)
-                remaining -= len(chunk)
-                retry_count = 0  # Reset retry count on successful read
-            return bytes(chunks)
-
-    def _read_packet_with_resync(self) -> bytes:
-        """Read one 5-byte standard measurement packet with on-the-fly resynchronization.
-        
-        The standard node format requires:
-        - Byte0 bit0 = start bit, Byte0 bit1 = inverted start bit (XOR must be 1)
-        - Angle word LSB (bit0 of (b2<<8|b1)) must be 1 (check bit)
-        """
-        # Initial read
-        window = bytearray(self._read_exact(5))
-        # Fast path: window already looks like a valid packet
-        if self._looks_like_valid_packet(window):
-            return bytes(window)
-        # Slow path: shift-by-one resync scan
-        attempts = 0
-        # Limit the resync scan to a reasonable number of bytes to avoid getting stuck
-        max_attempt_bytes = 100
-        while attempts < max_attempt_bytes:
-            # Read one more byte and slide
-            nxt = self._read_exact(1)
-            if not nxt:
-                attempts += 1
-                continue
-            window.pop(0)
-            window.append(nxt[0])
-            if self._looks_like_valid_packet(window):
-                return bytes(window)
-            attempts += 1
-        raise RPLidarProtocolError("Unable to resynchronize to measurement packet boundary")
+            return self._serial.read(size)
 
     @staticmethod
-    def _looks_like_valid_packet(packet: bytes) -> bool:
+    def _looks_like_valid_packet(buffer: bytearray, offset: int) -> bool:
         """Heuristic validation for a 5-byte standard measurement packet."""
-        if len(packet) != 5:
+        if len(buffer) < offset + 5:
             return False
-        # Byte0: start bit and its inverse in bit1
-        start_bit = (packet[0] & 0x01) != 0
-        inv_start_bit = ((packet[0] >> 1) & 0x01) != 0
-        if (start_bit ^ inv_start_bit) != True:
+        
+        # Byte0: start bit (bit 0) and its inverse (bit 1)
+        b0 = buffer[offset]
+        start_bit = (b0 & 0x01) != 0
+        inv_start_bit = ((b0 >> 1) & 0x01) != 0
+        
+        if (start_bit ^ inv_start_bit) is not True:
             return False
-        # Angle word check bit (bit0) must be 1
-        angle_word = (packet[2] << 8) | packet[1]
-        if (angle_word & 0x01) == 0:
+            
+        # Byte1-2: Check bit in angle LSB
+        b1 = buffer[offset + 1]
+        if (b1 & 0x01) == 0:
             return False
+            
         return True
 
-    def _attempt_recover_scan(self) -> None:
-        """Try to recover from a desynchronized or stalled stream."""
-        # Stop current stream
-        self._send_command(self.CMD_STOP)
-        time.sleep(0.05)
-        # Flush input
-        with self._serial_lock:
-            if self._serial is not None:
-                self._serial.reset_input_buffer()
-        time.sleep(0.05)
-        # Restart scan
-        self._send_command(self.CMD_SCAN)
-        time.sleep(0.1)
-        # Read and validate descriptor (best-effort; ignore mismatch but keep running)
-        try:
-            desc = self._read_descriptor()
-            if desc.data_type != self.RESP_MEASUREMENT_TYPE_STANDARD:
-                # For S2/S2L we still expect standard node type in this code path
-                # If not, we raise to trigger outer error handling
-                raise RPLidarProtocolError(
-                    f"Unexpected measurement type 0x{desc.data_type:02x} during recovery"
-                )
-        except Exception as exc:
-            # If descriptor read fails, let the caller handle escalation
-            raise
-
     @staticmethod
-    def _decode_measurement(packet: bytes) -> Optional[LidarMeasurement]:
-        """Decode 5-byte RPLIDAR measurement packet.
-        
-        Packet format (standard scan mode):
-        - Byte 0: Start flag (bit 0) and Quality (bits 2-7)
-        - Bytes 1-2: Angle (15 bits, in 1/64 degree units)
-        - Bytes 3-4: Distance (16 bits, in 1/4 mm units)
-        """
+    def _decode_measurement(packet: bytes | bytearray) -> Optional[LidarMeasurement]:
+        """Decode 5-byte RPLIDAR measurement packet."""
         if len(packet) != 5:
             return None
         
-        # Validate start bits (bit0 vs inverted bit1), and angle check bit
         start_bit = (packet[0] & 0x01) != 0
-        inv_start_bit = ((packet[0] >> 1) & 0x01) != 0
-        if (start_bit ^ inv_start_bit) != True:
-            return None
         quality = (packet[0] >> 2) & 0x3F
         
-        # Parse angle (15-bit value in 1/64 degree units)
         angle_raw = (packet[2] << 8) | packet[1]
-        # angle check bit (bit0) must be 1
-        if (angle_raw & 0x01) == 0:
-            return None
         angle_deg = ((angle_raw >> 1) & 0x7FFF) / 64.0
-        angle_rad = math.radians(angle_deg) % (2.0 * math.pi)
+        angle_rad = math.radians(angle_deg)
         
-        # Parse distance (16-bit value in 1/4 mm units)
         distance_raw = (packet[4] << 8) | packet[3]
         distance_m = (distance_raw / 4.0) / 1000.0
-        
-        # Do not reject zero-quality or zero-distance here; they are still useful for
-        # scan boundary detection. Downstream consumers can ignore distance<=0.
         
         return LidarMeasurement(
             angle_radians=angle_rad,
