@@ -770,6 +770,7 @@ class TriangleSlamNavigator:
         pose = self._get_pose_snapshot()
         # Use SLAM pose if available for visualization alignment with map
         display_pose = self._slam_pose if self._slam_pose is not None else pose
+        scan_subset = self._downsample_scan(self._latest_scan, max_samples=720)
         
         payload: Dict[str, Any] = {
             "type": "triangle_update",
@@ -777,7 +778,9 @@ class TriangleSlamNavigator:
             "poseHeadingDeg": math.degrees(display_pose.theta),
             "trajectory": self._get_recent_trajectory(),
             "plannedVertices": list(self._vertices),
-            "lidarScan": [[float(m.angle_radians), float(max(0.0, m.distance_m))] for m in self._latest_scan[-720:]],
+            "lidarScan": [
+                [float(m.angle_radians), float(max(0.0, m.distance_m))] for m in scan_subset
+            ],
             "odomPose": {"x": pose.x, "y": pose.y, "theta": pose.theta},
         }
         if self._imu_sampler is not None:
@@ -808,6 +811,24 @@ class TriangleSlamNavigator:
             },
         }
         await self._viewer.send_update(payload)
+
+    def _downsample_scan(
+        self, scan: Sequence[LidarMeasurement], *, max_samples: int = 720
+    ) -> list[LidarMeasurement]:
+        if max_samples <= 0:
+            raise ValueError("max_samples must be positive")
+        if not scan:
+            return []
+        if len(scan) <= max_samples:
+            return list(scan)
+        if max_samples == 1:
+            return [scan[0]]
+        step = (len(scan) - 1) / float(max_samples - 1)
+        downsampled: list[LidarMeasurement] = []
+        for i in range(max_samples):
+            idx = min(len(scan) - 1, int(round(i * step)))
+            downsampled.append(scan[idx])
+        return downsampled
 
 
 # -----------------------------
