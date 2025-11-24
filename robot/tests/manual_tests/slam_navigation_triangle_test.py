@@ -770,7 +770,7 @@ class TriangleSlamNavigator:
         pose = self._get_pose_snapshot()
         # Use SLAM pose if available for visualization alignment with map
         display_pose = self._slam_pose if self._slam_pose is not None else pose
-        scan_subset = self._downsample_scan(self._latest_scan, max_samples=720)
+        scan_subset = self._downsample_scan(self._latest_scan, max_samples=360)
         
         payload: Dict[str, Any] = {
             "type": "triangle_update",
@@ -813,7 +813,7 @@ class TriangleSlamNavigator:
         await self._viewer.send_update(payload)
 
     def _downsample_scan(
-        self, scan: Sequence[LidarMeasurement], *, max_samples: int = 720
+        self, scan: Sequence[LidarMeasurement], *, max_samples: int = 360
     ) -> list[LidarMeasurement]:
         if max_samples <= 0:
             raise ValueError("max_samples must be positive")

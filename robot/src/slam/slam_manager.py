@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from collections import deque
 from typing import Callable, Sequence
 
 import numpy as np
@@ -83,6 +84,15 @@ class SlamManager:
         # Use moderate confidence so hysteresis remains effective
         self._log_odds[occupied_mask] = min(self._l_max, 2.0)
         self._log_odds[free_mask] = max(self._l_min, -2.0)
+        # Distance-field cache for likelihood weighting
+        self._distance_cache: np.ndarray | None = None
+        self._distance_cache_dirty: bool = True
+        self._distance_hit_sigma = max(self._grid.resolution * 3.0, 0.05)
+        self._measurement_weight_cap = 720
+        self._occupied_hit_boost = 1.2
+        self._free_hit_penalty = 0.35
+        self._unknown_hit_prior = 0.85
+        self._oob_likelihood = 0.05
 
     @property
     def occupancy_grid(self) -> OccupancyGrid:
@@ -155,93 +165,165 @@ class SlamManager:
         return weights
 
     def _default_weight_model(self, scan: ScanArray) -> np.ndarray:
-        """Vectorized implementation of the weight model."""
+        """Compute measurement likelihoods using a likelihood-field model."""
         particles = self._filter.particles  # (P, 3)
-        
-        # Filter invalid scan points first
+
         valid_mask = (scan[:, 1] > 0) & (scan[:, 1] <= self._max_range)
-        valid_scan = scan[valid_mask]  # (S, 2)
-        
+        valid_scan = scan[valid_mask]
         if valid_scan.shape[0] == 0:
             return np.ones(particles.shape[0], dtype=float)
 
-        # 1. Project sensor position for all particles
-        # sensor_pose is relative to robot: (sx, sy, stheta)
+        if (
+            self._measurement_weight_capv
+            and valid_scan.shape[0] > self._measurement_weight_cap
+        ):
+            step = max(
+                1, int(math.ceil(valid_scan.shape[0] / self._measurement_weight_cap))
+            )
+            valid_scan = valid_scan[::step]
+
         sx, sy, stheta = self._sensor_pose
-        
-        # Particle headings
-        p_theta = particles[:, 2]  # (P,)
+        p_theta = particles[:, 2]
         cos_h = np.cos(p_theta)
         sin_h = np.sin(p_theta)
-        
-        # Sensor world positions for each particle
-        # world_x = px + sx*cos(ph) - sy*sin(ph)
-        # world_y = py + sx*sin(ph) + sy*cos(ph)
-        sensor_x = particles[:, 0] + sx * cos_h - sy * sin_h  # (P,)
-        sensor_y = particles[:, 1] + sx * sin_h + sy * cos_h  # (P,)
-        
-        # 2. Calculate hit points for all particles x scans
-        # Broadcast: (P, 1) vs (1, S)
-        
-        # Global angles = particle_heading + sensor_theta + scan_angle
-        # (P, 1) + scalar + (1, S) -> (P, S)
-        scan_angles = valid_scan[:, 0]  # (S,)
+
+        sensor_x = particles[:, 0] + sx * cos_h - sy * sin_h
+        sensor_y = particles[:, 1] + sx * sin_h + sy * cos_h
+
+        scan_angles = valid_scan[:, 0]
+        distances = valid_scan[:, 1]
         global_angles = p_theta[:, np.newaxis] + stheta + scan_angles[np.newaxis, :]
-        
-        # Distances (1, S)
-        dists = valid_scan[:, 1][np.newaxis, :]
-        
-        # Hit positions (P, S)
-        hit_x = sensor_x[:, np.newaxis] + dists * np.cos(global_angles)
-        hit_y = sensor_y[:, np.newaxis] + dists * np.sin(global_angles)
-        
-        # 3. Convert to grid coordinates
+
+        hit_x = sensor_x[:, np.newaxis] + distances[np.newaxis, :] * np.cos(global_angles)
+        hit_y = sensor_y[:, np.newaxis] + distances[np.newaxis, :] * np.sin(global_angles)
+
         ox, oy, _ = self._grid.origin
         res = self._grid.resolution
-        
-        # Vectorized floor division
         cols = np.floor((hit_x - ox) / res).astype(int)
         rows = np.floor((hit_y - oy) / res).astype(int)
-        
-        # 4. Lookup grid values
+
         h, w = self._grid.height, self._grid.width
-        
-        # Mask for in-bounds lookups
         in_bounds = (rows >= 0) & (rows < h) & (cols >= 0) & (cols < w)
-        
-        # Initialize scores with out-of-bounds penalty (-0.5)
-        # Shape (P, S)
+
+        distance_field = self._get_distance_field()
+        if distance_field is not None:
+            return self._likelihood_field_weights(rows, cols, in_bounds, distance_field)
+        return self._occupancy_weight_from_cells(rows, cols, in_bounds)
+
+    def _likelihood_field_weights(
+        self,
+        rows: np.ndarray,
+        cols: np.ndarray,
+        in_bounds: np.ndarray,
+        distance_field: np.ndarray,
+    ) -> np.ndarray:
+        """Compute weights using pre-computed distance field."""
+        likelihood = np.full(rows.shape, self._oob_likelihood, dtype=float)
+        if np.any(in_bounds):
+            valid_rows = rows[in_bounds]
+            valid_cols = cols[in_bounds]
+            distances = distance_field[valid_rows, valid_cols]
+            sigma = max(self._distance_hit_sigma, 1e-3)
+            gaussian = np.exp(-0.5 * np.square(distances / sigma))
+
+            grid_vals = self._grid.array[valid_rows, valid_cols]
+            multipliers = np.ones_like(gaussian)
+            multipliers[grid_vals >= self._occupied_value] = self._occupied_hit_boost
+            multipliers[
+                (grid_vals > 0) & (grid_vals < self._occupied_value)
+            ] = self._free_hit_penalty
+            multipliers[grid_vals == OccupancyGrid.UNKNOWN_VALUE] = (
+                self._unknown_hit_prior
+            )
+
+            likelihood[in_bounds] = np.clip(
+                gaussian * multipliers, 1e-4, self._occupied_hit_boost
+            )
+
+        log_likelihood = np.log(likelihood)
+        particle_logs = np.sum(log_likelihood, axis=1)
+        particle_logs -= np.max(particle_logs)
+        weights = np.exp(particle_logs)
+        weights[weights <= 0.0] = 1e-6
+        return weights
+
+    def _occupancy_weight_from_cells(
+        self, rows: np.ndarray, cols: np.ndarray, in_bounds: np.ndarray
+    ) -> np.ndarray:
+        """Fallback scoring that only considers discrete occupancy values."""
         scores = np.full(rows.shape, -0.5, dtype=float)
-        
-        # Extract valid indices
-        valid_rows = rows[in_bounds]
-        valid_cols = cols[in_bounds]
-        
-        # Lookup in one go
-        grid_vals = self._grid.array[valid_rows, valid_cols]
-        
-        # Compute scores for valid points
-        # occupancy >= occupied_value -> +1.0
-        # occupancy == UNKNOWN -> +0.4
-        # else (free) -> -0.1
-        
-        # Vectorized scoring
-        # Default to free penalty
-        point_scores = np.full(grid_vals.shape, -0.1, dtype=float)
-        point_scores[grid_vals >= self._occupied_value] = 1.0
-        point_scores[grid_vals == OccupancyGrid.UNKNOWN_VALUE] = 0.4
-        
-        # Assign back to scores matrix
-        scores[in_bounds] = point_scores
-        
-        # 5. Sum scores per particle
-        total_scores = np.sum(scores, axis=1)  # (P,)
-        
-        # 6. Shift to positive weights
+        if np.any(in_bounds):
+            cell_vals = self._grid.array[rows[in_bounds], cols[in_bounds]]
+            point_scores = np.full(cell_vals.shape, -0.1, dtype=float)
+            point_scores[cell_vals >= self._occupied_value] = 1.0
+            point_scores[cell_vals == OccupancyGrid.UNKNOWN_VALUE] = 0.4
+            scores[in_bounds] = point_scores
+
+        total_scores = np.sum(scores, axis=1)
         minimum = np.min(total_scores)
         adjusted = total_scores - minimum + 1.0
-        
         return adjusted
+
+    def _get_distance_field(self) -> np.ndarray | None:
+        if not self._distance_cache_dirty and self._distance_cache is not None:
+            return self._distance_cache
+
+        grid_arr = self._grid.array
+        occupied = grid_arr >= self._occupied_value
+        if not np.any(occupied):
+            self._distance_cache = None
+            self._distance_cache_dirty = False
+            return None
+
+        try:
+            from scipy.ndimage import distance_transform_edt
+        except ImportError:
+            self._distance_cache = self._compute_distance_field_fallback(occupied)
+            self._distance_cache_dirty = False
+            return self._distance_cache
+
+        free = ~occupied
+        distances = distance_transform_edt(free).astype(np.float32) * self._grid.resolution
+        distances[occupied] = 0.0
+        self._distance_cache = distances
+        self._distance_cache_dirty = False
+        return self._distance_cache
+
+    def _compute_distance_field_fallback(self, occupied: np.ndarray) -> np.ndarray | None:
+        if not np.any(occupied):
+            return None
+
+        h, w = occupied.shape
+        distances = np.full((h, w), np.inf, dtype=np.float32)
+        queue: deque[tuple[int, int]] = deque()
+        occ_rows, occ_cols = np.nonzero(occupied)
+        for r, c in zip(occ_rows, occ_cols):
+            distances[r, c] = 0.0
+            queue.append((r, c))
+
+        if not queue:
+            return None
+
+        directions = (
+            (1, 0, self._grid.resolution),
+            (-1, 0, self._grid.resolution),
+            (0, 1, self._grid.resolution),
+            (0, -1, self._grid.resolution),
+        )
+
+        while queue:
+            r, c = queue.popleft()
+            base = distances[r, c]
+            for dr, dc, cost in directions:
+                nr, nc = r + dr, c + dc
+                if 0 <= nr < h and 0 <= nc < w:
+                    new_dist = base + cost
+                    if new_dist < distances[nr, nc]:
+                        distances[nr, nc] = new_dist
+                        queue.append((nr, nc))
+
+        distances[np.isinf(distances)] = self._max_range
+        return distances
 
     def _sensor_in_world(
         self, pose: np.ndarray, sensor_pose: np.ndarray
@@ -255,6 +337,7 @@ class SlamManager:
         return world_x, world_y, heading + offset_heading
 
     def _update_map(self, pose: np.ndarray, scan: ScanArray, sensor_pose: np.ndarray) -> None:
+        self._distance_cache_dirty = True
         sensor_x, sensor_y, sensor_heading = self._sensor_in_world(pose, sensor_pose)
         for angle, distance in scan:
             if not math.isfinite(distance) or distance <= 0.0:
