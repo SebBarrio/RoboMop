@@ -174,7 +174,7 @@ class SlamManager:
             return np.ones(particles.shape[0], dtype=float)
 
         if (
-            self._measurement_weight_capv
+            self._measurement_weight_cap
             and valid_scan.shape[0] > self._measurement_weight_cap
         ):
             step = max(
