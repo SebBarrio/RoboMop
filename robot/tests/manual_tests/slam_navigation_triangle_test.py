@@ -110,11 +110,11 @@ DEFAULT_MAX_ANGULAR: float = 0.8
 DEFAULT_TRIANGLE_SIDE_M: float = 1.0
 
 DEFAULT_GRID_RESOLUTION: float = 0.05  # 5 cm
-DEFAULT_GRID_WIDTH: int = 800
-DEFAULT_GRID_HEIGHT: int = 800
-DEFAULT_GRID_ORIGIN: Tuple[float, float, float] = (-20.0, -20.0, 0.0)
+DEFAULT_GRID_WIDTH: int = 400  # Reduced from 800 for performance (20m x 20m coverage)
+DEFAULT_GRID_HEIGHT: int = 400  # Reduced from 800 for performance
+DEFAULT_GRID_ORIGIN: Tuple[float, float, float] = (-10.0, -10.0, 0.0)  # Adjusted for smaller grid
 
-DEFAULT_PARTICLES: int = 200
+DEFAULT_PARTICLES: int = 100  # Reduced from 200 for performance
 DEFAULT_LIDAR_MAX_RANGE: float = 5.0
 
 STATE_HZ: float = 10.0
@@ -122,8 +122,10 @@ MAP_HZ: float = 1.0
 SLAM_HZ: float = 5.0
 
 # Optimization settings
-SLAM_SCAN_DOWNSAMPLE: int = 360  # Max points to process in SLAM (reduces CPU)
+SLAM_SCAN_DOWNSAMPLE: int = 180  # Max points to process in SLAM (reduces CPU)
 TRAJECTORY_STORE_INTERVAL: int = 5  # Store trajectory every N control iterations
+SLAM_MOTION_THRESHOLD_M: float = 0.01  # Skip SLAM if moved less than this (meters)
+SLAM_ROTATION_THRESHOLD_RAD: float = 0.02  # Skip SLAM if rotated less than this (radians)
 
 
 # -----------------------------
@@ -739,6 +741,15 @@ class TriangleSlamNavigator:
             dx_world = curr.x - prev.x
             dy_world = curr.y - prev.y
             dtheta = _wrap_angle(curr.theta - prev.theta)
+            
+            # Optimization: Skip SLAM update if robot hasn't moved significantly
+            linear_motion = math.hypot(dx_world, dy_world)
+            angular_motion = abs(dtheta)
+            if linear_motion < SLAM_MOTION_THRESHOLD_M and angular_motion < SLAM_ROTATION_THRESHOLD_RAD:
+                # Still update latest scan for visualization, but skip heavy SLAM computation
+                await asyncio.sleep(0.01)  # Small yield
+                continue
+            
             # Rotate world delta into body frame using previous heading
             cos_h = math.cos(prev.theta)
             sin_h = math.sin(prev.theta)
@@ -752,14 +763,19 @@ class TriangleSlamNavigator:
             ang_sigma = max(1e-3, 0.2 * abs(dtheta))
             cov = np.diag([lin_sigma**2, side_sigma**2, ang_sigma**2])
             
+            # Capture variables for lambda closure
+            ctrl = control
+            covariance = cov
+            scan_data = scan_array
+            
             # Optimization: Run SLAM step in thread pool to not block event loop
             try:
                 slam_mean, _ = await loop.run_in_executor(
                     None,  # Use default thread pool
                     lambda: self._slam.step(
-                        control=control,
-                        process_covariance=cov,
-                        scan=scan_array,
+                        control=ctrl,
+                        process_covariance=covariance,
+                        scan=scan_data,
                     )
                 )
                 # Update SLAM pose for visualization
