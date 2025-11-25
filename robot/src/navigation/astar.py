@@ -107,6 +107,23 @@ class AStarPlanner:
         self._frontier_neighbors = frontier_neighbors
         return frontiers
 
+    def get_frontiers_count(self) -> int:
+        """Return the number of frontier cells currently identified.
+        
+        This is useful for status reporting. Call find_frontiers() first
+        to update the frontier set, or call this to get the count from
+        the last find_frontiers() call.
+        """
+        return len(self._frontier_cells)
+
+    def has_frontiers(self) -> bool:
+        """Return True if there are any frontier cells.
+        
+        This is a quick check without the overhead of planning.
+        Call find_frontiers() first to update the frontier set.
+        """
+        return len(self._frontier_cells) > 0
+
     def plan_to_nearest_frontier(
         self, start: Sequence[float] | np.ndarray
     ) -> tuple[Frontier, list[tuple[float, float]]] | None:

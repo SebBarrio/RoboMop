@@ -1,4 +1,28 @@
-"""Entry point for the RoboMop robot application."""
+#!/usr/bin/env python3
+"""
+SLAM Navigation Triangle Manual  (main program)
+
+This integration test uses the real hardware modules in src/slam, src/control, and src/sensors
+to drive the robot along a triangular path while performing SLAM, and streams live updates to
+the triangle viewer server (robot/tests/manual_tests/triangle_viewer.py).
+
+Requirements:
+    pip install websockets numpy
+    sudo apt-get install -y i2c-tools
+    pip install adafruit-circuitpython-pca9685 gpiozero smbus2 pyserial
+
+Usage:
+    # Start the viewer on a laptop (or this machine):
+    python robot/tests/manual_tests/triangle_viewer.py --host 0.0.0.0 --port 8765
+
+    # Run the robot integration test with streaming enabled:
+    sudo python robot/tests/manual_tests/slam_navigation_triangle_test.py ^
+      --viewer ws://<viewer-ip>:8765 --lidar-port COM3
+
+Notes:
+    - This test is intended for on-robot use with real hardware.
+    - Emergency stop: Ctrl+C will stop all motors and shut down sensors.
+"""
 
 from __future__ import annotations
 
@@ -11,1358 +35,1571 @@ import logging
 import math
 import signal
 import sys
+import threading
 import time
-from datetime import datetime
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping
+from collections import deque
+from typing import Any, Callable, Deque, Dict, List, Optional, Sequence, Tuple
 
-import matplotlib.pyplot as plt
 import numpy as np
-from socketio import exceptions as socketio_exceptions
 
-from .communication.command_receiver import CommandReceiver
-from .communication.state_publisher import StatePublisher
-from .communication.websocket_client import ConnectionConfig, WebSocketClient
-from .config import AppConfig, load_config
-from .control.motor_controller import (
+# Make 'src' importable when running this script directly
+_THIS_FILE = Path(__file__).resolve()
+_ROBOT_DIR = _THIS_FILE.parents[2]  # .../RoboMop/robot
+if str(_ROBOT_DIR) not in sys.path:
+    sys.path.insert(0, str(_ROBOT_DIR))
+
+# Hardware libraries (import guarded to give nice errors if missing)
+try:
+    import board  # type: ignore
+    import busio  # type: ignore
+except Exception as exc:  # pragma: no cover - hardware-only
+    raise ImportError("board/busio are required (Adafruit Blinka). Install: pip install adafruit-blinka") from exc
+
+try:
+    from adafruit_pca9685 import PCA9685  # type: ignore
+except Exception as exc:  # pragma: no cover - hardware-only
+    raise ImportError("PCA9685 driver is required. Install: pip install adafruit-circuitpython-pca9685") from exc
+
+try:
+    from gpiozero import RotaryEncoder  # type: ignore
+except Exception as exc:  # pragma: no cover - hardware-only
+    raise ImportError("gpiozero is required for encoder reading. Install: pip install gpiozero") from exc
+
+import websockets  # type: ignore
+
+# Project modules
+from src.control.motor_controller import (
+    EncoderFeedback,
     MotorController,
     MotorControllerConfig,
-    PIDSettings as VelocityPIDSettings,
+    PIDSettings,
 )
-from .control.pwm_controller import MotorChannelConfig, MotorDriver
-from .control.pid import PIDController
-from .control.robot_controller import Pose2D, RobotController
-from .navigation.astar import AStarPlanner
-from .navigation.coverage_planner import CoveragePlanner
-from .navigation.path_executor import PathExecutor, PathExecutorStatus, Waypoint
-from .sensors.encoders import EncoderReading, GpioZeroEncoderHardware, QuadratureEncoder
-from .sensors.hardware import HardwareAbstractionLayer
-from .sensors.imu import ImuSample, MPU9250
-from .sensors.lidar import LidarMeasurement, RPLidarSerial
-from .sensors.ultrasonic import UltrasonicSensor
-from .sensors.water_level import WaterLevelSensor
-from .slam.occupancy_grid import OccupancyGrid
-from .slam.particle_filter import ParticleFilter
-from .slam.sensor_fusion import SensorFusionEKF
-from .slam.slam_manager import SlamManager
+from src.control.pwm_controller import MotorChannelConfig, MotorDriver
+from src.control.pid import PIDController
+from src.control.robot_controller import Pose2D, RobotController
+from src.sensors.encoders import EncoderReading, GpioZeroEncoderHardware, QuadratureEncoder
+from src.sensors.imu import MPU9250
+from src.sensors.lidar import LidarMeasurement, RPLidarSerial
+from src.slam.occupancy_grid import OccupancyGrid
+from src.slam.particle_filter import ParticleFilter
+from src.slam.slam_manager import SlamManager
+from src.navigation.astar import AStarPlanner, Frontier
 
 
-class RobotApp:
-    """Coordinates communication between the robot and backend services."""
+# -----------------------------
+# Constants and configurations
+# -----------------------------
+
+# Motor/encoder wiring from motor_encoder_test.py
+MOTOR_CHANNELS: Tuple[Tuple[int, int], ...] = ((0, 1), (2, 3), (5, 4), (7, 6))
+ENCODER_PINS: Tuple[Tuple[int, int], ...] = ((5, 6), (13, 26))  # two encoders
+EXPECTED_MOTOR_TO_ENCODER: Dict[int, int] = {0: 0, 1: 0, 2: 1, 3: 1}
+ENCODER_PPR: int = 400
+PWM_FREQUENCY_HZ: int = 1000
+
+DEFAULT_SUPPLY_VOLTAGE: float = 12.0
+DEFAULT_LOOP_INTERVAL: float = 0.02  # 50 Hz motor loop
+
+DEFAULT_WHEEL_RADIUS_M: float = 0.0762
+DEFAULT_TRACK_WIDTH_M: float = 0.3
+
+DEFAULT_MAX_LINEAR: float = 0.3
+DEFAULT_MAX_ANGULAR: float = 0.8
+
+DEFAULT_TRIANGLE_SIDE_M: float = 1.0
+
+DEFAULT_GRID_RESOLUTION: float = 0.20  # 20 cm
+DEFAULT_GRID_WIDTH: int = 300  # Reduced from 800 for performance (20m x 20m coverage)
+DEFAULT_GRID_HEIGHT: int = 300  # Reduced from 800 for performance
+DEFAULT_GRID_ORIGIN: Tuple[float, float, float] = (-10.0, -10.0, 0.0)  # Adjusted for smaller grid
+
+DEFAULT_PARTICLES: int = 100  # Reduced from 200 for performance
+DEFAULT_LIDAR_MAX_RANGE: float = 5.0
+
+DEFAULT_MAP_WARMUP_SECONDS: float = 5.0
+
+STATE_HZ: float = 10.0
+MAP_HZ: float = 1.0
+SLAM_HZ: float = 5.0
+
+# Optimization settings
+SLAM_SCAN_DOWNSAMPLE: int = 360  # Max points to process in SLAM (reduces CPU)
+TRAJECTORY_STORE_INTERVAL: int = 5  # Store trajectory every N control iterations
+SLAM_MOTION_THRESHOLD_M: float = 0.01  # Skip SLAM if moved less than this (meters)
+SLAM_ROTATION_THRESHOLD_RAD: float = 0.02  # Skip SLAM if rotated less than this (radians)
+
+# Exploration settings
+EXPLORATION_REPLAN_INTERVAL: float = 3.0  # Seconds between frontier re-planning
+EXPLORATION_WAYPOINT_THRESHOLD: float = 0.25  # Distance to consider waypoint reached (m)
+EXPLORATION_INFLATION_RADIUS: int = 2  # Cells to inflate around obstacles
+
+
+# -----------------------------
+# Utility data structures
+# -----------------------------
+
+@dataclass(slots=True)
+class ViewerClient:
+    url: str
+    websocket: Optional[Any] = None
+    logger: logging.Logger = logging.getLogger("triangle_stream")
+    _callback: Optional[Callable[[Dict[str, Any]], None]] = None
+    _recv_task: Optional[asyncio.Task] = None
+
+    def set_callback(self, callback: Callable[[Dict[str, Any]], None]) -> None:
+        self._callback = callback
+
+    async def connect(self) -> None:
+        # If we have a stale connection reference, close it before reconnecting
+        if self.websocket is not None and not self._is_open(self.websocket):
+            try:
+                await self.websocket.close()
+            except Exception:
+                pass
+            self.websocket = None
+        self.logger.info("Connecting to triangle viewer at %s", self.url)
+        self.websocket = await websockets.connect(self.url, max_size=10 * 1024 * 1024)
+        self.logger.info("Connected to triangle viewer")
+        
+        if self._recv_task:
+            self._recv_task.cancel()
+        self._recv_task = asyncio.create_task(self._receive_loop())
+
+    async def _receive_loop(self) -> None:
+        while True:
+            if self.websocket is None or not self._is_open(self.websocket):
+                await asyncio.sleep(1)
+                continue
+            try:
+                async for message in self.websocket:
+                    if self._callback:
+                        try:
+                            data = json.loads(message)
+                            self._callback(data)
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+            await asyncio.sleep(1)
+
+    async def send_update(self, payload: Dict[str, Any]) -> None:
+        if self.websocket is None or not self._is_open(self.websocket):
+            await self.connect()
+        assert self.websocket is not None
+        try:
+            await self.websocket.send(json.dumps(payload))
+        except Exception as exc:
+            self.logger.warning("Viewer send failed: %s; reconnecting...", exc)
+            try:
+                await self.connect()
+                await self.websocket.send(json.dumps(payload))
+            except Exception as exc2:
+                self.logger.error("Viewer reconnection/send failed: %s", exc2)
+
+    async def close(self) -> None:
+        if self.websocket is not None:
+            try:
+                await self.websocket.close()
+            except Exception:
+                pass
+            self.websocket = None
+
+    @staticmethod
+    def _is_open(ws: Any) -> bool:
+        """Compat check across websockets versions to determine if the connection is open."""
+        try:
+            closed = getattr(ws, "closed", None)
+            if isinstance(closed, bool):
+                return not closed
+        except Exception:
+            pass
+        try:
+            is_open = getattr(ws, "open", None)
+            if isinstance(is_open, bool):
+                return is_open
+        except Exception:
+            pass
+        try:
+            state = getattr(ws, "state", None)
+            if isinstance(state, str):
+                return state.upper() == "OPEN"
+            name = getattr(state, "name", None)
+            if isinstance(name, str):
+                return name.upper() == "OPEN"
+        except Exception:
+            pass
+        # Fallback: assume open; send() will raise if it's not
+        return True
+
+
+class EncoderFeedbackAdapter(EncoderFeedback):
+    def __init__(self, encoders: Sequence[QuadratureEncoder]) -> None:
+        self._encoders = list(encoders)
+
+    def get_reading(self, encoder_index: int) -> EncoderReading:
+        if encoder_index < 0 or encoder_index >= len(self._encoders):
+            raise KeyError(f"Unknown encoder index {encoder_index}")
+        return self._encoders[encoder_index].read()
+
+
+class HeadingFusion:
+    """Blends IMU yaw with wheel-odometry heading for improved estimates."""
+
+    def __init__(self, *, blend: float, yaw_bias: float = 0.0, invert: bool = False) -> None:
+        self._blend = max(0.0, min(1.0, blend))
+        self._yaw_bias = yaw_bias
+        self._invert = invert
+        self._latest_yaw: Optional[float] = None
+        self._lock = threading.Lock()
+
+    def set_yaw_bias(self, bias: float) -> None:
+        self._yaw_bias = bias
+
+    def update_from_imu(self, raw_yaw: float) -> None:
+        if self._invert:
+            raw_yaw = -raw_yaw
+        corrected = _wrap_angle(raw_yaw - self._yaw_bias)
+        with self._lock:
+            self._latest_yaw = corrected
+
+    def fuse(self, odom_theta: float) -> float:
+        with self._lock:
+            imu_yaw = self._latest_yaw
+        if imu_yaw is None:
+            return odom_theta
+        # Calculate shortest angular difference from odom to IMU
+        diff = _wrap_angle(imu_yaw - odom_theta)
+        # Apply blend factor to the difference
+        blended = odom_theta + self._blend * diff
+        return _wrap_angle(blended)
+
+    def latest_heading(self) -> Optional[float]:
+        with self._lock:
+            return self._latest_yaw
+
+
+def _mean_angle(values: Sequence[float]) -> float:
+    if not values:
+        return 0.0
+    sin_sum = sum(math.sin(v) for v in values)
+    cos_sum = sum(math.cos(v) for v in values)
+    if sin_sum == 0.0 and cos_sum == 0.0:
+        return 0.0
+    return math.atan2(sin_sum, cos_sum)
+
+
+async def _initialize_and_warmup_imu(
+    imu: MPU9250,
+    *,
+    warmup_seconds: float,
+    sample_rate_hz: float,
+    logger: logging.Logger,
+    invert: bool = False,
+) -> float:
+    """Initialize the IMU, run calibration, and collect samples to estimate yaw bias."""
+
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(None, imu.initialize)
+    if warmup_seconds <= 0.0:
+        return 0.0
+
+    total_samples = max(10, int(warmup_seconds * sample_rate_hz))
+    logger.info("Warming up IMU for %.1f s (%d samples)...", warmup_seconds, total_samples)
+    yaw_samples: list[float] = []
+    for _ in range(total_samples):
+        sample = await loop.run_in_executor(None, imu.read_sample)
+        yaw = sample.orientation.yaw
+        if invert:
+            yaw = -yaw
+        yaw_samples.append(yaw)
+        await asyncio.sleep(max(0.0, 1.0 / sample_rate_hz))
+    bias = _mean_angle(yaw_samples)
+    logger.info("IMU warmup complete (yaw bias %.3f rad)", bias)
+    return bias
+
+
+async def _warmup_map(
+    *,
+    lidar: RPLidarSerial,
+    slam: SlamManager,
+    warmup_seconds: float,
+    logger: logging.Logger,
+) -> int:
+    """Integrate a few stationary scans into the map before navigation starts."""
+
+    if warmup_seconds <= 0.0:
+        return 0
+
+    logger.info(
+        "Warming up occupancy grid: integrating scans for %.1f s",
+        warmup_seconds,
+    )
+    loop = asyncio.get_running_loop()
+    scans_integrated = 0
+    deadline = time.time() + warmup_seconds if warmup_seconds > 0.0 else None
+
+    while True:
+        if deadline is not None and time.time() >= deadline:
+            break
+        scan = await lidar.read_scan()
+        filtered = [m for m in scan if m.quality > 0]
+        if not filtered:
+            continue
+        if len(filtered) > SLAM_SCAN_DOWNSAMPLE:
+            step = len(filtered) / SLAM_SCAN_DOWNSAMPLE
+            filtered = [filtered[int(i * step)] for i in range(SLAM_SCAN_DOWNSAMPLE)]
+        scan_array = np.array(
+            [[m.angle_radians, max(0.0, float(m.distance_m))] for m in filtered],
+            dtype=float,
+        )
+        control = np.zeros(3, dtype=float)
+        covariance = np.diag(np.array([1e-5, 1e-5, 1e-4], dtype=float))
+        try:
+            await loop.run_in_executor(
+                None,
+                lambda: slam.step(
+                    control=control,
+                    process_covariance=covariance,
+                    scan=scan_array,
+                ),
+            )
+            scans_integrated += 1
+        except Exception:
+            logger.exception("Map warmup SLAM step failed; continuing")
+    logger.info("Map warmup complete (%d scans integrated)", scans_integrated)
+    return scans_integrated
+
+
+class ImuSampler(threading.Thread):
+    """Dedicated thread that samples the IMU at a fixed cadence."""
 
     def __init__(
-        self, config: AppConfig, logger: logging.Logger, triangle_stream_url: str | None = None
+        self,
+        imu: MPU9250,
+        fusion: HeadingFusion,
+        *,
+        sample_rate_hz: float,
+        logger: logging.Logger,
     ) -> None:
-        self._config = config
+        super().__init__(name="imu-sampler", daemon=True)
+        self._imu = imu
+        self._fusion = fusion
         self._logger = logger
-        self._triangle_stream_url = triangle_stream_url
+        self._period = 1.0 / sample_rate_hz if sample_rate_hz > 0.0 else 0.05
+        self._stop_event = threading.Event()
+        self._last_heading: Optional[float] = None
+        self._last_update: float = 0.0
 
-        connection = ConnectionConfig(
-            url=config.websocket.url,
-            robot_id=config.websocket.robot_id,
-            api_key=config.websocket.api_key,
-            namespace=config.websocket.namespace,
-            socketio_path=config.websocket.socketio_path,
-            transports=config.websocket.transports,
-        )
-        self._ws = WebSocketClient(
-            connection,
-            ack_timeout=config.ack_timeout,
-            logger=logger.getChild("ws"),
-        )
-
-        map_hz = config.publish.map_hz if config.publish.map_hz is not None else 5.0
-        self._publisher = StatePublisher(
-            self._ws,
-            self._state_provider,
-            map_provider=self._map_provider,
-            state_hz=config.publish.state_hz,
-            map_hz=map_hz,
-            logger=logger.getChild("publisher"),
-        )
-
-        self._receiver = CommandReceiver(
-            self._ws,
-            on_move=self._on_move,
-            on_set_mode=self._on_set_mode,
-            on_e_stop=self._on_e_stop,
-            on_set_speed=self._on_set_speed,
-            on_config_update=self._on_config_update,
-            logger=logger.getChild("commands"),
-        )
-
-        self._mode = config.robot.mode
-        self._speed_multiplier = config.robot.speed_multiplier
-        self._velocity = {"linear": 0.0, "angular": 0.0}
-        self._pose = {"x": 0.0, "y": 0.0, "theta": 0.0}
-        self._battery_level = 100.0
-        self._water_level = 100.0
-        self._errors: list[str] = []
-
-        self._hardware: HardwareAbstractionLayer | None = None
-        self._occupancy_grid: OccupancyGrid | None = None
-        self._particle_filter: ParticleFilter | None = None
-        self._sensor_fusion: SensorFusionEKF | None = None
-        self._slam_manager: SlamManager | None = None
-        self._slam_task: asyncio.Task[None] | None = None
-        self._last_update_time = time.perf_counter()
-
-        self._motor_controller: MotorController | None = None
-        self._robot_controller: RobotController | None = None
-        self._astar_planner: AStarPlanner | None = None
-        self._coverage_planner: CoveragePlanner | None = None
-        self._path_executor: PathExecutor | None = None
-        self._navigation_task: asyncio.Task[None] | None = None
-        self._start_position: tuple[float, float, float] = (0.0, 0.0, 0.0)
-        # Cache latest encoder readings for synchronous motor loop consumption
-        self._encoder_cache: dict[str, EncoderReading] = {}
-        # Flag to indicate triangle test is running (prevents navigation loop interference)
-        self._running_triangle_test = False
-        # Sensor warmup configuration
-        self._imu_warmup_seconds: float = 10.0
-        self._lidar_warmup_seconds: float = 5
-        # Cached map payload to avoid blocking event loop with base64 encoding
-        self._latest_map_payload: Mapping[str, Any] | None = None
-        # Cache latest LIDAR scan for visualization
-        self._latest_lidar_scan: list[tuple[float, float]] = []
-
-    async def _initialize_hardware(self) -> None:
-        """Initialize hardware abstraction layer with all sensors."""
-        hw_cfg = self._config.hardware
-
-        lidar = RPLidarSerial(
-            port=hw_cfg.lidar_port,
-            baud_rate=hw_cfg.lidar_baud_rate,
-            motor_pwm=hw_cfg.lidar_motor_pwm,
-        )
-
-        imu = MPU9250(
-            bus=hw_cfg.imu_i2c_bus,
-            address=hw_cfg.imu_address,
-            sample_rate_hz=100.0,
-            filter_alpha=0.98,
-        )
-
-        left_encoder_hw = GpioZeroEncoderHardware(
-            pin_a=hw_cfg.encoder_left_pins[0],
-            pin_b=hw_cfg.encoder_left_pins[1],
-        )
-        left_encoder = QuadratureEncoder(
-            hardware=left_encoder_hw,
-            counts_per_revolution=hw_cfg.encoder_counts_per_rev,
-            wheel_circumference_m=hw_cfg.wheel_diameter_m * 3.14159,
-            invert=False,
-            velocity_cutoff_hz=12.0,
-            min_dt=0.001,
-        )
-
-        right_encoder_hw = GpioZeroEncoderHardware(
-            pin_a=hw_cfg.encoder_right_pins[0],
-            pin_b=hw_cfg.encoder_right_pins[1],
-        )
-        right_encoder = QuadratureEncoder(
-            hardware=right_encoder_hw,
-            counts_per_revolution=hw_cfg.encoder_counts_per_rev,
-            wheel_circumference_m=hw_cfg.wheel_diameter_m * 3.14159,
-            invert=False,
-            velocity_cutoff_hz=12.0,
-            min_dt=0.001,
-        )
-
-        ultrasonic = UltrasonicSensor(
-            trigger_pin=hw_cfg.ultrasonic_trigger_pin,
-            echo_pin=hw_cfg.ultrasonic_echo_pin,
-        )
-
-        water_level = WaterLevelSensor(
-            adc_channel=hw_cfg.water_level_adc_channel,
-        )
-
-        async def read_imu_async() -> ImuSample:
-            return imu.read_sample()
-
-        async def read_left_encoder_async() -> EncoderReading:
-            await asyncio.sleep(0.001)
-            return left_encoder.read()
-
-        async def read_right_encoder_async() -> EncoderReading:
-            await asyncio.sleep(0.001)
-            return right_encoder.read()
-
-        async def read_lidar_with_timeout() -> list[LidarMeasurement]:
-            """Read LIDAR scan with timeout to prevent blocking."""
+    def run(self) -> None:
+        next_deadline = time.perf_counter()
+        while not self._stop_event.is_set():
             try:
-                return await asyncio.wait_for(lidar.read_scan(), timeout=0.5)
-            except asyncio.TimeoutError:
-                self._logger.warning("LIDAR read_scan() timed out after 0.5s")
-                return []
-            except Exception as exc:
-                self._logger.error("LIDAR read_scan() failed: %s", exc)
-                return []
+                sample = self._imu.read_sample()
+            except Exception as exc:  # pragma: no cover - hardware error path
+                self._logger.warning("IMU read failed: %s", exc)
+                time.sleep(0.1)
+                next_deadline = time.perf_counter() + self._period
+                continue
 
-        self._hardware = HardwareAbstractionLayer(
-            lidar_reader=read_lidar_with_timeout,
-            imu_reader=read_imu_async,
-            encoder_readers={
-                "left": read_left_encoder_async,
-                "right": read_right_encoder_async,
-            },
-            ultrasonic_reader=ultrasonic.read_distance,
-            water_level_reader=water_level.read_percentage,
-            start_hooks=[lidar.start, imu.start, ultrasonic.start, water_level.start],
-            stop_hooks=[lidar.stop, imu.stop, ultrasonic.stop, water_level.stop],
-        )
-        # Keep references for motor feedback
-        self._left_encoder = left_encoder
-        self._right_encoder = right_encoder
+            heading = sample.orientation.yaw
+            self._fusion.update_from_imu(heading)
+            self._last_heading = heading
+            self._last_update = time.time()
 
-    def _initialize_slam(self) -> None:
-        """Initialize SLAM components (grid, particle filter, sensor fusion, manager)."""
-        slam_cfg = self._config.slam
+            next_deadline += self._period
+            sleep_time = next_deadline - time.perf_counter()
+            if sleep_time > 0.0:
+                time.sleep(sleep_time)
+            else:
+                next_deadline = time.perf_counter() + self._period
 
-        self._occupancy_grid = OccupancyGrid(
-            resolution=slam_cfg.grid_resolution,
-            width=slam_cfg.grid_width,
-            height=slam_cfg.grid_height,
-            origin=(slam_cfg.grid_origin_x, slam_cfg.grid_origin_y, 0.0),
-        )
+    def stop(self) -> None:
+        self._stop_event.set()
+        self.join(timeout=1.0)
+        _close_imu_bus(self._imu, self._logger)
 
-        self._particle_filter = ParticleFilter(
-            particle_count=slam_cfg.particle_count,
-        )
-        # Initialize particles with Gaussian distribution around origin
-        initial_pose_mean = np.array([0.0, 0.0, 0.0])
-        initial_pose_covariance = np.diag([0.1, 0.1, 0.1])
-        self._particle_filter.initialize_gaussian(
-            mean=initial_pose_mean,
-            covariance=initial_pose_covariance,
-        )
+    def latest_heading_deg(self) -> Optional[float]:
+        if self._last_heading is None:
+            return None
+        return math.degrees(self._last_heading)
 
-        initial_state = np.array([0.0, 0.0, 0.0, 0.0, 0.0])
-        initial_covariance = np.diag([0.1, 0.1, 0.1, 0.5, 0.5])
-        process_noise = np.diag([0.01, 0.01, 0.01, 0.1, 0.1])
-        pose_noise = np.diag([0.05, 0.05, 0.05])
+    def seconds_since_update(self) -> Optional[float]:
+        if self._last_update <= 0.0:
+            return None
+        return time.time() - self._last_update
 
-        self._sensor_fusion = SensorFusionEKF(
-            x0=initial_state,
-            P0=initial_covariance,
-            Q=process_noise,
-            R_pose=pose_noise,
-            R_v=0.1,
-            R_w=0.1,
-        )
 
-        sensor_pose = np.array(
-            [slam_cfg.sensor_pose_x, slam_cfg.sensor_pose_y, slam_cfg.sensor_pose_theta]
-        )
+def _close_imu_bus(imu: MPU9250, logger: logging.Logger) -> None:
+    """Best-effort closure of the underlying SMBus."""
 
-        self._slam_manager = SlamManager(
-            occupancy_grid=self._occupancy_grid,
-            particle_filter=self._particle_filter,
-            resample_threshold=slam_cfg.resample_threshold,
-            max_range=slam_cfg.max_lidar_range,
-            sensor_pose=sensor_pose,
-        )
+    try:
+        bus = getattr(imu, "_bus", None)
+        if bus is not None:
+            try:
+                bus.close()
+            finally:
+                setattr(imu, "_bus", None)
+    except Exception as exc:  # pragma: no cover - hardware cleanup path
+        logger.warning("Failed to close IMU bus: %s", exc)
 
-    def _initialize_navigation(self) -> None:
-        """Initialize navigation components (planners, controllers, executor)."""
-        if not self._occupancy_grid or not self._hardware:
-            self._logger.warning("Cannot initialize navigation without SLAM and hardware")
-            return
 
-        nav_cfg = self._config.navigation
-        hw_cfg = self._config.hardware
+# -----------------------------
+# High-level test controller
+# -----------------------------
 
-        self._astar_planner = AStarPlanner(
-            self._occupancy_grid,
-            obstacle_threshold=nav_cfg.obstacle_threshold,
-            inflation_radius=nav_cfg.inflation_radius,
+class TriangleSlamNavigator:
+    def __init__(
+        self,
+        *,
+        lidar: RPLidarSerial,
+        motor_controller: MotorController,
+        robot_controller: RobotController,
+        slam: SlamManager,
+        planned_vertices: Sequence[Tuple[float, float]],
+        viewer: Optional[ViewerClient],
+        heading_fusion: Optional[HeadingFusion],
+        imu_sampler: Optional[ImuSampler],
+        lidar_max_range: float,
+        slam_update_hz: float,
+        map_hz: float,
+        state_hz: float,
+        logger: logging.Logger,
+    ) -> None:
+        self._lidar = lidar
+        self._motor = motor_controller
+        self._robot = robot_controller
+        self._slam = slam
+        self._viewer = viewer
+        self._heading_fusion = heading_fusion
+        self._imu_sampler = imu_sampler
+        self._logger = logger
+        self._lidar_max_range = float(lidar_max_range)
+        self._slam_period = 1.0 / float(slam_update_hz)
+        self._map_period = 1.0 / float(map_hz)
+        self._state_period = 1.0 / float(state_hz)
+
+        self._vertices = list(planned_vertices)
+        self._waypoint_index = 0
+        self._trajectory: Deque[Tuple[float, float]] = deque(maxlen=2000)
+        self._trajectory_lock = threading.Lock()
+        self._pose_lock = threading.Lock()
+        self._pose_snapshot: Pose2D = Pose2D()
+        self._slam_pose: Optional[Pose2D] = None
+        self._last_pose_for_slam: Optional[Pose2D] = None
+        self._latest_scan: List[LidarMeasurement] = []
+        self._running = False
+        self._estop_active = False
+        
+        # Control mode state
+        self._control_mode: str = "navigation"  # "navigation", "exploration", or "manual"
+        self._manual_cmd: Tuple[float, float] = (0.0, 0.0)  # linear, angular
+        self._control_lock = threading.Lock()
+        
+        # Optimization: trajectory storage counter to reduce lock contention
+        self._trajectory_store_counter: int = 0
+        
+        # Exploration mode state
+        self._astar_planner: AStarPlanner = AStarPlanner(
+            grid=slam.occupancy_grid,
+            obstacle_threshold=200,
+            inflation_radius=EXPLORATION_INFLATION_RADIUS,
             allow_diagonal=False,
         )
+        self._exploration_path: List[Tuple[float, float]] = []
+        self._exploration_waypoint_idx: int = 0
+        self._current_frontier: Optional[Frontier] = None
+        self._last_replan_time: float = 0.0
+        self._exploration_complete: bool = False
 
-        self._coverage_planner = CoveragePlanner(
-            self._occupancy_grid,
-            cleaning_width=nav_cfg.cleaning_width,
-            overlap_ratio=nav_cfg.overlap_ratio,
-            obstacle_threshold=nav_cfg.obstacle_threshold,
-        )
+    def set_control_mode(self, mode: str) -> None:
+        with self._control_lock:
+            if mode not in ("navigation", "exploration", "manual"):
+                self._logger.warning("Invalid control mode: %s", mode)
+                return
+            if mode != self._control_mode:
+                self._logger.info("Switching control mode: %s -> %s", self._control_mode, mode)
+                old_mode = self._control_mode
+                self._control_mode = mode
+                # Reset commands when switching
+                self._manual_cmd = (0.0, 0.0)
+                if mode == "manual":
+                    # Cancel any active goals
+                    self._robot.cancel_goal()
+                    self._robot.set_velocity_command(linear=0.0, angular=0.0)
+                if mode == "exploration":
+                    # Reset exploration state for fresh start
+                    self._exploration_path = []
+                    self._exploration_waypoint_idx = 0
+                    self._current_frontier = None
+                    self._last_replan_time = 0.0
+                    self._exploration_complete = False
+                elif old_mode == "exploration":
+                    # Clear exploration state when leaving exploration mode
+                    self._exploration_path = []
+                    self._exploration_waypoint_idx = 0
+                    self._current_frontier = None
 
-        # Real PWM motor driver (PCA9685) and encoder feedback wiring
-        try:
-            import board  # type: ignore
-            import busio  # type: ignore
-            from adafruit_pca9685 import PCA9685  # type: ignore
-        except Exception as exc:  # pragma: no cover - import guard on non-RPi envs
-            raise RuntimeError(
-                "Hardware modules (board, busio, adafruit_pca9685) are required on the robot"
-            ) from exc
+    def set_manual_velocity(self, linear: float, angular: float) -> None:
+        with self._control_lock:
+            self._manual_cmd = (linear, angular)
 
-        i2c = busio.I2C(board.SCL, board.SDA)
-        pwm = PCA9685(i2c)
-        pwm.frequency = 1000
-
-        # Map four motors with new channel assignments
-        motor_channels = [
-            MotorChannelConfig(index=0, forward_channel=1, reverse_channel=0),
-            MotorChannelConfig(index=1, forward_channel=3, reverse_channel=2),
-            MotorChannelConfig(index=2, forward_channel=5, reverse_channel=4),
-            MotorChannelConfig(index=3, forward_channel=7, reverse_channel=6),
-        ]
-        motor_driver = MotorDriver(pwm, motor_channels, supply_voltage=12.0)
-
-        class _EncoderFeedback:
-            def __init__(self, left: QuadratureEncoder, right: QuadratureEncoder) -> None:
-                self._left = left
-                self._right = right
-
-            def get_reading(self, encoder_index: int) -> EncoderReading:
-                if encoder_index == 0:
-                    return self._left.read()
-                elif encoder_index == 1:
-                    return self._right.read()
-                raise KeyError(f"Unknown encoder index {encoder_index}")
-
-        encoder_feedback = _EncoderFeedback(self._left_encoder, self._right_encoder)
-
-        velocity_pid = VelocityPIDSettings(
-            kp=0.3,
-            ki=0.05,
-            kd=0.0,
-        )
-
-        mc_config = MotorControllerConfig(
-            motor_to_encoder={0: 0, 1: 0, 2: 1, 3: 1},
-            gear_ratio=1.0,
-            rotor_inertia=1e-4,
-            viscous_friction=0.01,
-            torque_constant=0.0188,
-            back_emf_constant=0.0188,
-            winding_resistance=0.091,
-            loop_interval=0.01,
-            pid=velocity_pid,
-        )
-
-        self._motor_controller = MotorController(
-            driver=motor_driver,
-            encoder_feedback=encoder_feedback,
-            config=mc_config,
-        )
-
-        position_pid = PIDController(
-            kp=nav_cfg.position_kp,
-            ki=nav_cfg.position_ki,
-            kd=nav_cfg.position_kd,
-            output_limits=(-nav_cfg.max_linear_speed, nav_cfg.max_linear_speed),
-        )
-
-        heading_pid = PIDController(
-            kp=nav_cfg.heading_kp,
-            ki=nav_cfg.heading_ki,
-            kd=nav_cfg.heading_kd,
-            output_limits=(-nav_cfg.max_angular_speed, nav_cfg.max_angular_speed),
-        )
-
-        self._robot_controller = RobotController(
-            motor_controller=self._motor_controller,
-            track_width=nav_cfg.track_width,
-            wheel_radius=hw_cfg.wheel_diameter_m / 2.0,
-            left_motor_indices=[0, 1],
-            right_motor_indices=[2, 3],
-            position_pid=position_pid,
-            heading_pid=heading_pid,
-            max_linear_speed=nav_cfg.max_linear_speed,
-            max_angular_speed=nav_cfg.max_angular_speed,
-            goal_tolerance=nav_cfg.path_tolerance,
-            heading_tolerance=math.radians(nav_cfg.heading_tolerance_deg),
-        )
-
-        self._path_executor = PathExecutor(
-            self._robot_controller,
-            default_linear_tolerance=nav_cfg.path_tolerance,
-            default_heading_tolerance=math.radians(nav_cfg.heading_tolerance_deg),
-        )
-
-        self._start_position = (self._pose["x"], self._pose["y"], self._pose["theta"])
-
-    async def start(self) -> None:
-        self._logger.info("Initializing hardware and SLAM systems")
-        await self._initialize_hardware()
-        self._initialize_slam()
-        self._initialize_navigation()
-
-        if self._hardware:
-            await self._hardware.start()
-            self._logger.info("Hardware layer started")
-            # Warmup/convergence for IMU and LIDAR before starting loops
-            try:
-                await self._warmup_sensors()
-            except Exception as exc:
-                self._logger.warning("Sensor warmup encountered an issue: %s", exc)
-
-        # Start SLAM and navigation loops before connecting to backend
-        self._slam_task = asyncio.create_task(self._slam_loop())
-        self._navigation_task = asyncio.create_task(self._navigation_loop())
-        self._logger.info("SLAM and navigation loops started")
-
-        # Run triangle calibration test if enabled
-        if self._config.robot.run_triangle_test:
-            self._logger.info("Running triangle calibration test")
-            original_mode = self._mode
-            try:
-                await self._run_triangle_test()
-                self._mode = original_mode
-                self._logger.info("Triangle calibration test completed, restored mode to %s", self._mode)
-            except (asyncio.CancelledError, KeyboardInterrupt):
-                self._logger.warning("Triangle test interrupted, shutting down")
-                self._mode = original_mode
-                self._running_triangle_test = False
-                raise
-
-        self._logger.info("Connecting to backend at %s", self._config.websocket.url)
-        try:
-            await self._ws.connect()
-        except socketio_exceptions.ConnectionError as exc:
-            self._logger.error(
-                "Failed to connect to backend at %s: %s",
-                self._config.websocket.url,
-                exc,
-            )
-            await self._ws.disconnect()
-            if self._hardware and self._hardware.started:
-                await self._hardware.stop()
-                self._logger.info("Hardware layer stopped after connection failure")
-            raise
-        await self._receiver.start()
-        await self._publisher.start()
-
-        self._logger.info("Robot connection established (mode=%s)", self._mode)
-
-    async def stop(self) -> None:
-        self._logger.info("Shutting down robot application")
-
-        if self._navigation_task and not self._navigation_task.done():
-            self._navigation_task.cancel()
-            try:
-                await self._navigation_task
-            except asyncio.CancelledError:
-                pass
-
-        if self._slam_task and not self._slam_task.done():
-            self._slam_task.cancel()
-            try:
-                await self._slam_task
-            except asyncio.CancelledError:
-                pass
-
-        self._receiver.stop()
-        await self._publisher.stop()
-        await self._ws.disconnect()
-
-        if self._hardware:
-            await self._hardware.stop()
-            self._logger.info("Hardware layer stopped")
-
-    async def _warmup_sensors(self) -> None:
-        """Allow IMU and LIDAR to converge/spin-up before SLAM starts."""
-        if not self._hardware:
+    def set_estop(self, enabled: bool) -> None:
+        if enabled == self._estop_active:
             return
-        self._logger.info(
-            "Warming up sensors: IMU %.1fs, LIDAR %.1fs",
-            self._imu_warmup_seconds,
-            self._lidar_warmup_seconds,
-        )
-        # IMU warmup: sample gyro to stabilize and report stats
-        imu_samples = 0
-        sum_wz = 0.0
-        sum_wz2 = 0.0
-        imu_end = time.perf_counter() + max(0.0, self._imu_warmup_seconds)
-        while time.perf_counter() < imu_end:
+        self._estop_active = enabled
+        if enabled:
+            self._logger.warning("E-STOP ENABLED! Stopping motors.")
             try:
-                snapshot = await self._hardware.read_all()
-                wz = float(snapshot.imu_sample.angular_velocity_rad_s.z)
-                sum_wz += wz
-                sum_wz2 += wz * wz
-                imu_samples += 1
-            except Exception:
-                # Ignore sporadic failures during warmup
-                pass
-            await asyncio.sleep(0.01)
-        if imu_samples > 0:
-            mean_wz = sum_wz / imu_samples
-            var_wz = max(0.0, (sum_wz2 / imu_samples) - (mean_wz * mean_wz))
-            std_wz = math.sqrt(var_wz)
-            self._logger.info(
-                "IMU warmup complete: samples=%d omega_z mean=%.5f rad/s std=%.5f rad/s",
-                imu_samples,
-                mean_wz,
-                std_wz,
-            )
+                self._motor.stop_all()
+            except Exception as e:
+                self._logger.error(f"Failed to stop motors on E-stop: {e}")
         else:
-            self._logger.warning("IMU warmup collected zero samples")
+            self._logger.info("E-STOP DISABLED. Resuming.")
 
-        # LIDAR warmup: discard early scans until motor stabilizes
-        # LIDAR mapping warmup: integrate scans into the map while stationary to build confidence
-        if self._slam_manager is None or self._sensor_fusion is None:
-            return
-        warmup_end = time.perf_counter() + max(0.0, self._lidar_warmup_seconds)
-        scans_integrated = 0
-        total_points = 0
-        last_ts: float | None = None
-        v_eps, w_eps = 1e-3, 0.02
-        while time.perf_counter() < warmup_end:
-            try:
-                snapshot = await self._hardware.read_all()
-            except Exception:
-                await asyncio.sleep(0.05)
-                continue
-            ts = float(snapshot.timestamp)
-            if last_ts is None:
-                last_ts = ts
-                continue
-            dt = ts - last_ts
-            last_ts = ts
-            if dt <= 0.0 or dt >= 1.0:
-                continue
-            # Measured velocities
-            left_vel = snapshot.encoders.get("left")
-            right_vel = snapshot.encoders.get("right")
-            if left_vel is not None:
-                self._encoder_cache["left"] = left_vel
-            if right_vel is not None:
-                self._encoder_cache["right"] = right_vel
-            v_meas = 0.0
-            if left_vel and right_vel:
-                v_meas = (
-                    (left_vel.velocity_m_s or 0.0) + (right_vel.velocity_m_s or 0.0)
-                ) / 2.0
-            w_meas = snapshot.imu_sample.angular_velocity_rad_s.z
-            # Gate tiny motion to avoid drift while stationary
-            if abs(v_meas) < v_eps:
-                v_meas = 0.0
-            if abs(w_meas) < w_eps:
-                w_meas = 0.0
-            # EKF predict/update with measured values
-            self._sensor_fusion.predict(control_v=v_meas, control_w=w_meas, dt=dt)
-            self._sensor_fusion.update_v(v_meas)
-            self._sensor_fusion.update_omega(w_meas)
-            self._velocity = {"linear": v_meas, "angular": w_meas}
-            # SLAM integration
-            lidar_measurements = [
-                (m.angle_radians, m.distance_m)
-                for m in snapshot.lidar_scan
-                if m.quality > 0
-            ]
-            self._latest_lidar_scan = lidar_measurements
-            if lidar_measurements:
-                dx_body = v_meas * dt
-                dtheta = w_meas * dt
-                control = np.array([dx_body, 0.0, dtheta])
-                # Small, motion-scaled process noise
-                lin_sigma = max(1e-4, 0.1 * abs(dx_body))
-                side_sigma = max(1e-4, 0.05 * abs(dx_body))
-                ang_sigma = max(1e-3, 0.2 * abs(dtheta))
-                process_covariance = np.diag([lin_sigma**2, side_sigma**2, ang_sigma**2])
-                try:
-                    estimated_pose, slam_covariance = self._slam_manager.step(
-                        control=control,
-                        process_covariance=process_covariance,
-                        scan=lidar_measurements,
-                    )
-                    self._pose = {
-                        "x": float(estimated_pose[0]),
-                        "y": float(estimated_pose[1]),
-                        "theta": float(estimated_pose[2]),
-                    }
-                    try:
-                        self._sensor_fusion.update_pose(estimated_pose, R=slam_covariance)
-                    except Exception:
-                        pass
-                    scans_integrated += 1
-                    total_points += len(lidar_measurements)
-                    # Keep map payload fresh for viewers
-                    try:
-                        await asyncio.to_thread(self._refresh_map_payload)
-                    except Exception:
-                        pass
-                except Exception:
-                    # Ignore sporadic failures during warmup
-                    await asyncio.sleep(0.01)
-                    continue
-            await asyncio.sleep(0.01)
-        completion = 0.0
+    async def run(self) -> None:
+        self._running = True
         try:
-            if self._occupancy_grid is not None:
-                completion = float(self._occupancy_grid.completion_ratio)
-        except Exception:
-            completion = 0.0
-        avg_points = (total_points / scans_integrated) if scans_integrated > 0 else 0.0
-        self._last_update_time = time.perf_counter()
+            await self._run_all_tasks()
+        finally:
+            self._running = False
+
+    async def _run_all_tasks(self) -> None:
+        tasks = [
+            asyncio.create_task(self._run_control_thread(), name="control-loop"),
+            asyncio.create_task(self._slam_loop(), name="slam-loop"),
+            asyncio.create_task(self._viewer_loop(), name="viewer-loop"),
+        ]
+        try:
+            await asyncio.wait(tasks, return_when=asyncio.FIRST_EXCEPTION)
+        finally:
+            self._running = False
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            for task in tasks:
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+                except Exception:
+                    self._logger.exception("Task %s failed", task.get_name())
+
+    async def _run_control_thread(self) -> None:
+        await asyncio.to_thread(self._control_loop_thread)
+
+    def _control_loop_thread(self) -> None:
+        """High-rate robot control loop running in a dedicated OS thread."""
+        loop_interval = self._motor.loop_interval
+        self._logger.info("Starting control loop thread at %.1f Hz", 1.0 / loop_interval)
+        
+        # Initial fused pose update
+        self._update_fused_pose_and_reset_robot()
+        
+        last_time = time.perf_counter()
+        next_tick = last_time + loop_interval
+        while self._running:
+            now = time.perf_counter()
+            
+            if self._estop_active:
+                try:
+                     self._motor.stop_all()
+                except Exception:
+                     pass
+                # Maintain loop timing but skip PID update
+                last_time = now
+                sleep_time = next_tick - time.perf_counter()
+                if sleep_time > 0.0:
+                    time.sleep(sleep_time)
+                    next_tick += loop_interval
+                else:
+                    next_tick = time.perf_counter() + loop_interval
+                continue
+
+            dt = max(1e-4, now - last_time)
+            last_time = now
+
+            try:
+                # Update fusion and FORCE the robot controller to adopt the fused heading
+                self._update_fused_pose_and_reset_robot()
+                
+                # Determine control source based on mode
+                is_manual = False
+                manual_linear, manual_angular = 0.0, 0.0
+                
+                with self._control_lock:
+                    if self._control_mode == "manual":
+                        is_manual = True
+                        manual_linear, manual_angular = self._manual_cmd
+                
+                if is_manual:
+                    self._robot.set_velocity_command(linear=manual_linear, angular=manual_angular)
+                elif self._control_mode == "exploration":
+                    self._update_exploration_control()
+                elif self._control_mode == "navigation" and self._vertices:
+                    self._update_pure_pursuit_control()
+                    
+                self._robot.update(dt=dt)
+            except Exception:
+                self._logger.exception("Control/Navigation update failed")
+
+            sleep_time = next_tick - time.perf_counter()
+            if sleep_time > 0.0:
+                time.sleep(sleep_time)
+                next_tick += loop_interval
+            else:
+                next_tick = time.perf_counter() + loop_interval
+
+    def _update_fused_pose_and_reset_robot(self) -> None:
+        """
+        Get current robot odometry, fuse it with IMU, and then
+        OVERWRITE the robot's internal pose with the fused result.
+        This ensures navigation decisions use the fused heading.
+        """
+        pose = self._robot.pose
+        theta = pose.theta
+        if self._heading_fusion is not None:
+            theta = self._heading_fusion.fuse(theta)
+        
+        # Create the fused pose
+        fused = Pose2D(pose.x, pose.y, theta)
+        
+        # CRITICAL: Update the robot controller's internal state so it knows its true heading
+        # We preserve x/y from odometry but force the fused theta
+        self._robot.reset_pose(fused)
+        
+        self._set_pose_snapshot(fused)
+        
+        # Optimization: Only store trajectory every N iterations to reduce lock contention
+        self._trajectory_store_counter += 1
+        if self._trajectory_store_counter >= TRAJECTORY_STORE_INTERVAL:
+            self._trajectory_store_counter = 0
+            self._append_trajectory(fused)
+
+    def _update_pure_pursuit_control(self) -> None:
+        if not self._vertices:
+            return
+
+        pose = self._robot.pose
+        
+        # Pure Pursuit Parameters
+        lookahead = 0.3  # meters
+        cruise_speed = 0.2  # m/s
+        
+        # Identify current segment
+        target_idx = self._waypoint_index
+        # Previous waypoint is start of segment
+        prev_idx = (target_idx - 1) % len(self._vertices)
+        
+        p_start = np.array(self._vertices[prev_idx])
+        p_end = np.array(self._vertices[target_idx])
+        p_robot = np.array([pose.x, pose.y])
+        
+        segment_vec = p_end - p_start
+        segment_len = np.linalg.norm(segment_vec)
+        
+        if segment_len < 1e-3:
+            self._advance_waypoint()
+            return
+
+        segment_dir = segment_vec / segment_len
+        
+        # Project robot onto line segment
+        robot_vec = p_robot - p_start
+        proj_dist = np.dot(robot_vec, segment_dir)
+        
+        # Lookahead point logic
+        lookahead_dist_on_line = proj_dist + lookahead
+        
+        # Check distance to target vertex
+        dist_to_end = np.linalg.norm(p_end - p_robot)
+        
+        if dist_to_end < lookahead:
+            self._advance_waypoint()
+            return
+
+        # Clamp lookahead to segment length
+        clamp_dist = max(0.0, min(lookahead_dist_on_line, segment_len))
+        lookahead_pt = p_start + segment_dir * clamp_dist
+        
+        # Calculate curvature to lookahead point
+        dx = lookahead_pt[0] - pose.x
+        dy = lookahead_pt[1] - pose.y
+        
+        # Transform to robot frame
+        sin_t = math.sin(pose.theta)
+        cos_t = math.cos(pose.theta)
+        local_x = cos_t * dx + sin_t * dy
+        local_y = -sin_t * dx + cos_t * dy
+        
+        # Curvature = 2*y / L^2
+        l_sq = local_x**2 + local_y**2
+        if l_sq < 1e-4:
+            omega = 0.0
+            linear_cmd = cruise_speed
+        else:
+            curvature = 2.0 * local_y / l_sq
+            
+            # Calculate heading error to lookahead point
+            heading_error = math.atan2(local_y, local_x)
+            
+            # Scale linear speed based on heading error (slow down for turns)
+            # If error is > 60 degrees, pivot in place (linear=0)
+            if abs(heading_error) > math.pi / 3.0:
+                linear_cmd = 0.0
+                # Pivot speed
+                omega = math.copysign(0.5, heading_error)
+            else:
+                # Slow down as we turn: v = v_max * cos(heading_error)^2
+                scale = max(0.1, math.cos(heading_error) ** 2)
+                linear_cmd = cruise_speed * scale
+                # Use nominal cruise speed for curvature calculation to maintain path geometry
+                omega = cruise_speed * curvature
+            
+        # Clamp omega for safety
+        max_omega = self._robot.max_angular_speed
+        omega = max(-max_omega, min(max_omega, omega))
+        
+        self._robot.set_velocity_command(linear=linear_cmd, angular=omega)
+
+    def _advance_waypoint(self) -> None:
+        old_idx = self._waypoint_index
+        self._waypoint_index += 1
+        if self._waypoint_index >= len(self._vertices):
+            # Loop back to 1 because 0 is same as last (closed loop visual artifact)
+            self._waypoint_index = 1
+        self._logger.info("Advancing waypoint: %d -> %d", old_idx, self._waypoint_index)
+
+    def _update_exploration_control(self) -> None:
+        """Control loop for exploration mode - navigate to frontiers to build the map."""
+        if self._exploration_complete:
+            # Exploration finished, just stop
+            self._robot.set_velocity_command(linear=0.0, angular=0.0)
+            return
+        
+        pose = self._robot.pose
+        now = time.time()
+        
+        # Check if we need to replan (no path, reached waypoint, or timer expired)
+        need_replan = False
+        
+        if not self._exploration_path:
+            need_replan = True
+        elif self._exploration_waypoint_idx >= len(self._exploration_path):
+            need_replan = True
+        elif now - self._last_replan_time > EXPLORATION_REPLAN_INTERVAL:
+            need_replan = True
+        else:
+            # Check if we've reached the current waypoint
+            current_wp = self._exploration_path[self._exploration_waypoint_idx]
+            dist_to_wp = math.hypot(pose.x - current_wp[0], pose.y - current_wp[1])
+            if dist_to_wp < EXPLORATION_WAYPOINT_THRESHOLD:
+                self._exploration_waypoint_idx += 1
+                if self._exploration_waypoint_idx >= len(self._exploration_path):
+                    need_replan = True
+        
+        if need_replan:
+            self._replan_exploration()
+        
+        # If still no path after replanning, exploration is complete
+        if not self._exploration_path or self._exploration_waypoint_idx >= len(self._exploration_path):
+            self._robot.set_velocity_command(linear=0.0, angular=0.0)
+            return
+        
+        # Follow the exploration path using pure pursuit
+        self._follow_exploration_path()
+    
+    def _replan_exploration(self) -> None:
+        """Plan a path to the nearest frontier."""
+        pose = self._robot.pose
+        start = [pose.x, pose.y]
+        
+        result = self._astar_planner.plan_to_nearest_frontier(start)
+        
+        if result is None:
+            # No reachable frontiers - exploration complete
+            self._exploration_path = []
+            self._exploration_waypoint_idx = 0
+            self._current_frontier = None
+            self._exploration_complete = True
+            self._logger.info("Exploration complete - no more reachable frontiers")
+            return
+        
+        frontier, path = result
+        self._current_frontier = frontier
+        self._exploration_path = path
+        self._exploration_waypoint_idx = 0
+        self._last_replan_time = time.time()
         self._logger.info(
-            "LIDAR mapping warmup complete: scans=%d avg_points=%.1f map_completion=%.2f%%",
-            scans_integrated,
-            avg_points,
-            100.0 * completion,
+            "Exploration: replanned to frontier at (%.2f, %.2f), path has %d waypoints",
+            frontier.world[0], frontier.world[1], len(path)
         )
+    
+    def _follow_exploration_path(self) -> None:
+        """Follow the current exploration path using pure pursuit."""
+        if not self._exploration_path or self._exploration_waypoint_idx >= len(self._exploration_path):
+            self._robot.set_velocity_command(linear=0.0, angular=0.0)
+            return
+        
+        pose = self._robot.pose
+        
+        # Pure Pursuit Parameters for exploration (slower for safety)
+        lookahead = 0.25  # meters
+        cruise_speed = 0.15  # m/s (slower for exploration)
+        
+        # Get current and next waypoint for segment following
+        current_wp_idx = self._exploration_waypoint_idx
+        
+        # If we have a next waypoint, use segment-based pursuit
+        if current_wp_idx + 1 < len(self._exploration_path):
+            p_start = np.array(self._exploration_path[current_wp_idx])
+            p_end = np.array(self._exploration_path[current_wp_idx + 1])
+        else:
+            # Last waypoint - just go to it directly
+            p_start = np.array([pose.x, pose.y])
+            p_end = np.array(self._exploration_path[current_wp_idx])
+        
+        p_robot = np.array([pose.x, pose.y])
+        
+        segment_vec = p_end - p_start
+        segment_len = np.linalg.norm(segment_vec)
+        
+        if segment_len < 1e-3:
+            # Move to next waypoint
+            self._exploration_waypoint_idx += 1
+            return
+        
+        segment_dir = segment_vec / segment_len
+        
+        # Project robot onto line segment
+        robot_vec = p_robot - p_start
+        proj_dist = np.dot(robot_vec, segment_dir)
+        
+        # Lookahead point logic
+        lookahead_dist_on_line = proj_dist + lookahead
+        
+        # Check distance to end of segment
+        dist_to_end = np.linalg.norm(p_end - p_robot)
+        
+        if dist_to_end < EXPLORATION_WAYPOINT_THRESHOLD:
+            self._exploration_waypoint_idx += 1
+            return
+        
+        # Clamp lookahead to segment length
+        clamp_dist = max(0.0, min(lookahead_dist_on_line, segment_len))
+        lookahead_pt = p_start + segment_dir * clamp_dist
+        
+        # Calculate control towards lookahead point
+        dx = lookahead_pt[0] - pose.x
+        dy = lookahead_pt[1] - pose.y
+        
+        # Transform to robot frame
+        sin_t = math.sin(pose.theta)
+        cos_t = math.cos(pose.theta)
+        local_x = cos_t * dx + sin_t * dy
+        local_y = -sin_t * dx + cos_t * dy
+        
+        # Curvature = 2*y / L^2
+        l_sq = local_x**2 + local_y**2
+        if l_sq < 1e-4:
+            omega = 0.0
+            linear_cmd = cruise_speed
+        else:
+            curvature = 2.0 * local_y / l_sq
+            
+            # Calculate heading error to lookahead point
+            heading_error = math.atan2(local_y, local_x)
+            
+            # Scale linear speed based on heading error
+            if abs(heading_error) > math.pi / 3.0:
+                linear_cmd = 0.0
+                omega = math.copysign(0.4, heading_error)  # Slower pivot for exploration
+            else:
+                scale = max(0.1, math.cos(heading_error) ** 2)
+                linear_cmd = cruise_speed * scale
+                omega = cruise_speed * curvature
+        
+        # Clamp omega for safety
+        max_omega = self._robot.max_angular_speed
+        omega = max(-max_omega, min(max_omega, omega))
+        
+        self._robot.set_velocity_command(linear=linear_cmd, angular=omega)
+
+    # _update_fused_pose is replaced by _update_fused_pose_and_reset_robot
+    
+    def _set_pose_snapshot(self, pose: Pose2D) -> None:
+        with self._pose_lock:
+            self._pose_snapshot = pose
+
+    def _get_pose_snapshot(self) -> Pose2D:
+        with self._pose_lock:
+            snapshot = self._pose_snapshot
+        return Pose2D(snapshot.x, snapshot.y, snapshot.theta)
+
+    def _append_trajectory(self, pose: Pose2D) -> None:
+        with self._trajectory_lock:
+            self._trajectory.append((pose.x, pose.y))
+
+    def _get_recent_trajectory(self) -> List[Tuple[float, float]]:
+        with self._trajectory_lock:
+            return list(self._trajectory)
 
     async def _slam_loop(self) -> None:
-        """Main SLAM update loop running at 10 Hz."""
-        self._logger.info("SLAM loop started")
-        target_interval = 0.1
-        slam_update_count = 0
+        """Lower-rate loop that waits for full LIDAR scans and updates SLAM."""
+        self._logger.info("Starting SLAM loop at %.1f Hz (scan-blocking)", 1.0 / self._slam_period)
+        # Initialize last pose for odometry delta
+        fused = self._get_pose_snapshot()
+        self._last_pose_for_slam = Pose2D(fused.x, fused.y, fused.theta)
+        
+        loop = asyncio.get_running_loop()
+        
+        while self._running:
+            # Read one full revolution
+            scan = await self._lidar.read_scan()
+            self._latest_scan = scan
+            if not scan:
+                continue
+            
+            # Build scan array with quality filter
+            # Filter out low-quality measurements (quality=0) to avoid "ghost" obstacles/rays
+            filtered_scan = [m for m in scan if m.quality > 0]
+            if not filtered_scan:
+                continue
+            
+            # Optimization: Downsample scan to reduce SLAM computation
+            if len(filtered_scan) > SLAM_SCAN_DOWNSAMPLE:
+                step = len(filtered_scan) / SLAM_SCAN_DOWNSAMPLE
+                filtered_scan = [filtered_scan[int(i * step)] for i in range(SLAM_SCAN_DOWNSAMPLE)]
+            
+            scan_array = np.array(
+                [[m.angle_radians, max(0.0, float(m.distance_m))] for m in filtered_scan],
+                dtype=float,
+            )
+            
+            # Compute body-frame odometry delta since last SLAM step
+            assert self._last_pose_for_slam is not None
+            prev = self._last_pose_for_slam
+            curr = self._get_pose_snapshot()
+            dx_world = curr.x - prev.x
+            dy_world = curr.y - prev.y
+            dtheta = _wrap_angle(curr.theta - prev.theta)
+            
+            # Optimization: Skip SLAM update if robot hasn't moved significantly
+            linear_motion = math.hypot(dx_world, dy_world)
+            angular_motion = abs(dtheta)
+            if linear_motion < SLAM_MOTION_THRESHOLD_M and angular_motion < SLAM_ROTATION_THRESHOLD_RAD:
+                # Still update latest scan for visualization, but skip heavy SLAM computation
+                await asyncio.sleep(0.01)  # Small yield
+                continue
+            
+            # Rotate world delta into body frame using previous heading
+            cos_h = math.cos(prev.theta)
+            sin_h = math.sin(prev.theta)
+            dx_body = cos_h * dx_world + sin_h * dy_world
+            dy_body = -sin_h * dx_world + cos_h * dy_world
 
-        while True:
+            control = np.array([dx_body, dy_body, dtheta], dtype=float)
+            # Process covariance (scaled by motion to prevent diffusion when stationary)
+            lin_sigma = max(1e-4, 0.2 * abs(dx_body))
+            side_sigma = max(1e-4, 0.1 * abs(dx_body))
+            ang_sigma = max(1e-3, 0.2 * abs(dtheta))
+            cov = np.diag([lin_sigma**2, side_sigma**2, ang_sigma**2])
+            
+            # Capture variables for lambda closure
+            ctrl = control
+            covariance = cov
+            scan_data = scan_array
+            
+            # Optimization: Run SLAM step in thread pool to not block event loop
             try:
-                loop_start = time.perf_counter()
-
-                if not self._hardware or not self._slam_manager or not self._sensor_fusion:
-                    await asyncio.sleep(target_interval)
-                    continue
-
-                snapshot = await self._hardware.read_all()
-                dt = snapshot.timestamp - self._last_update_time
-                self._last_update_time = snapshot.timestamp
-
-                if dt > 0 and dt < 1.0:
-                    left_vel = snapshot.encoders.get("left")
-                    right_vel = snapshot.encoders.get("right")
-                    if left_vel is not None:
-                        self._encoder_cache["left"] = left_vel
-                    if right_vel is not None:
-                        self._encoder_cache["right"] = right_vel
-                    avg_encoder_velocity = 0.0
-                    if left_vel and right_vel:
-                        avg_encoder_velocity = (
-                            (left_vel.velocity_m_s or 0.0) + (right_vel.velocity_m_s or 0.0)
-                        ) / 2.0
-                    omega_meas = snapshot.imu_sample.angular_velocity_rad_s.z
-                    
-                    # Deadband gating to prevent drift when stationary
-                    if abs(avg_encoder_velocity) < 1e-3:
-                        avg_encoder_velocity = 0.0
-                    if abs(omega_meas) < 0.02:
-                        omega_meas = 0.0
-
-                    # Use measured velocities for EKF prediction and telemetry
-                    self._sensor_fusion.predict(
-                        control_v=avg_encoder_velocity,
-                        control_w=omega_meas,
-                        dt=dt,
+                slam_mean, _ = await loop.run_in_executor(
+                    None,  # Use default thread pool
+                    lambda: self._slam.step(
+                        control=ctrl,
+                        process_covariance=covariance,
+                        scan=scan_data,
                     )
-                    self._velocity = {"linear": avg_encoder_velocity, "angular": omega_meas}
-                    self._sensor_fusion.update_v(avg_encoder_velocity)
-                    self._sensor_fusion.update_omega(omega_meas)
-
-                lidar_measurements = [
-                    (m.angle_radians, m.distance_m)
-                    for m in snapshot.lidar_scan
-                    if m.quality > 0
-                ]
-                
-                # Cache LIDAR scan for visualization
-                self._latest_lidar_scan = lidar_measurements
-
-                if lidar_measurements:
-                    slam_update_count += 1
-                    # Build body-frame displacement control for particle filter
-                    dx_body = self._velocity["linear"] * dt if dt > 0 else 0.0
-                    dtheta = self._velocity["angular"] * dt if dt > 0 else 0.0
-                    control = np.array([dx_body, 0.0, dtheta])
-                    # Scale process noise with actual per-step motion; keep tiny floors to avoid degeneracy
-                    lin_sigma = max(1e-4, 0.1 * abs(dx_body))
-                    side_sigma = max(1e-4, 0.05 * abs(dx_body))
-                    ang_sigma = max(1e-3, 0.2 * abs(dtheta))
-                    process_covariance = np.diag([lin_sigma**2, side_sigma**2, ang_sigma**2])
-                    
-                    estimated_pose, slam_covariance = self._slam_manager.step(
-                        control=control,
-                        process_covariance=process_covariance,
-                        scan=lidar_measurements,
-                    )
-
-                    self._pose = {
-                        "x": float(estimated_pose[0]),
-                        "y": float(estimated_pose[1]),
-                        "theta": float(estimated_pose[2]),
-                    }
-                    # Fuse SLAM pose back into EKF with returned covariance
-                    try:
-                        self._sensor_fusion.update_pose(estimated_pose, R=slam_covariance)
-                    except Exception as exc:
-                        self._logger.debug("EKF pose update failed: %s", exc)
-                    # Refresh cached map payload off-thread to avoid blocking the event loop
-                    try:
-                        await asyncio.to_thread(self._refresh_map_payload)
-                    except Exception as exc:
-                        self._logger.debug("Failed to refresh map payload: %s", exc)
-                    
-                    # Log SLAM updates periodically
-                    if slam_update_count % 50 == 0:  # Every 5 seconds at 10Hz
-                        self._logger.info(
-                            "SLAM update #%d: pose=(%.3f, %.3f, %.3f°), %d measurements",
-                            slam_update_count,
-                            self._pose["x"],
-                            self._pose["y"],
-                            math.degrees(self._pose["theta"]),
-                            len(lidar_measurements)
-                        )
-                    # Sensor diagnostics more frequently
-                    if slam_update_count % 10 == 0:  # Every ~1s at 10Hz
-                        left_v = self._encoder_cache.get("left")
-                        right_v = self._encoder_cache.get("right")
-                        left_vs = left_v.velocity_m_s if left_v is not None else None
-                        right_vs = right_v.velocity_m_s if right_v is not None else None
-                        pf_neff = None
-                        try:
-                            if self._particle_filter is not None:
-                                pf_neff = float(self._particle_filter.effective_particle_count)
-                        except Exception:
-                            pf_neff = None
-                        self._logger.info(
-                            "SENSORS dt=%.3f v_enc=%.4f m/s (L=%.4f R=%.4f) omega_imu=%.4f rad/s "
-                            "lidar_pts=%d pf_neff=%s",
-                            dt,
-                            self._velocity["linear"],
-                            left_vs or 0.0,
-                            right_vs or 0.0,
-                            self._velocity["angular"],
-                            len(lidar_measurements),
-                            f"{pf_neff:.1f}" if pf_neff is not None else "n/a",
-                        )
-                else:
-                    # Log when no LIDAR data is received (only once per second to avoid spam)
-                    if not hasattr(self, '_last_lidar_warning') or time.perf_counter() - self._last_lidar_warning > 1.0:
-                        self._logger.warning("No LIDAR measurements received in snapshot")
-                        self._last_lidar_warning = time.perf_counter()
-
-                self._battery_level = max(0.0, self._battery_level - 0.001)
-                self._water_level = snapshot.water_level_percentage
-
-                if self._battery_level < 15.0 and self._mode in ("EXPLORATION", "CLEANING"):
-                    if "LOW_BATTERY" not in self._errors:
-                        self._logger.warning("Low battery (%.1f%%) - switching to RETURNING mode", 
-                                           self._battery_level)
-                        self._errors.append("LOW_BATTERY")
-                        self._mode = "RETURNING"
-                elif self._battery_level >= 15.0 and "LOW_BATTERY" in self._errors:
-                    self._errors.remove("LOW_BATTERY")
-
-                if snapshot.ultrasonic_distance_m < 0.1:
-                    if "CLIFF_DETECTED" not in self._errors:
-                        self._errors.append("CLIFF_DETECTED")
-                        self._logger.warning("Cliff detected at distance %.2fm", 
-                                           snapshot.ultrasonic_distance_m)
-                elif "CLIFF_DETECTED" in self._errors:
-                    self._errors.remove("CLIFF_DETECTED")
-
-                loop_duration = time.perf_counter() - loop_start
-                sleep_time = max(0.0, target_interval - loop_duration)
-                await asyncio.sleep(sleep_time)
-
-            except asyncio.CancelledError:
-                self._logger.info("SLAM loop cancelled")
-                raise
-            except Exception as exc:
-                self._logger.error("SLAM loop error: %s", exc, exc_info=True)
-                self._errors.append(f"SLAM_ERROR: {str(exc)[:50]}")
-                await asyncio.sleep(target_interval)
-
-    async def _navigation_loop(self) -> None:
-        """Main navigation loop running at 5 Hz for path planning and execution."""
-        self._logger.info("Navigation loop started")
-        target_interval = 1.0 / self._config.navigation.update_hz
-
-        while True:
-            try:
-                loop_start = time.perf_counter()
-
-                if (
-                    not self._astar_planner
-                    or not self._coverage_planner
-                    or not self._path_executor
-                    or not self._robot_controller
-                    or not self._occupancy_grid
-                ):
-                    await asyncio.sleep(target_interval)
-                    continue
-
-                current_pose = Pose2D(
-                    x=self._pose["x"], y=self._pose["y"], theta=self._pose["theta"]
                 )
-                self._robot_controller.reset_pose(current_pose)
+                # Update SLAM pose for visualization
+                self._slam_pose = Pose2D(slam_mean[0], slam_mean[1], slam_mean[2])
+                self._last_pose_for_slam = Pose2D(curr.x, curr.y, curr.theta)
+            except Exception:
+                self._logger.exception("SLAM step failed")
+            # Rate pacing (we already block on scan; small sleep to avoid tight loop if scan is fast)
+            await asyncio.sleep(0.0)
 
-                if self._mode == "EXPLORATION":
-                    await self._handle_exploration_mode(current_pose)
-                elif self._mode == "CLEANING":
-                    await self._handle_cleaning_mode(current_pose)
-                elif self._mode == "RETURNING":
-                    await self._handle_returning_mode(current_pose)
-                elif self._mode == "MANUAL":
-                    # Don't cancel path executor if triangle test is running
-                    if not self._running_triangle_test:
-                        if self._path_executor.status is not PathExecutorStatus.IDLE:
-                            self._path_executor.cancel()
-
-                if self._path_executor.status is PathExecutorStatus.RUNNING:
-                    self._path_executor.update(current_pose, dt=target_interval)
-                    self._robot_controller.update(dt=target_interval)
-
-                loop_duration = time.perf_counter() - loop_start
-                sleep_time = max(0.0, target_interval - loop_duration)
-                await asyncio.sleep(sleep_time)
-
-            except asyncio.CancelledError:
-                self._logger.info("Navigation loop cancelled")
-                raise
-            except Exception as exc:
-                self._logger.error("Navigation loop error: %s", exc, exc_info=True)
-                self._errors.append(f"NAV_ERROR: {str(exc)[:50]}")
-                await asyncio.sleep(target_interval)
-
-    async def _handle_exploration_mode(self, current_pose: Pose2D) -> None:
-        """Handle EXPLORATION mode: find nearest frontier and navigate to it."""
-        if self._path_executor.status is PathExecutorStatus.RUNNING:
+    async def _viewer_loop(self) -> None:
+        if self._viewer is None:
             return
-
-        if self._path_executor.status is PathExecutorStatus.COMPLETED:
-            self._path_executor.cancel()
-
-        result = self._astar_planner.plan_to_nearest_frontier(
-            start=[current_pose.x, current_pose.y]
-        )
-
-        if result is None:
-            self._logger.info("No more frontiers found - exploration complete")
-            self._mode = "IDLE"
-            return
-
-        frontier, path = result
-        self._logger.info(
-            "Planning to frontier at (%.2f, %.2f), distance: %.2f m",
-            frontier.world[0],
-            frontier.world[1],
-            frontier.distance,
-        )
-
-        waypoints = [Waypoint(x=x, y=y, theta=None) for x, y in path]
-        self._path_executor.load_path(waypoints, start_immediately=True)
-
-    async def _handle_cleaning_mode(self, current_pose: Pose2D) -> None:
-        """Handle CLEANING mode: generate coverage path and execute."""
-        if self._path_executor.status is PathExecutorStatus.RUNNING:
-            return
-
-        if self._path_executor.status is PathExecutorStatus.COMPLETED:
-            self._logger.info("Cleaning path completed")
-            self._mode = "IDLE"
-            return
-
-        self._logger.info("Planning cleaning coverage path")
-        path = self._coverage_planner.plan(start=[current_pose.x, current_pose.y])
-
-        if path is None:
-            self._logger.warning("Failed to generate cleaning path")
-            self._mode = "IDLE"
-            return
-
-        self._logger.info("Generated cleaning path with %d waypoints", len(path))
-        waypoints = [Waypoint(x=x, y=y, theta=None) for x, y in path]
-        self._path_executor.load_path(waypoints, start_immediately=True)
-
-    async def _handle_returning_mode(self, current_pose: Pose2D) -> None:
-        """Handle RETURNING mode: navigate back to start position."""
-        if self._path_executor.status is PathExecutorStatus.RUNNING:
-            return
-
-        if self._path_executor.status is PathExecutorStatus.COMPLETED:
-            self._logger.info("Returned to start position")
-            self._mode = "IDLE"
-            return
-
-        start_x, start_y, start_theta = self._start_position
-        self._logger.info("Planning return path to (%.2f, %.2f)", start_x, start_y)
-
-        path = self._astar_planner.plan(
-            start=[current_pose.x, current_pose.y],
-            goal=[start_x, start_y],
-            allow_unknown=False,
-        )
-
-        if path is None:
-            self._logger.warning("Failed to plan return path")
-            self._mode = "IDLE"
-            return
-
-        self._logger.info("Generated return path with %d waypoints", len(path))
-        waypoints = [Waypoint(x=x, y=y, theta=None) for x, y in path]
-        waypoints.append(Waypoint(x=start_x, y=start_y, theta=start_theta))
-        self._path_executor.load_path(waypoints, start_immediately=True)
-
-    async def _run_triangle_test(self) -> None:
-        """Execute a 1m equilateral triangle path and save diagnostic map image."""
-        if not self._path_executor or not self._robot_controller or not self._occupancy_grid:
-            self._logger.error("Cannot run triangle test: navigation not initialized")
-            return
-
-        self._logger.info("Starting triangle calibration test (1m equilateral triangle)")
-        
-        # Calculate equilateral triangle vertices (1m side length)
-        # Start at origin, first vertex at (0, 0)
-        side_length = 1.0
-        height = side_length * math.sqrt(3) / 2.0
-        
-        vertices = [
-            (0.0, 0.0),  # Start
-            (side_length, 0.0),  # Move right 1m
-            (side_length / 2.0, height),  # Move to apex
-            (0.0, 0.0),  # Return to start
-        ]
-        
-        # Create waypoints for the triangle
-        waypoints = [Waypoint(x=x, y=y, theta=None) for x, y in vertices]
-        
-        # Track trajectory
-        trajectory: list[tuple[float, float]] = []
-        
-        # Set flags to prevent navigation loop interference
-        self._running_triangle_test = True
-        self._mode = "MANUAL"
-        
-        # Optional WebSocket streaming
-        ws_connection = None
-        if self._triangle_stream_url:
-            try:
-                import websockets  # type: ignore
-                ws_connection = await websockets.connect(self._triangle_stream_url)
-                self._logger.info("Connected to triangle viewer at %s", self._triangle_stream_url)
-            except Exception as exc:
-                self._logger.warning(
-                    "Failed to connect to triangle viewer at %s: %s",
-                    self._triangle_stream_url,
-                    exc,
-                )
-        
-        try:
-            # Load and start the path
-            self._path_executor.load_path(waypoints, start_immediately=True)
-            self._logger.info("Triangle path loaded with %d waypoints", len(waypoints))
+        state_period = self._state_period
+        map_period = self._map_period
+        loop = asyncio.get_running_loop()
+        next_state = loop.time()
+        next_map = next_state
+        self._logger.info("Starting viewer loop: state=%.1f Hz, map=%.1f Hz", 1.0 / state_period, 1.0 / map_period)
+        while self._running:
+            now = loop.time()
+            if now >= next_state:
+                await self._send_state_update()
+                next_state = now + state_period
+            if now >= next_map:
+                await self._send_map_update()
+                next_map = now + map_period
             
-            # Wait for path completion with timeout
-            timeout = 60.0  # 60 seconds timeout
-            start_time = time.perf_counter()
-            sample_interval = 0.1  # Sample trajectory every 100ms
-            last_sample_time = start_time
-            update_counter = 0
-            
-            while time.perf_counter() - start_time < timeout:
-                await asyncio.sleep(0.05)
-                
-                # Sample trajectory
-                current_time = time.perf_counter()
-                if current_time - last_sample_time >= sample_interval:
-                    trajectory.append((self._pose["x"], self._pose["y"]))
-                    last_sample_time = current_time
-                    update_counter += 1
-                    
-                    # Stream update to viewer if connected
-                    if ws_connection:
-                        try:
-                            update_message = {
-                                "type": "triangle_update",
-                                "timestamp": current_time,
-                                "pose": {
-                                    "x": self._pose["x"],
-                                    "y": self._pose["y"],
-                                    "theta": self._pose["theta"],
-                                },
-                                "trajectory": trajectory,
-                                "plannedVertices": vertices,
-                                "lidarScan": self._latest_lidar_scan,  # Add current LIDAR scan
-                            }
-                            # Add compressed map data if available (send every 5 updates to reduce bandwidth)
-                            if self._occupancy_grid and update_counter % 5 == 0:
-                                map_data = self._build_map_payload(self._occupancy_grid, compress=True)
-                                update_message["map"] = map_data
-                            
-                            await ws_connection.send(json.dumps(update_message))
-                        except Exception as exc:
-                            self._logger.debug("Failed to send update to viewer: %s", exc)
-                
-                # Check if path is complete
-                if self._path_executor.status is PathExecutorStatus.COMPLETED:
-                    self._logger.info("Triangle path completed successfully")
-                    break
-                elif self._path_executor.status in (PathExecutorStatus.CANCELLED, PathExecutorStatus.IDLE):
-                    self._logger.warning("Triangle path was cancelled or stopped")
-                    break
-            else:
-                self._logger.warning("Triangle test timed out after %.1f seconds", timeout)
-                self._path_executor.cancel()
-        
-        except (asyncio.CancelledError, KeyboardInterrupt):
-            self._logger.warning("Triangle test interrupted by user")
-            if self._path_executor:
-                self._path_executor.cancel()
-            raise
-        
-        finally:
-            # Close WebSocket connection if open
-            if ws_connection:
-                try:
-                    await ws_connection.close()
-                    self._logger.info("Closed connection to triangle viewer")
-                except Exception as exc:
-                    self._logger.debug("Error closing viewer connection: %s", exc)
-            
-            # Always stop the robot and save diagnostics
-            self._velocity = {"linear": 0.0, "angular": 0.0}
-            
-            # Stop motors immediately if motor controller exists
-            if self._motor_controller:
-                try:
-                    self._motor_controller.stop_all()
-                    self._logger.info("Motors stopped")
-                except Exception as exc:
-                    self._logger.error("Failed to stop motors: %s", exc)
-            
-            # Clear the test flag
-            self._running_triangle_test = False
-            
-            # Save the diagnostic image
-            self._save_triangle_test_image(trajectory, vertices)
-            
-            self._logger.info("Triangle test complete. Trajectory had %d samples", len(trajectory))
+            # Optimization: Calculate exact sleep time instead of busy-polling
+            time_to_state = max(0.0, next_state - loop.time())
+            time_to_map = max(0.0, next_map - loop.time())
+            sleep_time = min(time_to_state, time_to_map)
+            # Ensure minimum sleep to prevent busy loop, but allow event loop to process
+            await asyncio.sleep(max(0.001, sleep_time))
 
-    def _save_triangle_test_image(
-        self, trajectory: list[tuple[float, float]], planned_vertices: list[tuple[float, float]]
-    ) -> None:
-        """Save occupancy grid map with trajectory overlay to disk."""
-        if not self._occupancy_grid:
-            self._logger.warning("Cannot save map: occupancy grid not available")
+    async def _send_state_update(self) -> None:
+        if self._viewer is None:
             return
+        pose = self._get_pose_snapshot()
+        # Use SLAM pose if available for visualization alignment with map
+        display_pose = self._slam_pose if self._slam_pose is not None else pose
+        scan_subset = self._downsample_scan(self._latest_scan, max_samples=360)
         
-        # Create logs directory if it doesn't exist
-        logs_dir = Path("robot/logs")
-        logs_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Generate filename with timestamp
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = logs_dir / f"triangle_test_{timestamp}.png"
-        
-        # Create figure
-        fig, ax = plt.subplots(figsize=(12, 12), dpi=100)
-        
-        # Get occupancy grid data
-        grid_data = self._occupancy_grid.array
-        origin_x, origin_y, _ = self._occupancy_grid.origin
-        resolution = self._occupancy_grid.resolution
-        height, width = grid_data.shape
-        
-        # Create extent for imshow (world coordinates)
-        extent = [
-            origin_x,
-            origin_x + width * resolution,
-            origin_y,
-            origin_y + height * resolution,
-        ]
-        
-        # Display occupancy grid (inverted colormap: white=free, black=occupied)
-        # Grid values: 0=unknown, 1-127=free, 128-255=occupied
-        display_grid = np.where(grid_data == 0, 128, grid_data)  # Show unknown as gray
-        ax.imshow(
-            display_grid,
-            cmap="gray_r",
-            origin="lower",
-            extent=extent,
-            vmin=0,
-            vmax=255,
-            alpha=0.8,
-        )
-        
-        # Plot planned triangle vertices
-        if planned_vertices:
-            planned_x = [v[0] for v in planned_vertices]
-            planned_y = [v[1] for v in planned_vertices]
-            ax.plot(planned_x, planned_y, "b--", linewidth=2, label="Planned Path", alpha=0.7)
-            ax.scatter(planned_x[:-1], planned_y[:-1], c="blue", s=100, marker="o", 
-                      label="Waypoints", zorder=5)
-        
-        # Plot actual trajectory
-        if trajectory:
-            traj_x = [p[0] for p in trajectory]
-            traj_y = [p[1] for p in trajectory]
-            ax.plot(traj_x, traj_y, "r-", linewidth=2, label="Actual Trajectory", alpha=0.9)
-            ax.scatter(traj_x[0], traj_y[0], c="green", s=150, marker="^", 
-                      label="Start", zorder=6)
-            ax.scatter(traj_x[-1], traj_y[-1], c="red", s=150, marker="s", 
-                      label="End", zorder=6)
-        
-        ax.set_xlabel("X (meters)", fontsize=12)
-        ax.set_ylabel("Y (meters)", fontsize=12)
-        ax.set_title(f"Triangle Calibration Test - {timestamp}", fontsize=14, fontweight="bold")
-        ax.legend(loc="upper right", fontsize=10)
-        ax.grid(True, alpha=0.3)
-        ax.set_aspect("equal")
-        
-        # Set reasonable axis limits around the triangle
-        if trajectory or planned_vertices:
-            all_x = ([p[0] for p in trajectory] if trajectory else []) + [v[0] for v in planned_vertices]
-            all_y = ([p[1] for p in trajectory] if trajectory else []) + [v[1] for v in planned_vertices]
-            if all_x and all_y:
-                margin = 0.5  # 0.5m margin
-                ax.set_xlim(min(all_x) - margin, max(all_x) + margin)
-                ax.set_ylim(min(all_y) - margin, max(all_y) + margin)
-            else:
-                # Default view if no data
-                ax.set_xlim(-0.5, 1.5)
-                ax.set_ylim(-0.5, 1.5)
-        
-        plt.tight_layout()
-        plt.savefig(filename, dpi=150, bbox_inches="tight")
-        plt.close(fig)
-        
-        self._logger.info("Triangle test map saved to %s", filename)
-
-    def _state_provider(self) -> Mapping[str, Any]:
-        return {
-            "mode": self._mode,
-            "position": self._pose,
-            "velocity": self._velocity,
-            "batteryLevel": self._battery_level,
-            "waterLevel": self._water_level,
-            "motorCurrents": [],
-            "errors": list(self._errors),
+        payload: Dict[str, Any] = {
+            "type": "triangle_update",
+            "pose": {"x": display_pose.x, "y": display_pose.y, "theta": display_pose.theta},
+            "poseHeadingDeg": math.degrees(display_pose.theta),
+            "trajectory": self._get_recent_trajectory(),
+            "plannedVertices": list(self._vertices),
+            "lidarScan": [
+                [float(m.angle_radians), float(max(0.0, m.distance_m))] for m in scan_subset
+            ],
+            "odomPose": {"x": pose.x, "y": pose.y, "theta": pose.theta},
+            "controlMode": self._control_mode,
         }
-
-    def _map_provider(self) -> Mapping[str, Any] | None:
-        """Provide current occupancy grid map for transmission."""
-        if self._latest_map_payload is not None:
-            return self._latest_map_payload
-        # Fallback: build once synchronously if cache is empty
-        if not self._occupancy_grid:
-            return None
-        self._latest_map_payload = self._build_map_payload(self._occupancy_grid)
-        return self._latest_map_payload
-
-    def _build_map_payload(self, grid: OccupancyGrid, compress: bool = False) -> Mapping[str, Any]:
-        grid_data = grid.array
-        height, width = grid_data.shape
         
-        if compress:
-            # Compress with gzip before base64 encoding
-            compressed_data = gzip.compress(grid_data.tobytes(), compresslevel=6)
-            encoded_data = base64.b64encode(compressed_data).decode("ascii")
-            encoding = "gzip+base64"
-        else:
-            encoded_data = base64.b64encode(grid_data.tobytes()).decode("ascii")
-            encoding = "base64"
+        # Add exploration data
+        payload["explorationPath"] = list(self._exploration_path)
+        payload["explorationComplete"] = self._exploration_complete
+        if self._current_frontier is not None:
+            payload["frontierTarget"] = {
+                "x": self._current_frontier.world[0],
+                "y": self._current_frontier.world[1],
+            }
         
-        return {
-            "resolution": float(grid.resolution),
-            "width": int(width),
-            "height": int(height),
-            "origin": {
-                "x": float(grid.origin[0]),
-                "y": float(grid.origin[1]),
-                "theta": float(grid.origin[2]),
+        if self._imu_sampler is not None:
+            imu_heading = self._imu_sampler.latest_heading_deg()
+            if imu_heading is not None:
+                payload["imuHeadingDeg"] = imu_heading
+                age = self._imu_sampler.seconds_since_update()
+                if age is not None:
+                    payload["imuHeadingAgeSec"] = age
+        await self._viewer.send_update(payload)
+
+    async def _send_map_update(self) -> None:
+        if self._viewer is None:
+            return
+        grid: OccupancyGrid = self._slam.occupancy_grid
+        
+        # Optimization: Run compression in thread pool to not block event loop
+        # 800x800 grid = 640KB, gzip is CPU-intensive
+        loop = asyncio.get_running_loop()
+        
+        def _compress_map() -> str:
+            data_bytes = grid.array.tobytes(order="C")
+            compressed = gzip.compress(data_bytes, compresslevel=1)  # Faster compression
+            return base64.b64encode(compressed).decode("ascii")
+        
+        b64 = await loop.run_in_executor(None, _compress_map)
+        
+        payload: Dict[str, Any] = {
+            "type": "triangle_update",
+            "map": {
+                "width": grid.width,
+                "height": grid.height,
+                "resolution": grid.resolution,
+                "origin": {"x": grid.origin[0], "y": grid.origin[1], "theta": grid.origin[2]},
+                "data": b64,
+                "encoding": "gzip+base64",
             },
-            "data": encoded_data,
-            "encoding": encoding,
         }
+        await self._viewer.send_update(payload)
 
-    def _refresh_map_payload(self) -> None:
-        if not self._occupancy_grid:
-            return
-        # Build new payload and swap atomically
-        self._latest_map_payload = self._build_map_payload(self._occupancy_grid)
+    def _downsample_scan(
+        self, scan: Sequence[LidarMeasurement], *, max_samples: int = 360
+    ) -> list[LidarMeasurement]:
+        if max_samples <= 0:
+            raise ValueError("max_samples must be positive")
+        if not scan:
+            return []
+        if len(scan) <= max_samples:
+            return list(scan)
+        if max_samples == 1:
+            return [scan[0]]
+        step = (len(scan) - 1) / float(max_samples - 1)
+        downsampled: list[LidarMeasurement] = []
+        for i in range(max_samples):
+            idx = min(len(scan) - 1, int(round(i * step)))
+            downsampled.append(scan[idx])
+        return downsampled
 
-    async def _on_move(self, command_id: str, params: Mapping[str, Any]) -> None:
-        direction = str(params.get("direction", "STOP")).upper()
-        speed = float(params.get("speed", 0.0)) * self._speed_multiplier
-        duration = float(params.get("duration", 0.0))
 
-        self._logger.debug(
-            "Received move command %s direction=%s speed=%.3f duration=%.2f",
-            command_id,
-            direction,
-            speed,
-            duration,
+# -----------------------------
+# Main setup/teardown
+# -----------------------------
+
+def _wrap_angle(angle: float) -> float:
+    return (angle + math.pi) % (2.0 * math.pi) - math.pi
+
+
+def build_triangle_vertices(side_m: float) -> List[Tuple[float, float]]:
+    h = math.sqrt(3) / 2.0 * side_m
+    return [(0.0, 0.0), (side_m, 0.0), (0.5 * side_m, h)]
+
+
+def _build_motor_driver_and_controller(
+    *,
+    supply_voltage: float,
+    loop_interval: float,
+    wheel_radius_m: float,
+    track_width_m: float,
+    max_linear: float,
+    max_angular: float,
+) -> Tuple[MotorDriver, MotorController, RobotController, List[QuadratureEncoder]]:
+    # PCA9685
+    i2c = busio.I2C(board.SCL, board.SDA)
+    pwm = PCA9685(i2c)
+    pwm.frequency = PWM_FREQUENCY_HZ
+    # Motor channel configs (indices 0..3)
+    motor_configs = [
+        MotorChannelConfig(index=0, forward_channel=MOTOR_CHANNELS[0][0], reverse_channel=MOTOR_CHANNELS[0][1]),
+        MotorChannelConfig(index=1, forward_channel=MOTOR_CHANNELS[1][0], reverse_channel=MOTOR_CHANNELS[1][1]),
+        MotorChannelConfig(index=2, forward_channel=MOTOR_CHANNELS[2][0], reverse_channel=MOTOR_CHANNELS[2][1]),
+        MotorChannelConfig(index=3, forward_channel=MOTOR_CHANNELS[3][0], reverse_channel=MOTOR_CHANNELS[3][1]),
+    ]
+    driver = MotorDriver(pwm_board=pwm, motor_configs=motor_configs, supply_voltage=supply_voltage)
+    # Encoders (two units; left and right)
+    circumference = 2.0 * math.pi * wheel_radius_m
+    gpio_encoders: List[QuadratureEncoder] = []
+    for pin_a, pin_b in ENCODER_PINS:
+        hw = GpioZeroEncoderHardware(pin_a=pin_a, pin_b=pin_b, max_steps=0, rotary_cls=RotaryEncoder)
+        enc = QuadratureEncoder(
+            hardware=hw,
+            counts_per_revolution=ENCODER_PPR,
+            gear_ratio=1.0,
+            wheel_circumference_m=circumference,
+            invert=False,
         )
+        enc.zero()
+        gpio_encoders.append(enc)
+    # Motor controller config (feedforward with conservative defaults)
+    motor_cfg = MotorControllerConfig(
+        motor_to_encoder=EXPECTED_MOTOR_TO_ENCODER,
+        gear_ratio=1.0,
+        rotor_inertia=1.0e-4,
+        viscous_friction=1.0e-3,
+        torque_constant=0.05,
+        back_emf_constant=0.05,
+        winding_resistance=2.0,
+        loop_interval=loop_interval,
+        pid=PIDSettings(
+            kp=0.4,
+            ki=1.2,
+            kd=0.0,
+            integrator_limit=supply_voltage,
+            output_limits=(-supply_voltage, supply_voltage),
+        ),
+    )
+    feedback = EncoderFeedbackAdapter(gpio_encoders)
+    motor_controller = MotorController(driver=driver, encoder_feedback=feedback, config=motor_cfg)
+    # High-level robot controller
+    # Tuned for stability with fused IMU feedback (lower gains to prevent oscillation)
+    position_pid = PIDController(
+        kp=0.5, ki=0.05, kd=0.05, integrator_limit=0.5, output_limits=(-max_linear, max_linear)
+    )
+    heading_pid = PIDController(
+        kp=1.2, ki=0.05, kd=0.1, integrator_limit=0.8, output_limits=(-max_angular, max_angular)
+    )
+    robot = RobotController(
+        motor_controller=motor_controller,
+        track_width=track_width_m,
+        wheel_radius=wheel_radius_m,
+        left_motor_indices=(0, 1),
+        right_motor_indices=(2, 3),
+        position_pid=position_pid,
+        heading_pid=heading_pid,
+        max_linear_speed=max_linear,
+        max_angular_speed=max_angular,
+    )
+    return driver, motor_controller, robot, gpio_encoders
 
-        if direction == "FORWARD":
-            self._velocity = {"linear": speed, "angular": 0.0}
-        elif direction == "BACKWARD":
-            self._velocity = {"linear": -speed, "angular": 0.0}
-        elif direction == "LEFT":
-            self._velocity = {"linear": 0.0, "angular": speed}
-        elif direction == "RIGHT":
-            self._velocity = {"linear": 0.0, "angular": -speed}
-        else:
-            self._velocity = {"linear": 0.0, "angular": 0.0}
 
-    async def _on_set_mode(
-        self,
-        command_id: str,
-        mode: str,
-        parameters: Mapping[str, Any],
-    ) -> None:
-        self._logger.info("Mode changed via command %s: %s", command_id, mode)
-        self._mode = mode
-
-    async def _on_e_stop(self, command_id: str) -> None:
-        self._logger.warning("Emergency stop triggered by command %s", command_id)
-        self._velocity = {"linear": 0.0, "angular": 0.0}
-        self._mode = "IDLE"
-
-    async def _on_set_speed(self, command_id: str, multiplier: float) -> None:
-        self._speed_multiplier = float(multiplier)
-        self._logger.info("Speed multiplier updated to %.2f", self._speed_multiplier)
-
-    async def _on_config_update(self, command_id: str, patch: Mapping[str, Any]) -> None:
-        if "speedMultiplier" in patch:
-            await self._on_set_speed(command_id, float(patch["speedMultiplier"]))
-        if "mode" in patch:
-            self._mode = str(patch["mode"]).upper()
+def _build_slam(
+    *,
+    grid_resolution: float,
+    grid_width: int,
+    grid_height: int,
+    grid_origin: Tuple[float, float, float],
+    particles: int,
+    lidar_max_range: float,
+) -> SlamManager:
+    grid = OccupancyGrid(
+        width=grid_width,
+        height=grid_height,
+        resolution=grid_resolution,
+        origin=grid_origin,
+    )
+    pf = ParticleFilter(particle_count=particles)
+    pf.initialize_gaussian(mean=[0.0, 0.0, 0.0], covariance=np.diag([0.05, 0.05, math.radians(10.0) ** 2]))
+    slam = SlamManager(
+        occupancy_grid=grid,
+        particle_filter=pf,
+        resample_threshold=0.5,
+        occupied_value=220,
+        free_value=40,
+        max_range=lidar_max_range,
+        sensor_pose=(0.0, 0.0, 0.0),
+    )
+    return slam
 
 
-async def _serve(app: RobotApp) -> None:
+async def _preflight_checks(
+    *,
+    lidar: RPLidarSerial,
+    logger: logging.Logger,
+) -> None:
+    logger.info("Running preflight checks (LIDAR info/health)...")
     try:
-        await app.start()
-    except Exception:
-        await app.stop()
-        raise
-    stop_event = asyncio.Event()
-    loop = asyncio.get_running_loop()
+        info = await lidar.get_device_info()
+        health = await lidar.get_health()
+        logger.info("RPLIDAR info: %s", info.hex())
+        logger.info("RPLIDAR health: %s", health.hex())
+    except Exception as exc:
+        logger.warning("RPLIDAR info/health check failed: %s (continuing)", exc)
 
-    for sig in (signal.SIGINT, signal.SIGTERM):
+
+async def run_test(args: argparse.Namespace) -> None:
+    logger = logging.getLogger("triangle_test")
+    logger.info("Initializing hardware...")
+
+    imu: Optional[MPU9250] = None
+    heading_fusion: Optional[HeadingFusion] = None
+    imu_sampler: Optional[ImuSampler] = None
+
+    # LIDAR
+    lidar = RPLidarSerial(port=args.lidar_port, baud_rate=args.lidar_baud, serial_timeout=args.lidar_timeout)
+    await lidar.connect()
+    # Ensure we are not scanning so we can run preflight checks cleanly
+    await lidar.stop(close_serial=False)
+
+    # Preflight checks
+    logger.info("Preflight checks...")
+    await _preflight_checks(lidar=lidar, logger=logger)
+    
+    # IMU (optional)
+    if args.use_imu:
         try:
-            loop.add_signal_handler(sig, stop_event.set)
-        except NotImplementedError:
-            continue
+            imu = MPU9250(
+                bus=args.imu_bus,
+                address=args.imu_address,
+                sample_rate_hz=args.imu_rate,
+                gyro_scale_correction=args.gyro_scale,
+                enable_magnetometer=args.use_mag,
+            )
+        except Exception:
+            imu = None
+            logger.exception("Failed to initialize IMU; continuing without IMU fusion")
 
+    # Motors/encoders and robot controller
+    driver, motor_controller, robot, encoders = _build_motor_driver_and_controller(
+        supply_voltage=args.supply_voltage,
+        loop_interval=args.loop_interval,
+        wheel_radius_m=args.wheel_radius,
+        track_width_m=args.track_width,
+        max_linear=args.max_linear,
+        max_angular=args.max_angular,
+    )
+
+    # SLAM
+    slam = _build_slam(
+        grid_resolution=args.grid_resolution,
+        grid_width=args.grid_width,
+        grid_height=args.grid_height,
+        grid_origin=(args.grid_origin_x, args.grid_origin_y, args.grid_origin_theta),
+        particles=args.particles,
+        lidar_max_range=args.lidar_max_range,
+    )
+
+    # Viewer
+    viewer = ViewerClient(url=args.viewer) if args.viewer else None
+    if viewer is not None:
+        await viewer.connect()
+
+    # Planned triangle
+    planned = build_triangle_vertices(args.triangle_side)
+    # Close the loop visually
+    planned.append(planned[0])
+
+    logger.info("Starting LIDAR scan...")
+    await lidar.start()
+
+    imu_warmup_task: Optional[asyncio.Task[float]] = None
+    map_warmup_task: Optional[asyncio.Task[int]] = None
+    warmup_entries: list[tuple[str, asyncio.Task[Any]]] = []
+    yaw_bias: Optional[float] = None
+
+    if imu is not None:
+        imu_warmup_task = asyncio.create_task(
+            _initialize_and_warmup_imu(
+                imu,
+                warmup_seconds=args.imu_warmup,
+                sample_rate_hz=args.imu_rate,
+                logger=logger,
+                invert=args.invert_imu,
+            ),
+            name="imu-warmup",
+        )
+        warmup_entries.append(("imu", imu_warmup_task))
+
+    if args.map_warmup_seconds > 0.0:
+        map_warmup_task = asyncio.create_task(
+            _warmup_map(
+                lidar=lidar,
+                slam=slam,
+                warmup_seconds=args.map_warmup_seconds,
+                logger=logger,
+            ),
+            name="map-warmup",
+        )
+        warmup_entries.append(("map", map_warmup_task))
+
+    if warmup_entries:
+        logger.info(
+            "Waiting for warmup tasks (map=%s, imu=%s)...",
+            bool(map_warmup_task),
+            bool(imu_warmup_task),
+        )
+        warmup_results = await asyncio.gather(
+            *(task for _, task in warmup_entries),
+            return_exceptions=True,
+        )
+        for (name, _), result in zip(warmup_entries, warmup_results):
+            if isinstance(result, Exception):
+                logger.warning("%s warmup failed: %s", name.upper(), result)
+                if name == "imu" and imu is not None:
+                    await asyncio.to_thread(_close_imu_bus, imu, logger)
+                    imu = None
+                continue
+            if name == "imu":
+                yaw_bias = float(result)
+            elif name == "map":
+                logger.info("Map warmup integrated %d scans", int(result))
+    else:
+        logger.info("Map/IMU warmup disabled; starting navigation immediately")
+
+    if imu is not None:
+        try:
+            heading_fusion = HeadingFusion(
+                blend=args.imu_heading_blend,
+                yaw_bias=0.0 if yaw_bias is None else yaw_bias,
+                invert=args.invert_imu,
+            )
+            imu_sampler = ImuSampler(
+                imu=imu,
+                fusion=heading_fusion,
+                sample_rate_hz=args.imu_rate,
+                logger=logger,
+            )
+            imu_sampler.start()
+        except Exception:
+            heading_fusion = None
+            imu_sampler = None
+            logger.exception("Failed to start IMU sampler; continuing without IMU fusion")
+
+    # Navigator
+    navigator = TriangleSlamNavigator(
+        lidar=lidar,
+        motor_controller=motor_controller,
+        robot_controller=robot,
+        slam=slam,
+        planned_vertices=planned,
+        viewer=viewer,
+        heading_fusion=heading_fusion,
+        imu_sampler=imu_sampler,
+        lidar_max_range=args.lidar_max_range,
+        slam_update_hz=SLAM_HZ,
+        map_hz=MAP_HZ,
+        state_hz=STATE_HZ,
+        logger=logger,
+    )
+
+    if viewer is not None:
+        def on_viewer_message(data: Dict[str, Any]) -> None:
+            msg_type = data.get("type")
+            if msg_type == "estop":
+                enabled = bool(data.get("enabled", False))
+                navigator.set_estop(enabled)
+            elif msg_type == "control":
+                command = data.get("command")
+                if command == "set_mode":
+                    mode = str(data.get("mode", "auto"))
+                    navigator.set_control_mode(mode)
+                elif command == "velocity":
+                    lin = float(data.get("linear", 0.0))
+                    ang = float(data.get("angular", 0.0))
+                    navigator.set_manual_velocity(lin, ang)
+
+        viewer.set_callback(on_viewer_message)
+
+    # Graceful shutdown handler
+    stop_event = asyncio.Event()
+
+    def _handle_sigint() -> None:
+        logger.info("SIGINT received, stopping...")
+        stop_event.set()
+
+    loop = asyncio.get_running_loop()
     try:
-        await stop_event.wait()
+        loop.add_signal_handler(signal.SIGINT, _handle_sigint)  # type: ignore[attr-defined]
+        loop.add_signal_handler(signal.SIGTERM, _handle_sigint)  # type: ignore[attr-defined]
+    except NotImplementedError:
+        # Windows event loop: signals not supported in Proactor loop
+        pass
+
+    async def _run_and_wait() -> None:
+        await navigator.run()
+
+    main_task = asyncio.create_task(_run_and_wait(), name="navigator")
+    await stop_event.wait()
+    # Cancel the navigator loop
+    main_task.cancel()
+    try:
+        await main_task
     except asyncio.CancelledError:
-        raise
+        pass
     finally:
-        await app.stop()
+        logger.info("Shutting down...")
+        if imu_sampler is not None:
+            try:
+                imu_sampler.stop()
+            except Exception:
+                logger.exception("Error while stopping IMU sampler")
+        elif imu is not None:
+            await asyncio.to_thread(_close_imu_bus, imu, logger)
+        # Stop motors
+        try:
+            motor_controller.stop_all()
+        except Exception:
+            logger.exception("Error while stopping MotorController")
+        try:
+            driver.stop_all()
+        except Exception:
+            logger.exception("Error while stopping MotorDriver")
+        # Close encoders
+        for enc in encoders:
+            try:
+                enc.close()
+            except Exception:
+                logger.exception("Error while closing encoder")
+        # Stop LIDAR
+        try:
+            await lidar.stop()
+        except Exception:
+            logger.exception("Error while stopping LIDAR")
+        # Close viewer
+        if viewer is not None:
+            try:
+                await viewer.close()
+            except Exception:
+                logger.exception("Error while closing viewer")
 
 
-def _build_overrides(args: argparse.Namespace) -> dict[str, Any]:
-    overrides: dict[str, Any] = {}
-
-    def nested(section: str) -> dict[str, Any]:
-        entry = overrides.setdefault(section, {})
-        assert isinstance(entry, dict)
-        return entry
-
-    if args.robot_id:
-        nested("websocket")["robotId"] = args.robot_id
-    if args.server_url:
-        nested("websocket")["url"] = args.server_url
-    if args.api_key:
-        nested("websocket")["apiKey"] = args.api_key
-    if args.namespace:
-        nested("websocket")["namespace"] = args.namespace
-    if args.socketio_path:
-        nested("websocket")["socketioPath"] = args.socketio_path
-    if args.transports:
-        nested("websocket")["transports"] = args.transports
-    if args.state_hz is not None:
-        nested("publish")["stateHz"] = args.state_hz
-    if args.map_hz is not None:
-        nested("publish")["mapHz"] = args.map_hz
-    if args.mode:
-        nested("robot")["mode"] = args.mode
-    if args.speed_multiplier is not None:
-        nested("robot")["speedMultiplier"] = args.speed_multiplier
-    if args.triangle_test:
-        nested("robot")["runTriangleTest"] = True
-    if args.log_level:
-        overrides["logLevel"] = args.log_level
-    if args.ack_timeout is not None:
-        overrides["ackTimeout"] = args.ack_timeout
-
-    return overrides
-
-
-def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run the RoboMop robot control client")
-    parser.add_argument("--config", type=str, help="Path to YAML configuration file")
-    parser.add_argument("--robot-id", type=str, help="Override the robot identifier")
-    parser.add_argument("--server-url", type=str, help="Override the backend server URL")
-    parser.add_argument("--api-key", type=str, help="API key used for authentication")
-    parser.add_argument("--namespace", type=str, help="Socket.IO namespace override")
+def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="RoboMop SLAM Triangle Navigation Manual Test")
     parser.add_argument(
-        "--socketio-path",
+        "--viewer",
         type=str,
-        help="Custom Socket.IO path on the backend (default: socket.io)",
+        default="ws://10.21.83.244:8765",
+        help="Triangle viewer WebSocket URL (ws://host:port). Empty to disable streaming.",
     )
     parser.add_argument(
-        "--transports",
-        nargs="+",
-        help="Comma separated list of allowed Socket.IO transports",
+        "--lidar-port",
+        type=str,
+        default="/dev/ttyUSB0",
+        help="Serial port for RPLIDAR (e.g., /dev/ttyUSB0 or COM3)",
     )
+    parser.add_argument("--lidar-baud", type=int, default=1_000_000, help="RPLIDAR baud rate")
+    parser.add_argument("--lidar-pwm", type=int, default=660, help="RPLIDAR motor PWM (A1/A2 models)")
     parser.add_argument(
-        "--state-hz",
+        "--lidar-timeout",
         type=float,
-        help="State publication frequency in Hz",
+        default=2.0,
+        help="RPLIDAR serial read timeout (s); increase if you see timeouts",
     )
+
+    parser.add_argument("--supply-voltage", type=float, default=DEFAULT_SUPPLY_VOLTAGE, help="Motor supply voltage (V)")
+    parser.add_argument("--loop-interval", type=float, default=DEFAULT_LOOP_INTERVAL, help="Motor loop interval (s)")
+    parser.add_argument("--wheel-radius", type=float, default=DEFAULT_WHEEL_RADIUS_M, help="Wheel radius (m)")
+    parser.add_argument("--track-width", type=float, default=DEFAULT_TRACK_WIDTH_M, help="Track width (m)")
+    parser.add_argument("--max-linear", type=float, default=DEFAULT_MAX_LINEAR, help="Max linear speed (m/s)")
+    parser.add_argument("--max-angular", type=float, default=DEFAULT_MAX_ANGULAR, help="Max angular speed (rad/s)")
+
+    parser.add_argument("--triangle-side", type=float, default=DEFAULT_TRIANGLE_SIDE_M, help="Triangle side length (m)")
+
+    parser.add_argument("--grid-resolution", type=float, default=DEFAULT_GRID_RESOLUTION, help="Grid resolution (m)")
+    parser.add_argument("--grid-width", type=int, default=DEFAULT_GRID_WIDTH, help="Grid width (cells)")
+    parser.add_argument("--grid-height", type=int, default=DEFAULT_GRID_HEIGHT, help="Grid height (cells)")
+    parser.add_argument("--grid-origin-x", type=float, default=DEFAULT_GRID_ORIGIN[0], help="Grid origin x (m)")
+    parser.add_argument("--grid-origin-y", type=float, default=DEFAULT_GRID_ORIGIN[1], help="Grid origin y (m)")
+    parser.add_argument("--grid-origin-theta", type=float, default=DEFAULT_GRID_ORIGIN[2], help="Grid origin theta (rad)")
+
+    parser.add_argument("--particles", type=int, default=DEFAULT_PARTICLES, help="Particle filter count (100-500)")
+    parser.add_argument("--lidar-max-range", type=float, default=DEFAULT_LIDAR_MAX_RANGE, help="LIDAR max range (m)")
     parser.add_argument(
-        "--map-hz",
+        "--map-warmup-seconds",
         type=float,
-        help="Map publication frequency in Hz (set to 0 to disable)",
+        default=DEFAULT_MAP_WARMUP_SECONDS,
+        help="Seconds to integrate stationary scans before navigation (0 to disable)",
     )
-    parser.add_argument("--mode", type=str, help="Initial robot mode override")
+    parser.add_argument("--use-imu", dest="use_imu", action="store_true", default=True, help="Enable IMU fusion")
+    parser.add_argument("--no-imu", dest="use_imu", action="store_false", help="Disable IMU")
+    parser.add_argument("--imu-rate", type=float, default=100.0, help="IMU sampling rate for fusion (Hz)")
+    parser.add_argument("--imu-warmup", type=float, default=10.0, help="IMU warmup duration before use (s)")
     parser.add_argument(
-        "--speed-multiplier",
+        "--gyro-scale",
         type=float,
-        help="Speed multiplier override between 0.1 and 1.0",
-    )
-    parser.add_argument("--log-level", type=str, help="Logging level override")
-    parser.add_argument(
-        "--ack-timeout",
-        type=float,
-        help="Command acknowledgement timeout in seconds",
+        default=1.0,
+        help="Manual multiplier for gyro readings (e.g. 0.5 if angle is 2x)",
     )
     parser.add_argument(
-        "--triangle-test",
+        "--use-mag",
         action="store_true",
-        help="Run triangle calibration test before connecting to backend",
+        default=False,
+        help="Enable magnetometer (disabled by default to prevent magnetic interference)",
     )
     parser.add_argument(
-        "--triangle-stream-url",
-        type=str,
-        help="WebSocket URL (ws://host:port) for triangle test live viewer (enables streaming)",
+        "--imu-heading-blend",
+        type=float,
+        default=0.6,
+        help="Blend factor between odometry (0.0) and IMU yaw (1.0)",
     )
-    return parser.parse_args()
+    parser.add_argument("--imu-bus", type=int, default=1, help="I2C bus number for IMU")
+    parser.add_argument("--imu-address", type=lambda x: int(x, 0), default=0x68, help="IMU I2C address (hex, default 0x68)")
+    parser.add_argument("--invert-imu", action="store_true", default=True, help="Invert IMU yaw polarity")
+
+    parser.add_argument(
+        "--log-level", type=str, default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"], help="Log level"
+    )
+    return parser.parse_args(argv)
 
 
-def main() -> None:
-    args = _parse_args()
-    overrides = _build_overrides(args)
-    config_path = args.config
-
-    config = load_config(config_path, overrides=overrides if overrides else None)
+def main(argv: Optional[Sequence[str]] = None) -> None:
+    args = parse_args(argv)
     logging.basicConfig(
-        level=getattr(logging, config.log_level.upper(), logging.INFO),
+        level=getattr(logging, args.log_level.upper()),
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
-    logger = logging.getLogger("robomop")
-    logger.info("Loaded configuration (robotId=%s)", config.websocket.robot_id)
-
-    app = RobotApp(config, logger, triangle_stream_url=args.triangle_stream_url)
-    try:
-        asyncio.run(_serve(app))
-    except socketio_exceptions.ConnectionError:
-        logger.error(
-            "Unable to establish WebSocket connection to %s. "
-            "Ensure the backend is running and reachable, or update the robot configuration.",
-            config.websocket.url,
-        )
-        sys.exit(1)
-    except KeyboardInterrupt:
-        logger.info("Interrupted by user, shutting down")
+    asyncio.run(run_test(args))
 
 
 if __name__ == "__main__":
     main()
+
+

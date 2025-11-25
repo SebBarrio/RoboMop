@@ -138,8 +138,8 @@ async def handle_client(websocket: ServerConnection):
     
     try:
         async for message in websocket:
-            # We assume any message received is a data update from the Robot
-            # We immediately relay it to all other clients (Browsers)
+            # Relay any message (from robot or browser) to all other clients
+            # This handles both robot state updates and browser control commands (e.g., mode changes)
             # logger.info(f"Received {len(message)} bytes from {client_type}")
             await broadcast_update(message, websocket)
             

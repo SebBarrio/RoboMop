@@ -417,7 +417,8 @@
                 <h2>Map Legend</h2>
                 <div class="legend-row"><div class="legend-dot" style="background: var(--accent)"></div>Robot</div>
                 <div class="legend-row"><div class="legend-dot" style="background: var(--danger)"></div>Trajectory</div>
-                <div class="legend-row"><div class="legend-dot" style="background: var(--accent); border: 1px dashed rgba(255,255,255,0.5)"></div>Path Plan</div>
+                <div class="legend-row"><div class="legend-dot" style="background: var(--accent); border: 1px dashed rgba(255,255,255,0.5)"></div>Nav Path</div>
+                <div class="legend-row"><div class="legend-dot" style="background: var(--success); border: 1px dashed rgba(255,255,255,0.5)"></div>Explore Path</div>
                 <div class="legend-row"><div class="legend-dot" style="background: cyan"></div>Lidar</div>
             </div>
         </div>
@@ -447,8 +448,16 @@
                 <h2>Control Mode</h2>
                 
                 <div class="btn-group">
-                    <button id="mode-auto-btn" class="btn active">Auto</button>
+                    <button id="mode-nav-btn" class="btn active">Navigation</button>
+                    <button id="mode-explore-btn" class="btn">Exploration</button>
                     <button id="mode-manual-btn" class="btn">Manual</button>
+                </div>
+                
+                <div id="exploration-status" style="display: none; margin-top: 12px; padding: 8px 12px; border-radius: var(--radius-sm); background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.3);">
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <span class="indicator success"></span>
+                        <span id="exploration-status-text" style="font-size: 12px; color: var(--success);">Exploring...</span>
+                    </div>
                 </div>
 
                 <div id="manual-controls" style="display: none; margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--glass-border);">
@@ -504,7 +513,11 @@
         map: null,
         imuHeadingDeg: null,
         connected: false,
-        lastUpdate: 0
+        lastUpdate: 0,
+        explorationPath: [],
+        explorationComplete: false,
+        frontierTarget: null,
+        controlMode: 'navigation'
     };
 
     // Theme Management
@@ -593,13 +606,16 @@
     let estopEnabled = false;
     
     // Manual Control Logic
-    let controlMode = 'auto';
+    let controlMode = 'navigation';
     let maxLinear = 0.2;
     let maxAngular = 0.5;
     
-    const modeAutoBtn = document.getElementById('mode-auto-btn');
+    const modeNavBtn = document.getElementById('mode-nav-btn');
+    const modeExploreBtn = document.getElementById('mode-explore-btn');
     const modeManualBtn = document.getElementById('mode-manual-btn');
     const manualControls = document.getElementById('manual-controls');
+    const explorationStatus = document.getElementById('exploration-status');
+    const explorationStatusText = document.getElementById('exploration-status-text');
     
     const linearSlider = document.getElementById('linear-slider');
     const angularSlider = document.getElementById('angular-slider');
@@ -607,14 +623,38 @@
     const angularVal = document.getElementById('angular-val');
 
     function updateModeUI() {
-        if (controlMode === 'auto') {
-            modeAutoBtn.classList.add('active');
-            modeManualBtn.classList.remove('active');
-            manualControls.style.display = 'none';
-        } else {
-            modeAutoBtn.classList.remove('active');
+        // Reset all buttons
+        modeNavBtn.classList.remove('active');
+        modeExploreBtn.classList.remove('active');
+        modeManualBtn.classList.remove('active');
+        
+        // Hide all mode-specific UI
+        manualControls.style.display = 'none';
+        explorationStatus.style.display = 'none';
+        
+        if (controlMode === 'navigation') {
+            modeNavBtn.classList.add('active');
+        } else if (controlMode === 'exploration') {
+            modeExploreBtn.classList.add('active');
+            explorationStatus.style.display = 'block';
+            updateExplorationStatus();
+        } else if (controlMode === 'manual') {
             modeManualBtn.classList.add('active');
             manualControls.style.display = 'block';
+        }
+    }
+    
+    function updateExplorationStatus() {
+        if (state.explorationComplete) {
+            explorationStatusText.innerText = 'Exploration Complete';
+            explorationStatus.style.background = 'rgba(59, 130, 246, 0.1)';
+            explorationStatus.style.borderColor = 'rgba(59, 130, 246, 0.3)';
+            explorationStatusText.style.color = 'var(--accent)';
+        } else {
+            explorationStatusText.innerText = 'Exploring...';
+            explorationStatus.style.background = 'rgba(16, 185, 129, 0.1)';
+            explorationStatus.style.borderColor = 'rgba(16, 185, 129, 0.3)';
+            explorationStatusText.style.color = 'var(--success)';
         }
     }
 
@@ -626,7 +666,8 @@
         }
     }
 
-    modeAutoBtn.addEventListener('click', () => setMode('auto'));
+    modeNavBtn.addEventListener('click', () => setMode('navigation'));
+    modeExploreBtn.addEventListener('click', () => setMode('exploration'));
     modeManualBtn.addEventListener('click', () => setMode('manual'));
 
     linearSlider.addEventListener('input', (e) => {
@@ -950,6 +991,21 @@
                     if (msg.lidarScan) state.lidarScan = msg.lidarScan;
                     if (msg.imuHeadingDeg !== undefined) state.imuHeadingDeg = msg.imuHeadingDeg;
                     
+                    // Exploration data
+                    if (msg.explorationPath) state.explorationPath = msg.explorationPath;
+                    if (msg.explorationComplete !== undefined) {
+                        state.explorationComplete = msg.explorationComplete;
+                        if (controlMode === 'exploration') updateExplorationStatus();
+                    }
+                    if (msg.frontierTarget) state.frontierTarget = msg.frontierTarget;
+                    else state.frontierTarget = null;
+                    
+                    // Sync control mode from robot
+                    if (msg.controlMode && msg.controlMode !== controlMode) {
+                        controlMode = msg.controlMode;
+                        updateModeUI();
+                    }
+                    
                     if (msg.map) {
                         await processMapData(msg.map);
                     }
@@ -1062,6 +1118,52 @@
         ctx.setLineDash([]);
     }
 
+    function drawExplorationPath() {
+        // Draw exploration path (green dotted line)
+        if (state.explorationPath.length >= 2) {
+            ctx.strokeStyle = '#10b981';  // Green
+            ctx.lineWidth = 2;
+            ctx.setLineDash([5, 5]);
+            ctx.beginPath();
+            const start = worldToScreen(state.explorationPath[0][0], state.explorationPath[0][1]);
+            ctx.moveTo(start.x, start.y);
+            for (let i = 1; i < state.explorationPath.length; i++) {
+                const p = worldToScreen(state.explorationPath[i][0], state.explorationPath[i][1]);
+                ctx.lineTo(p.x, p.y);
+            }
+            ctx.stroke();
+            ctx.setLineDash([]);
+        }
+        
+        // Draw frontier target (green circle with X)
+        if (state.frontierTarget) {
+            const p = worldToScreen(state.frontierTarget.x, state.frontierTarget.y);
+            
+            // Outer circle
+            ctx.strokeStyle = '#10b981';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, 10, 0, Math.PI * 2);
+            ctx.stroke();
+            
+            // Inner filled circle
+            ctx.fillStyle = 'rgba(16, 185, 129, 0.3)';
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, 8, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // X mark
+            ctx.strokeStyle = '#10b981';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(p.x - 5, p.y - 5);
+            ctx.lineTo(p.x + 5, p.y + 5);
+            ctx.moveTo(p.x + 5, p.y - 5);
+            ctx.lineTo(p.x - 5, p.y + 5);
+            ctx.stroke();
+        }
+    }
+
     function drawLidar() {
         if (!state.lidarScan.length) return;
         const theme = themeConfig[currentTheme];
@@ -1146,6 +1248,7 @@
         drawGrid();
         drawMap();
         drawPlannedPath();
+        drawExplorationPath();
         drawTrajectory();
         drawLidar();
         drawRobot();
