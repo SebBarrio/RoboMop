@@ -124,7 +124,7 @@ MAP_HZ: float = 1.0
 SLAM_HZ: float = 5.0
 
 # Optimization settings
-SLAM_SCAN_DOWNSAMPLE: int = 180  # Max points to process in SLAM (reduces CPU)
+SLAM_SCAN_DOWNSAMPLE: int = 360  # Max points to process in SLAM (reduces CPU)
 TRAJECTORY_STORE_INTERVAL: int = 5  # Store trajectory every N control iterations
 SLAM_MOTION_THRESHOLD_M: float = 0.01  # Skip SLAM if moved less than this (meters)
 SLAM_ROTATION_THRESHOLD_RAD: float = 0.02  # Skip SLAM if rotated less than this (radians)
