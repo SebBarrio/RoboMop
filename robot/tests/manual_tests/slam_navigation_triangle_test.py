@@ -118,7 +118,6 @@ DEFAULT_PARTICLES: int = 100  # Reduced from 200 for performance
 DEFAULT_LIDAR_MAX_RANGE: float = 5.0
 
 DEFAULT_MAP_WARMUP_SECONDS: float = 5.0
-DEFAULT_MAP_WARMUP_SCANS: int = 5
 
 STATE_HZ: float = 10.0
 MAP_HZ: float = 1.0
@@ -320,17 +319,15 @@ async def _warmup_map(
     lidar: RPLidarSerial,
     slam: SlamManager,
     warmup_seconds: float,
-    max_scans: int,
     logger: logging.Logger,
 ) -> int:
     """Integrate a few stationary scans into the map before navigation starts."""
 
-    if warmup_seconds <= 0.0 and max_scans <= 0:
+    if warmup_seconds <= 0.0:
         return 0
 
     logger.info(
-        "Warming up occupancy grid: up to %d scans or %.1f s",
-        max_scans if max_scans > 0 else -1,
+        "Warming up occupancy grid: integrating scans for %.1f s",
         warmup_seconds,
     )
     loop = asyncio.get_running_loop()
@@ -338,8 +335,6 @@ async def _warmup_map(
     deadline = time.time() + warmup_seconds if warmup_seconds > 0.0 else None
 
     while True:
-        if max_scans > 0 and scans_integrated >= max_scans:
-            break
         if deadline is not None and time.time() >= deadline:
             break
         scan = await lidar.read_scan()
@@ -1163,13 +1158,12 @@ async def run_test(args: argparse.Namespace) -> None:
         )
         warmup_entries.append(("imu", imu_warmup_task))
 
-    if args.map_warmup_seconds > 0.0 or args.map_warmup_scans > 0:
+    if args.map_warmup_seconds > 0.0:
         map_warmup_task = asyncio.create_task(
             _warmup_map(
                 lidar=lidar,
                 slam=slam,
                 warmup_seconds=args.map_warmup_seconds,
-                max_scans=args.map_warmup_scans,
                 logger=logger,
             ),
             name="map-warmup",
@@ -1364,13 +1358,6 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         default=DEFAULT_MAP_WARMUP_SECONDS,
         help="Seconds to integrate stationary scans before navigation (0 to disable)",
     )
-    parser.add_argument(
-        "--map-warmup-scans",
-        type=int,
-        default=DEFAULT_MAP_WARMUP_SCANS,
-        help="Maximum number of scans to integrate during warmup (0 to disable)",
-    )
-
     parser.add_argument("--use-imu", dest="use_imu", action="store_true", default=True, help="Enable IMU fusion")
     parser.add_argument("--no-imu", dest="use_imu", action="store_false", help="Disable IMU")
     parser.add_argument("--imu-rate", type=float, default=100.0, help="IMU sampling rate for fusion (Hz)")
