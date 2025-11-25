@@ -479,102 +479,6 @@ class TriangleSlamNavigator:
         finally:
             self._running = False
 
-    async def warmup_map(self, duration_s: float, *, min_scans: int = 5) -> None:
-        """Integrate scans while stationary to seed the SLAM map."""
-        if duration_s <= 0.0 and min_scans <= 0:
-            self._logger.info(
-                "Map warmup skipped (duration=%.1fs, min_scans=%d)",
-                duration_s,
-                min_scans,
-            )
-            return
-        if self._running:
-            self._logger.warning("Cannot warm up map while navigator is running")
-            return
-
-        duration_s = max(0.0, duration_s)
-        min_scans = max(0, min_scans)
-        deadline = time.perf_counter() + duration_s
-        scans = 0
-        total_points = 0
-        control = np.zeros(3, dtype=float)
-        process_covariance = np.diag([1e-4, 1e-4, 1e-3])
-        completion_before = float(self._slam.occupancy_grid.completion_ratio)
-
-        self._logger.info(
-            "Starting map warmup: duration=%.1fs, min_scans=%d",
-            duration_s,
-            min_scans,
-        )
-
-        while ((duration_s > 0.0 and time.perf_counter() < deadline) or (scans < min_scans)):
-            try:
-                scan = await self._lidar.read_scan()
-            except Exception as exc:
-                self._logger.warning("Map warmup scan failed: %s", exc)
-                await asyncio.sleep(0.05)
-                continue
-
-            if not scan:
-                continue
-
-            filtered = [
-                m
-                for m in scan
-                if m.quality > 0 and 0.0 < m.distance_m <= self._lidar_max_range
-            ]
-            if not filtered:
-                continue
-
-            scan_array = np.array(
-                [[m.angle_radians, m.distance_m] for m in filtered],
-                dtype=float,
-            )
-
-            try:
-                slam_mean, _ = self._slam.step(
-                    control=control,
-                    process_covariance=process_covariance,
-                    scan=scan_array,
-                )
-            except Exception as exc:
-                self._logger.debug("Map warmup SLAM step failed: %s", exc)
-                await asyncio.sleep(0.01)
-                continue
-
-            warmed_pose = Pose2D(
-                float(slam_mean[0]),
-                float(slam_mean[1]),
-                float(slam_mean[2]),
-            )
-            self._slam_pose = warmed_pose
-            self._set_pose_snapshot(warmed_pose)
-            self._latest_scan = filtered
-            scans += 1
-            total_points += len(filtered)
-
-        if scans == 0:
-            self._logger.warning("Map warmup finished without any usable scans")
-            return
-
-        completion_after = float(self._slam.occupancy_grid.completion_ratio)
-        avg_points = total_points / scans if scans > 0 else 0.0
-        self._logger.info(
-            "Map warmup complete: scans=%d avg_points=%.0f "
-            "map_completion=%.2f%% -> %.2f%%",
-            scans,
-            avg_points,
-            100.0 * completion_before,
-            100.0 * completion_after,
-        )
-
-        if self._viewer is not None:
-            try:
-                await self._send_state_update()
-                await self._send_map_update()
-            except Exception as exc:
-                self._logger.debug("Viewer update after map warmup failed: %s", exc)
-
     async def _run_all_tasks(self) -> None:
         tasks = [
             asyncio.create_task(self._run_control_thread(), name="control-loop"),
@@ -1199,6 +1103,9 @@ async def run_test(args: argparse.Namespace) -> None:
     # Close the loop visually
     planned.append(planned[0])
 
+    logger.info("Starting LIDAR scan...")
+    await lidar.start()
+
     # Navigator
     navigator = TriangleSlamNavigator(
         lidar=lidar,
@@ -1233,17 +1140,6 @@ async def run_test(args: argparse.Namespace) -> None:
                     navigator.set_manual_velocity(lin, ang)
 
         viewer.set_callback(on_viewer_message)
-
-    logger.info("Starting LIDAR scan...")
-    await lidar.start()
-
-    try:
-        await navigator.warmup_map(
-            args.map_warmup,
-            min_scans=args.map_warmup_min_scans,
-        )
-    except Exception:
-        logger.exception("Map warmup failed; continuing without pre-seeded map")
 
     # Graceful shutdown handler
     stop_event = asyncio.Event()
@@ -1375,18 +1271,6 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument("--imu-bus", type=int, default=1, help="I2C bus number for IMU")
     parser.add_argument("--imu-address", type=lambda x: int(x, 0), default=0x68, help="IMU I2C address (hex, default 0x68)")
     parser.add_argument("--invert-imu", action="store_true", default=True, help="Invert IMU yaw polarity")
-    parser.add_argument(
-        "--map-warmup",
-        type=float,
-        default=10.0,
-        help="Duration to integrate LIDAR scans before motion (s). Set to 0 to skip.",
-    )
-    parser.add_argument(
-        "--map-warmup-min-scans",
-        type=int,
-        default=5,
-        help="Minimum number of scans required during map warmup (0 to disable).",
-    )
 
     parser.add_argument(
         "--log-level", type=str, default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"], help="Log level"
