@@ -121,6 +121,10 @@ STATE_HZ: float = 10.0
 MAP_HZ: float = 1.0
 SLAM_HZ: float = 5.0
 
+# Optimization settings
+SLAM_SCAN_DOWNSAMPLE: int = 360  # Max points to process in SLAM (reduces CPU)
+TRAJECTORY_STORE_INTERVAL: int = 5  # Store trajectory every N control iterations
+
 
 # -----------------------------
 # Utility data structures
@@ -430,6 +434,9 @@ class TriangleSlamNavigator:
         self._control_mode: str = "auto"  # "auto" or "manual"
         self._manual_cmd: Tuple[float, float] = (0.0, 0.0)  # linear, angular
         self._control_lock = threading.Lock()
+        
+        # Optimization: trajectory storage counter to reduce lock contention
+        self._trajectory_store_counter: int = 0
 
     def set_control_mode(self, mode: str) -> None:
         with self._control_lock:
@@ -573,7 +580,12 @@ class TriangleSlamNavigator:
         self._robot.reset_pose(fused)
         
         self._set_pose_snapshot(fused)
-        self._append_trajectory(fused)
+        
+        # Optimization: Only store trajectory every N iterations to reduce lock contention
+        self._trajectory_store_counter += 1
+        if self._trajectory_store_counter >= TRAJECTORY_STORE_INTERVAL:
+            self._trajectory_store_counter = 0
+            self._append_trajectory(fused)
 
     def _update_pure_pursuit_control(self) -> None:
         if not self._vertices:
@@ -694,24 +706,32 @@ class TriangleSlamNavigator:
         # Initialize last pose for odometry delta
         fused = self._get_pose_snapshot()
         self._last_pose_for_slam = Pose2D(fused.x, fused.y, fused.theta)
+        
+        loop = asyncio.get_running_loop()
+        
         while self._running:
             # Read one full revolution
             scan = await self._lidar.read_scan()
             self._latest_scan = scan
             if not scan:
                 continue
-            # Build scan array
+            
+            # Build scan array with quality filter
             # Filter out low-quality measurements (quality=0) to avoid "ghost" obstacles/rays
+            filtered_scan = [m for m in scan if m.quality > 0]
+            if not filtered_scan:
+                continue
+            
+            # Optimization: Downsample scan to reduce SLAM computation
+            if len(filtered_scan) > SLAM_SCAN_DOWNSAMPLE:
+                step = len(filtered_scan) / SLAM_SCAN_DOWNSAMPLE
+                filtered_scan = [filtered_scan[int(i * step)] for i in range(SLAM_SCAN_DOWNSAMPLE)]
+            
             scan_array = np.array(
-                [
-                    [m.angle_radians, max(0.0, float(m.distance_m))]
-                    for m in scan
-                    if m.quality > 0
-                ],
+                [[m.angle_radians, max(0.0, float(m.distance_m))] for m in filtered_scan],
                 dtype=float,
             )
-            if scan_array.size == 0:
-                continue
+            
             # Compute body-frame odometry delta since last SLAM step
             assert self._last_pose_for_slam is not None
             prev = self._last_pose_for_slam
@@ -731,12 +751,16 @@ class TriangleSlamNavigator:
             side_sigma = max(1e-4, 0.1 * abs(dx_body))
             ang_sigma = max(1e-3, 0.2 * abs(dtheta))
             cov = np.diag([lin_sigma**2, side_sigma**2, ang_sigma**2])
-            # Update SLAM
+            
+            # Optimization: Run SLAM step in thread pool to not block event loop
             try:
-                slam_mean, _ = self._slam.step(
-                    control=control,
-                    process_covariance=cov,
-                    scan=scan_array,
+                slam_mean, _ = await loop.run_in_executor(
+                    None,  # Use default thread pool
+                    lambda: self._slam.step(
+                        control=control,
+                        process_covariance=cov,
+                        scan=scan_array,
+                    )
                 )
                 # Update SLAM pose for visualization
                 self._slam_pose = Pose2D(slam_mean[0], slam_mean[1], slam_mean[2])
@@ -751,18 +775,25 @@ class TriangleSlamNavigator:
             return
         state_period = self._state_period
         map_period = self._map_period
-        next_state = asyncio.get_running_loop().time()
+        loop = asyncio.get_running_loop()
+        next_state = loop.time()
         next_map = next_state
         self._logger.info("Starting viewer loop: state=%.1f Hz, map=%.1f Hz", 1.0 / state_period, 1.0 / map_period)
         while self._running:
-            now = asyncio.get_running_loop().time()
+            now = loop.time()
             if now >= next_state:
                 await self._send_state_update()
                 next_state = now + state_period
             if now >= next_map:
                 await self._send_map_update()
                 next_map = now + map_period
-            await asyncio.sleep(0.01)
+            
+            # Optimization: Calculate exact sleep time instead of busy-polling
+            time_to_state = max(0.0, next_state - loop.time())
+            time_to_map = max(0.0, next_map - loop.time())
+            sleep_time = min(time_to_state, time_to_map)
+            # Ensure minimum sleep to prevent busy loop, but allow event loop to process
+            await asyncio.sleep(max(0.001, sleep_time))
 
     async def _send_state_update(self) -> None:
         if self._viewer is None:
@@ -796,9 +827,18 @@ class TriangleSlamNavigator:
         if self._viewer is None:
             return
         grid: OccupancyGrid = self._slam.occupancy_grid
-        data_bytes = grid.array.tobytes(order="C")
-        compressed = gzip.compress(data_bytes)
-        b64 = base64.b64encode(compressed).decode("ascii")
+        
+        # Optimization: Run compression in thread pool to not block event loop
+        # 800x800 grid = 640KB, gzip is CPU-intensive
+        loop = asyncio.get_running_loop()
+        
+        def _compress_map() -> str:
+            data_bytes = grid.array.tobytes(order="C")
+            compressed = gzip.compress(data_bytes, compresslevel=1)  # Faster compression
+            return base64.b64encode(compressed).decode("ascii")
+        
+        b64 = await loop.run_in_executor(None, _compress_map)
+        
         payload: Dict[str, Any] = {
             "type": "triangle_update",
             "map": {
