@@ -337,27 +337,183 @@ class SlamManager:
         return world_x, world_y, heading + offset_heading
 
     def _update_map(self, pose: np.ndarray, scan: ScanArray, sensor_pose: np.ndarray) -> None:
+        """Vectorized map update using NumPy for performance."""
         self._distance_cache_dirty = True
         sensor_x, sensor_y, sensor_heading = self._sensor_in_world(pose, sensor_pose)
-        for angle, distance in scan:
-            if not math.isfinite(distance) or distance <= 0.0:
-                continue
+        
+        if scan.shape[0] == 0:
+            return
+        
+        # Filter valid measurements
+        angles = scan[:, 0]
+        distances = scan[:, 1]
+        valid_mask = np.isfinite(distances) & (distances > 0.0)
+        
+        if not np.any(valid_mask):
+            return
+        
+        angles = angles[valid_mask]
+        distances = distances[valid_mask]
+        
+        # Clip distances to max range
+        clipped_distances = np.minimum(distances, self._max_range)
+        
+        # Vectorized hit point calculation
+        global_angles = sensor_heading + angles
+        hit_x = sensor_x + clipped_distances * np.cos(global_angles)
+        hit_y = sensor_y + clipped_distances * np.sin(global_angles)
+        
+        # Convert to grid coordinates
+        origin_x, origin_y, _ = self._grid.origin
+        res = self._grid.resolution
+        h, w = self._grid.height, self._grid.width
+        
+        hit_cols = np.floor((hit_x - origin_x) / res).astype(np.int32)
+        hit_rows = np.floor((hit_y - origin_y) / res).astype(np.int32)
+        
+        # Sensor position in grid coordinates
+        sensor_col = int(math.floor((sensor_x - origin_x) / res))
+        sensor_row = int(math.floor((sensor_y - origin_y) / res))
+        
+        # Vectorized ray tracing for free cells
+        self._update_free_cells_vectorized(
+            sensor_row, sensor_col, hit_rows, hit_cols, h, w
+        )
+        
+        # Update occupied cells (only for hits within max range)
+        within_range = distances <= self._max_range
+        occ_rows = hit_rows[within_range]
+        occ_cols = hit_cols[within_range]
+        
+        # Filter in-bounds occupied cells
+        occ_in_bounds = (occ_rows >= 0) & (occ_rows < h) & (occ_cols >= 0) & (occ_cols < w)
+        occ_rows = occ_rows[occ_in_bounds]
+        occ_cols = occ_cols[occ_in_bounds]
+        
+        if occ_rows.size > 0:
+            self._batch_apply_log_odds(occ_rows, occ_cols, self._l_occ_increment)
+    
+    def _update_free_cells_vectorized(
+        self,
+        sensor_row: int,
+        sensor_col: int,
+        hit_rows: np.ndarray,
+        hit_cols: np.ndarray,
+        h: int,
+        w: int,
+    ) -> None:
+        """Fully vectorized ray tracing using fixed-step line sampling.
+        
+        Uses NumPy broadcasting to process all rays simultaneously without Python loops.
+        Samples each ray at fixed intervals, trading some accuracy for massive speedup.
+        """
+        n_rays = hit_rows.shape[0]
+        if n_rays == 0:
+            return
+        
+        # Calculate ray vectors
+        dx = (hit_cols - sensor_col).astype(np.float32)
+        dy = (hit_rows - sensor_row).astype(np.float32)
+        
+        # Use fixed number of samples per ray for vectorization
+        # More samples = better coverage but slower
+        # 20 samples covers ~1m at 5cm resolution
+        max_samples = 20
+        
+        # Parameter t from 0 (exclusive) to ~1 (exclusive of endpoint)
+        # Shape: (max_samples,)
+        t = np.linspace(0.05, 0.95, max_samples, dtype=np.float32)
+        
+        # Broadcast to compute all sample points at once
+        # dx shape: (n_rays,), t shape: (max_samples,)
+        # Result shape: (n_rays, max_samples)
+        sample_cols = sensor_col + np.outer(dx, t)  # (n_rays, max_samples)
+        sample_rows = sensor_row + np.outer(dy, t)  # (n_rays, max_samples)
+        
+        # Convert to integer grid coordinates
+        sample_cols = sample_cols.astype(np.int32)
+        sample_rows = sample_rows.astype(np.int32)
+        
+        # Flatten for batch processing
+        flat_cols = sample_cols.ravel()
+        flat_rows = sample_rows.ravel()
+        
+        # Filter in-bounds cells
+        valid = (flat_rows >= 0) & (flat_rows < h) & (flat_cols >= 0) & (flat_cols < w)
+        free_rows = flat_rows[valid]
+        free_cols = flat_cols[valid]
+        
+        if free_rows.size > 0:
+            self._batch_apply_log_odds(free_rows, free_cols, self._l_free_increment)
+    
+    def _batch_apply_log_odds(
+        self, rows: np.ndarray, cols: np.ndarray, delta: float
+    ) -> None:
+        """Batch update log-odds grid and apply hysteresis classification."""
+        if rows.size == 0:
+            return
+        
+        # Use np.add.at for accumulation (handles duplicate indices correctly)
+        np.add.at(self._log_odds, (rows, cols), delta)
+        
+        # Clamp log-odds
+        np.clip(self._log_odds, self._l_min, self._l_max, out=self._log_odds)
+        
+        # Get unique cells that were updated for hysteresis classification
+        # Use a set-like approach with linear indices for efficiency
+        linear_idx = rows * self._grid.width + cols
+        unique_idx = np.unique(linear_idx)
+        unique_rows = unique_idx // self._grid.width
+        unique_cols = unique_idx % self._grid.width
+        
+        # Batch hysteresis classification
+        self._batch_classify_cells(unique_rows, unique_cols)
 
-            clipped_distance = min(distance, self._max_range)
-            hit_x = sensor_x + clipped_distance * math.cos(sensor_heading + angle)
-            hit_y = sensor_y + clipped_distance * math.sin(sensor_heading + angle)
-
-            free_cells = self._ray_cells(sensor_x, sensor_y, hit_x, hit_y, include_endpoint=False)
-            for row, col in free_cells:
-                self._apply_log_odds_update(row, col, self._l_free_increment)
-
-            if distance <= self._max_range:
-                hit_cell = self._world_to_cell(hit_x, hit_y)
-                if hit_cell is not None:
-                    row, col = hit_cell
-                    self._apply_log_odds_update(row, col, self._l_occ_increment)
+    def _batch_classify_cells(self, rows: np.ndarray, cols: np.ndarray) -> None:
+        """Vectorized hysteresis classification for updated cells."""
+        if rows.size == 0:
+            return
+        
+        # Get current log-odds and grid values for these cells
+        log_odds_vals = self._log_odds[rows, cols]
+        grid_vals = self._grid.array[rows, cols]
+        
+        # Classify current states
+        is_occupied = grid_vals >= self._occupied_value
+        is_free = (grid_vals > 0) & (grid_vals < self._occupied_value)
+        is_unknown = ~is_occupied & ~is_free
+        
+        # Determine transitions based on hysteresis thresholds
+        strong_occ_evidence = log_odds_vals >= self._l_occ_threshold
+        strong_free_evidence = log_odds_vals <= self._l_free_threshold
+        
+        # Occupied -> Free (only with strong contrary evidence)
+        occ_to_free = is_occupied & strong_free_evidence
+        
+        # Free -> Occupied (only with strong evidence)
+        free_to_occ = is_free & strong_occ_evidence
+        
+        # Unknown -> Occupied
+        unknown_to_occ = is_unknown & strong_occ_evidence
+        
+        # Unknown -> Free
+        unknown_to_free = is_unknown & strong_free_evidence
+        
+        # Apply changes using direct array assignment (faster than set_cell)
+        if np.any(occ_to_free):
+            self._grid.array[rows[occ_to_free], cols[occ_to_free]] = self._free_value
+        
+        if np.any(free_to_occ):
+            self._grid.array[rows[free_to_occ], cols[free_to_occ]] = self._occupied_value
+        
+        if np.any(unknown_to_occ):
+            self._grid.array[rows[unknown_to_occ], cols[unknown_to_occ]] = self._occupied_value
+        
+        if np.any(unknown_to_free):
+            self._grid.array[rows[unknown_to_free], cols[unknown_to_free]] = self._free_value
 
     def _apply_log_odds_update(self, row: int, col: int, delta: float) -> None:
+        """Single-cell log-odds update (kept for compatibility, prefer batch version)."""
         # Integrate evidence with clamping
         updated = float(self._log_odds[row, col] + delta)
         if updated > self._l_max:
