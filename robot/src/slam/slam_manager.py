@@ -202,8 +202,8 @@ class SlamManager:
         # Log-odds mapping parameters (with hysteresis)
         l_occ_increment: float = 0.9,
         l_free_increment: float = -0.7,
-        l_min: float = -3.0,
-        l_max: float = 3.0,
+        l_min: float = -10.0,
+        l_max: float = 10.0,
         l_occ_threshold: float = 0.6,
         l_free_threshold: float = -0.6,
     ) -> None:
