@@ -109,9 +109,9 @@ DEFAULT_MAX_ANGULAR: float = 0.8
 
 DEFAULT_TRIANGLE_SIDE_M: float = 1.0
 
-DEFAULT_GRID_RESOLUTION: float = 0.10  # 5 cm
-DEFAULT_GRID_WIDTH: int = 200  # Reduced from 800 for performance (20m x 20m coverage)
-DEFAULT_GRID_HEIGHT: int = 200  # Reduced from 800 for performance
+DEFAULT_GRID_RESOLUTION: float = 0.20  # 5 cm
+DEFAULT_GRID_WIDTH: int = 100  # Reduced from 800 for performance (20m x 20m coverage)
+DEFAULT_GRID_HEIGHT: int = 100  # Reduced from 800 for performance
 DEFAULT_GRID_ORIGIN: Tuple[float, float, float] = (-10.0, -10.0, 0.0)  # Adjusted for smaller grid
 
 DEFAULT_PARTICLES: int = 100  # Reduced from 200 for performance
