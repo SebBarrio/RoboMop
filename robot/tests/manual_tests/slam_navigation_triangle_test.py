@@ -112,10 +112,13 @@ DEFAULT_TRIANGLE_SIDE_M: float = 1.0
 DEFAULT_GRID_RESOLUTION: float = 0.10  # 5 cm
 DEFAULT_GRID_WIDTH: int = 200  # Reduced from 800 for performance (20m x 20m coverage)
 DEFAULT_GRID_HEIGHT: int = 200  # Reduced from 800 for performance
-DEFAULT_GRID_ORIGIN: Tuple[float, float, float] = (0.0, 0.0, 0.0)  # Adjusted for smaller grid
+DEFAULT_GRID_ORIGIN: Tuple[float, float, float] = (-10.0, -10.0, 0.0)  # Adjusted for smaller grid
 
 DEFAULT_PARTICLES: int = 100  # Reduced from 200 for performance
 DEFAULT_LIDAR_MAX_RANGE: float = 5.0
+
+DEFAULT_MAP_WARMUP_SECONDS: float = 5.0
+DEFAULT_MAP_WARMUP_SCANS: int = 5
 
 STATE_HZ: float = 10.0
 MAP_HZ: float = 1.0
@@ -310,6 +313,62 @@ async def _initialize_and_warmup_imu(
     bias = _mean_angle(yaw_samples)
     logger.info("IMU warmup complete (yaw bias %.3f rad)", bias)
     return bias
+
+
+async def _warmup_map(
+    *,
+    lidar: RPLidarSerial,
+    slam: SlamManager,
+    warmup_seconds: float,
+    max_scans: int,
+    logger: logging.Logger,
+) -> int:
+    """Integrate a few stationary scans into the map before navigation starts."""
+
+    if warmup_seconds <= 0.0 and max_scans <= 0:
+        return 0
+
+    logger.info(
+        "Warming up occupancy grid: up to %d scans or %.1f s",
+        max_scans if max_scans > 0 else -1,
+        warmup_seconds,
+    )
+    loop = asyncio.get_running_loop()
+    scans_integrated = 0
+    deadline = time.time() + warmup_seconds if warmup_seconds > 0.0 else None
+
+    while True:
+        if max_scans > 0 and scans_integrated >= max_scans:
+            break
+        if deadline is not None and time.time() >= deadline:
+            break
+        scan = await lidar.read_scan()
+        filtered = [m for m in scan if m.quality > 0]
+        if not filtered:
+            continue
+        if len(filtered) > SLAM_SCAN_DOWNSAMPLE:
+            step = len(filtered) / SLAM_SCAN_DOWNSAMPLE
+            filtered = [filtered[int(i * step)] for i in range(SLAM_SCAN_DOWNSAMPLE)]
+        scan_array = np.array(
+            [[m.angle_radians, max(0.0, float(m.distance_m))] for m in filtered],
+            dtype=float,
+        )
+        control = np.zeros(3, dtype=float)
+        covariance = np.diag(np.array([1e-5, 1e-5, 1e-4], dtype=float))
+        try:
+            await loop.run_in_executor(
+                None,
+                lambda: slam.step(
+                    control=control,
+                    process_covariance=covariance,
+                    scan=scan_array,
+                ),
+            )
+            scans_integrated += 1
+        except Exception:
+            logger.exception("Map warmup SLAM step failed; continuing")
+    logger.info("Map warmup complete (%d scans integrated)", scans_integrated)
+    return scans_integrated
 
 
 class ImuSampler(threading.Thread):
@@ -1049,27 +1108,7 @@ async def run_test(args: argparse.Namespace) -> None:
                 gyro_scale_correction=args.gyro_scale,
                 enable_magnetometer=args.use_mag,
             )
-            yaw_bias = await _initialize_and_warmup_imu(
-                imu,
-                warmup_seconds=args.imu_warmup,
-                sample_rate_hz=args.imu_rate,
-                logger=logger,
-                invert=args.invert_imu,
-            )
-            heading_fusion = HeadingFusion(
-                blend=args.imu_heading_blend,
-                yaw_bias=yaw_bias,
-                invert=args.invert_imu,
-            )
-            imu_sampler = ImuSampler(
-                imu=imu,
-                fusion=heading_fusion,
-                sample_rate_hz=args.imu_rate,
-                logger=logger,
-            )
-            imu_sampler.start()
         except Exception:
-            heading_fusion = None
             imu = None
             logger.exception("Failed to initialize IMU; continuing without IMU fusion")
 
@@ -1105,6 +1144,80 @@ async def run_test(args: argparse.Namespace) -> None:
 
     logger.info("Starting LIDAR scan...")
     await lidar.start()
+
+    imu_warmup_task: Optional[asyncio.Task[float]] = None
+    map_warmup_task: Optional[asyncio.Task[int]] = None
+    warmup_entries: list[tuple[str, asyncio.Task[Any]]] = []
+    yaw_bias: Optional[float] = None
+
+    if imu is not None:
+        imu_warmup_task = asyncio.create_task(
+            _initialize_and_warmup_imu(
+                imu,
+                warmup_seconds=args.imu_warmup,
+                sample_rate_hz=args.imu_rate,
+                logger=logger,
+                invert=args.invert_imu,
+            ),
+            name="imu-warmup",
+        )
+        warmup_entries.append(("imu", imu_warmup_task))
+
+    if args.map_warmup_seconds > 0.0 or args.map_warmup_scans > 0:
+        map_warmup_task = asyncio.create_task(
+            _warmup_map(
+                lidar=lidar,
+                slam=slam,
+                warmup_seconds=args.map_warmup_seconds,
+                max_scans=args.map_warmup_scans,
+                logger=logger,
+            ),
+            name="map-warmup",
+        )
+        warmup_entries.append(("map", map_warmup_task))
+
+    if warmup_entries:
+        logger.info(
+            "Waiting for warmup tasks (map=%s, imu=%s)...",
+            bool(map_warmup_task),
+            bool(imu_warmup_task),
+        )
+        warmup_results = await asyncio.gather(
+            *(task for _, task in warmup_entries),
+            return_exceptions=True,
+        )
+        for (name, _), result in zip(warmup_entries, warmup_results):
+            if isinstance(result, Exception):
+                logger.warning("%s warmup failed: %s", name.upper(), result)
+                if name == "imu" and imu is not None:
+                    await asyncio.to_thread(_close_imu_bus, imu, logger)
+                    imu = None
+                continue
+            if name == "imu":
+                yaw_bias = float(result)
+            elif name == "map":
+                logger.info("Map warmup integrated %d scans", int(result))
+    else:
+        logger.info("Map/IMU warmup disabled; starting navigation immediately")
+
+    if imu is not None:
+        try:
+            heading_fusion = HeadingFusion(
+                blend=args.imu_heading_blend,
+                yaw_bias=0.0 if yaw_bias is None else yaw_bias,
+                invert=args.invert_imu,
+            )
+            imu_sampler = ImuSampler(
+                imu=imu,
+                fusion=heading_fusion,
+                sample_rate_hz=args.imu_rate,
+                logger=logger,
+            )
+            imu_sampler.start()
+        except Exception:
+            heading_fusion = None
+            imu_sampler = None
+            logger.exception("Failed to start IMU sampler; continuing without IMU fusion")
 
     # Navigator
     navigator = TriangleSlamNavigator(
@@ -1245,6 +1358,18 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
 
     parser.add_argument("--particles", type=int, default=DEFAULT_PARTICLES, help="Particle filter count (100-500)")
     parser.add_argument("--lidar-max-range", type=float, default=DEFAULT_LIDAR_MAX_RANGE, help="LIDAR max range (m)")
+    parser.add_argument(
+        "--map-warmup-seconds",
+        type=float,
+        default=DEFAULT_MAP_WARMUP_SECONDS,
+        help="Seconds to integrate stationary scans before navigation (0 to disable)",
+    )
+    parser.add_argument(
+        "--map-warmup-scans",
+        type=int,
+        default=DEFAULT_MAP_WARMUP_SCANS,
+        help="Maximum number of scans to integrate during warmup (0 to disable)",
+    )
 
     parser.add_argument("--use-imu", dest="use_imu", action="store_true", default=True, help="Enable IMU fusion")
     parser.add_argument("--no-imu", dest="use_imu", action="store_false", help="Disable IMU")
