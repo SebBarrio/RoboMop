@@ -135,6 +135,8 @@ SLAM_ROTATION_THRESHOLD_RAD: float = 0.02  # Skip SLAM if rotated less than this
 EXPLORATION_REPLAN_INTERVAL: float = 3.0  # Seconds between frontier re-planning
 EXPLORATION_INFLATION_RADIUS: int = 2  # Cells to inflate around obstacles
 
+# To keep WebSocket payloads bounded, only publish this many frontier samples
+EXPLORATION_FRONTIER_PUBLISH_LIMIT: int = 300
 
 # -----------------------------
 # Utility data structures
@@ -512,6 +514,8 @@ class TriangleSlamNavigator:
         self._current_frontier: Optional[Frontier] = None
         self._last_replan_time: float = 0.0
         self._exploration_complete: bool = False
+        self._frontier_points: List[Tuple[float, float]] = []
+        self._frontier_lock = threading.Lock()
 
     def set_control_mode(self, mode: str) -> None:
         with self._control_lock:
@@ -535,11 +539,13 @@ class TriangleSlamNavigator:
                     self._current_frontier = None
                     self._last_replan_time = 0.0
                     self._exploration_complete = False
+                    self._clear_frontiers()
                 elif old_mode == "exploration":
                     # Clear exploration state when leaving exploration mode
                     self._exploration_path = []
                     self._exploration_waypoint_idx = 0
                     self._current_frontier = None
+                    self._clear_frontiers()
 
     def set_manual_velocity(self, linear: float, angular: float) -> None:
         with self._control_lock:
@@ -837,6 +843,7 @@ class TriangleSlamNavigator:
         start = (pose.x, pose.y)
         
         result = self._astar_planner.plan_to_nearest_frontier(start)
+        self._capture_frontiers_from_planner()
         
         if result is None:
             # No reachable frontiers - exploration complete
@@ -884,6 +891,43 @@ class TriangleSlamNavigator:
     def _get_recent_trajectory(self) -> List[Tuple[float, float]]:
         with self._trajectory_lock:
             return list(self._trajectory)
+
+    def _set_frontiers(self, points: Sequence[Tuple[float, float]]) -> None:
+        with self._frontier_lock:
+            self._frontier_points = list(points)
+
+    def _get_frontiers(self) -> List[Tuple[float, float]]:
+        with self._frontier_lock:
+            return list(self._frontier_points)
+
+    def _clear_frontiers(self) -> None:
+        self._set_frontiers([])
+
+    def _capture_frontiers_from_planner(self) -> None:
+        """Convert planner frontier cells into world coordinates for visualization."""
+        cells = sorted(self._astar_planner.frontier_cells)
+        if not cells:
+            self._clear_frontiers()
+            return
+
+        grid = self._slam.occupancy_grid
+        origin_x, origin_y, _ = grid.origin
+        resolution = grid.resolution
+
+        points: List[Tuple[float, float]] = []
+        for row, col in cells:
+            x = origin_x + (col + 0.5) * resolution
+            y = origin_y + (row + 0.5) * resolution
+            points.append((x, y))
+
+        if len(points) > EXPLORATION_FRONTIER_PUBLISH_LIMIT:
+            step = len(points) / EXPLORATION_FRONTIER_PUBLISH_LIMIT
+            sampled: List[Tuple[float, float]] = []
+            for idx in range(EXPLORATION_FRONTIER_PUBLISH_LIMIT):
+                sampled.append(points[int(idx * step)])
+            points = sampled
+
+        self._set_frontiers(points)
 
     async def _slam_loop(self) -> None:
         """Lower-rate loop that waits for full LIDAR scans and updates SLAM."""
@@ -1001,6 +1045,8 @@ class TriangleSlamNavigator:
         # Use SLAM pose if available for visualization alignment with map
         display_pose = self._slam_pose if self._slam_pose is not None else pose
         scan_subset = self._downsample_scan(self._latest_scan, max_samples=360)
+        with self._control_lock:
+            control_mode = self._control_mode
         
         payload: Dict[str, Any] = {
             "type": "triangle_update",
@@ -1012,7 +1058,7 @@ class TriangleSlamNavigator:
                 [float(m.angle_radians), float(max(0.0, m.distance_m))] for m in scan_subset
             ],
             "odomPose": {"x": pose.x, "y": pose.y, "theta": pose.theta},
-            "controlMode": self._control_mode,
+            "controlMode": control_mode,
         }
         
         # Add exploration data
@@ -1023,6 +1069,8 @@ class TriangleSlamNavigator:
                 "x": self._current_frontier.world[0],
                 "y": self._current_frontier.world[1],
             }
+        
+        payload["frontiers"] = self._get_frontiers() if control_mode == "exploration" else []
         
         if self._imu_sampler is not None:
             imu_heading = self._imu_sampler.latest_heading_deg()

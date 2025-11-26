@@ -67,6 +67,8 @@ class ViewerHttpHandler(http.server.SimpleHTTPRequestHandler):
             # Serve the specific HTML file
             self.send_response(200)
             self.send_header("Content-type", "text/html")
+            self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
+            self.send_header("Pragma", "no-cache")
             self.end_headers()
             
             html_path = CURRENT_DIR / HTML_FILE

@@ -517,6 +517,7 @@
         explorationPath: [],
         explorationComplete: false,
         frontierTarget: null,
+        frontiers: [],
         controlMode: 'navigation'
     };
 
@@ -999,6 +1000,9 @@
                     }
                     if (msg.frontierTarget) state.frontierTarget = msg.frontierTarget;
                     else state.frontierTarget = null;
+                    if (msg.frontiers !== undefined) {
+                        state.frontiers = msg.frontiers;
+                    }
                     
                     // Sync control mode from robot
                     if (msg.controlMode && msg.controlMode !== controlMode) {
@@ -1164,6 +1168,27 @@
         }
     }
 
+    function drawFrontiers() {
+        if (controlMode !== 'exploration') return;
+        if (!state.frontiers.length) return;
+        
+        ctx.save();
+        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = 'rgba(245, 158, 11, 0.9)';
+        ctx.fillStyle = 'rgba(245, 158, 11, 0.35)';
+        
+        for (const frontier of state.frontiers) {
+            const [fx, fy] = frontier;
+            const p = worldToScreen(fx, fy);
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, 4, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+        }
+        
+        ctx.restore();
+    }
+
     function drawLidar() {
         if (!state.lidarScan.length) return;
         const theme = themeConfig[currentTheme];
@@ -1249,6 +1274,7 @@
         drawMap();
         drawPlannedPath();
         drawExplorationPath();
+        drawFrontiers();
         drawTrajectory();
         drawLidar();
         drawRobot();
