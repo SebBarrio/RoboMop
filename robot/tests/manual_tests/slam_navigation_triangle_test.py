@@ -487,7 +487,7 @@ class TriangleSlamNavigator:
         self._estop_active = False
         
         # Control mode state
-        self._control_mode: str = "navigation"  # "navigation" or "manual"
+        self._control_mode: str = "auto"  # "auto" or "manual"
         self._manual_cmd: Tuple[float, float] = (0.0, 0.0)  # linear, angular
         self._control_lock = threading.Lock()
         
@@ -496,7 +496,7 @@ class TriangleSlamNavigator:
 
     def set_control_mode(self, mode: str) -> None:
         with self._control_lock:
-            if mode not in ("navigation", "manual"):
+            if mode not in ("auto", "manual"):
                 self._logger.warning("Invalid control mode: %s", mode)
                 return
             if mode != self._control_mode:
@@ -505,7 +505,7 @@ class TriangleSlamNavigator:
                 # Reset commands when switching
                 self._manual_cmd = (0.0, 0.0)
                 if mode == "manual":
-                    # Cancel any active navigation goals
+                    # Cancel any active auto goals
                     self._robot.cancel_goal()
                     self._robot.set_velocity_command(linear=0.0, angular=0.0)
 
@@ -1239,7 +1239,7 @@ async def run_test(args: argparse.Namespace) -> None:
             elif msg_type == "control":
                 command = data.get("command")
                 if command == "set_mode":
-                    mode = str(data.get("mode", "navigation"))
+                    mode = str(data.get("mode", "auto"))
                     navigator.set_control_mode(mode)
                 elif command == "velocity":
                     lin = float(data.get("linear", 0.0))

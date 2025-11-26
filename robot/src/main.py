@@ -46,7 +46,7 @@ import numpy as np
 
 # Make 'src' importable when running this script directly
 _THIS_FILE = Path(__file__).resolve()
-_ROBOT_DIR = _THIS_FILE.parents[1]  # .../RoboMop/robot
+_ROBOT_DIR = _THIS_FILE.parents[2]  # .../RoboMop/robot
 if str(_ROBOT_DIR) not in sys.path:
     sys.path.insert(0, str(_ROBOT_DIR))
 
@@ -82,7 +82,6 @@ from src.control.robot_controller import Pose2D, RobotController
 from src.sensors.encoders import EncoderReading, GpioZeroEncoderHardware, QuadratureEncoder
 from src.sensors.imu import MPU9250
 from src.sensors.lidar import LidarMeasurement, RPLidarSerial
-from src.navigation.astar import AStarPlanner, Frontier
 from src.slam.occupancy_grid import OccupancyGrid
 from src.slam.particle_filter import ParticleFilter
 from src.slam.slam_manager import SlamManager
@@ -275,6 +274,125 @@ class HeadingFusion:
             return self._latest_yaw
 
 
+class PoseFusion:
+    """
+    Fuses odometry position (X, Y) with SLAM-corrected position.
+    
+    Uses exponential smoothing to gradually pull odometry toward SLAM estimates,
+    preventing the two from diverging too much over time.
+    """
+
+    def __init__(
+        self,
+        *,
+        position_blend: float = 0.3,
+        max_correction_m: float = 0.5,
+        min_slam_age_s: float = 0.0,
+        logger: Optional[logging.Logger] = None,
+    ) -> None:
+        """
+        Args:
+            position_blend: Blend factor [0,1] for position correction.
+                           0 = pure odometry, 1 = jump to SLAM position.
+                           Recommended: 0.2-0.4 for smooth corrections.
+            max_correction_m: Maximum position correction per update (meters).
+                             Limits sudden jumps when SLAM and odom diverge significantly.
+            min_slam_age_s: Minimum time between SLAM updates to apply correction.
+                           Helps debounce rapid SLAM updates.
+            logger: Optional logger for debug output.
+        """
+        self._position_blend = max(0.0, min(1.0, position_blend))
+        self._max_correction = float(max_correction_m)
+        self._min_slam_age = float(min_slam_age_s)
+        self._logger = logger or logging.getLogger("pose_fusion")
+        
+        self._lock = threading.Lock()
+        self._slam_pose: Optional[Pose2D] = None
+        self._slam_timestamp: float = 0.0
+        self._last_correction_time: float = 0.0
+        
+        # Track cumulative correction for monitoring
+        self._total_correction_x: float = 0.0
+        self._total_correction_y: float = 0.0
+
+    def update_slam_pose(self, slam_x: float, slam_y: float, slam_theta: float) -> None:
+        """Called when SLAM produces a new pose estimate."""
+        with self._lock:
+            self._slam_pose = Pose2D(slam_x, slam_y, slam_theta)
+            self._slam_timestamp = time.time()
+
+    def fuse(self, odom_x: float, odom_y: float, odom_theta: float) -> Tuple[float, float, float]:
+        """
+        Fuse odometry position with SLAM estimate.
+        
+        Returns:
+            Tuple of (fused_x, fused_y, odom_theta) - note: theta is passed through unchanged,
+            as heading fusion is handled separately by HeadingFusion.
+        """
+        with self._lock:
+            slam_pose = self._slam_pose
+            slam_ts = self._slam_timestamp
+        
+        # If no SLAM estimate yet, return odometry unchanged
+        if slam_pose is None:
+            return (odom_x, odom_y, odom_theta)
+        
+        now = time.time()
+        
+        # Check if enough time has passed since last SLAM update
+        if now - self._last_correction_time < self._min_slam_age:
+            return (odom_x, odom_y, odom_theta)
+        
+        # Calculate position error (odometry vs SLAM)
+        error_x = slam_pose.x - odom_x
+        error_y = slam_pose.y - odom_y
+        error_dist = math.hypot(error_x, error_y)
+        
+        if error_dist < 1e-6:
+            # Already aligned
+            return (odom_x, odom_y, odom_theta)
+        
+        # Calculate correction amount
+        correction_scale = self._position_blend
+        
+        # Limit maximum correction to prevent jumps
+        if error_dist * correction_scale > self._max_correction:
+            correction_scale = self._max_correction / error_dist
+        
+        # Apply correction
+        correction_x = error_x * correction_scale
+        correction_y = error_y * correction_scale
+        
+        fused_x = odom_x + correction_x
+        fused_y = odom_y + correction_y
+        
+        # Track cumulative correction for debugging
+        self._total_correction_x += correction_x
+        self._total_correction_y += correction_y
+        self._last_correction_time = now
+        
+        return (fused_x, fused_y, odom_theta)
+
+    def get_divergence(self, odom_x: float, odom_y: float) -> float:
+        """Return current distance between odometry and SLAM positions."""
+        with self._lock:
+            slam_pose = self._slam_pose
+        if slam_pose is None:
+            return 0.0
+        return math.hypot(slam_pose.x - odom_x, slam_pose.y - odom_y)
+
+    def get_slam_pose(self) -> Optional[Pose2D]:
+        """Return the latest SLAM pose estimate."""
+        with self._lock:
+            if self._slam_pose is None:
+                return None
+            return Pose2D(self._slam_pose.x, self._slam_pose.y, self._slam_pose.theta)
+
+    def get_total_correction(self) -> Tuple[float, float]:
+        """Return cumulative X/Y corrections applied (for monitoring)."""
+        return (self._total_correction_x, self._total_correction_y)
+
+
 def _mean_angle(values: Sequence[float]) -> float:
     if not values:
         return 0.0
@@ -455,6 +573,7 @@ class TriangleSlamNavigator:
         planned_vertices: Sequence[Tuple[float, float]],
         viewer: Optional[ViewerClient],
         heading_fusion: Optional[HeadingFusion],
+        pose_fusion: Optional[PoseFusion],
         imu_sampler: Optional[ImuSampler],
         lidar_max_range: float,
         slam_update_hz: float,
@@ -468,6 +587,7 @@ class TriangleSlamNavigator:
         self._slam = slam
         self._viewer = viewer
         self._heading_fusion = heading_fusion
+        self._pose_fusion = pose_fusion
         self._imu_sampler = imu_sampler
         self._logger = logger
         self._lidar_max_range = float(lidar_max_range)
@@ -488,43 +608,27 @@ class TriangleSlamNavigator:
         self._estop_active = False
         
         # Control mode state
-        self._control_mode: str = "navigation"  # "navigation", "exploration", or "manual"
+        self._control_mode: str = "auto"  # "auto" or "manual"
         self._manual_cmd: Tuple[float, float] = (0.0, 0.0)  # linear, angular
         self._control_lock = threading.Lock()
-        
-        # Exploration mode state
-        self._exploration_path: List[Tuple[float, float]] = []
-        self._exploration_waypoint_idx: int = 0
-        self._exploration_target_frontier: Optional[Frontier] = None
-        self._exploration_replan_needed: bool = True
-        self._exploration_last_plan_time: float = 0.0
-        self._astar_planner: Optional[AStarPlanner] = None
         
         # Optimization: trajectory storage counter to reduce lock contention
         self._trajectory_store_counter: int = 0
 
     def set_control_mode(self, mode: str) -> None:
         with self._control_lock:
-            if mode not in ("navigation", "exploration", "manual"):
+            if mode not in ("auto", "manual"):
                 self._logger.warning("Invalid control mode: %s", mode)
                 return
             if mode != self._control_mode:
                 self._logger.info("Switching control mode: %s -> %s", self._control_mode, mode)
-                old_mode = self._control_mode
                 self._control_mode = mode
                 # Reset commands when switching
                 self._manual_cmd = (0.0, 0.0)
                 if mode == "manual":
-                    # Cancel any active goals
+                    # Cancel any active auto goals
                     self._robot.cancel_goal()
                     self._robot.set_velocity_command(linear=0.0, angular=0.0)
-                elif mode == "exploration":
-                    # Reset exploration state to trigger re-planning
-                    self._exploration_path = []
-                    self._exploration_waypoint_idx = 0
-                    self._exploration_replan_needed = True
-                    self._exploration_target_frontier = None
-                    self._logger.info("Exploration mode enabled - will seek frontiers")
 
     def set_manual_velocity(self, linear: float, angular: float) -> None:
         with self._control_lock:
@@ -610,19 +714,17 @@ class TriangleSlamNavigator:
                 self._update_fused_pose_and_reset_robot()
                 
                 # Determine control source based on mode
-                current_mode = "navigation"
+                is_manual = False
                 manual_linear, manual_angular = 0.0, 0.0
                 
                 with self._control_lock:
-                    current_mode = self._control_mode
-                    if current_mode == "manual":
+                    if self._control_mode == "manual":
+                        is_manual = True
                         manual_linear, manual_angular = self._manual_cmd
                 
-                if current_mode == "manual":
+                if is_manual:
                     self._robot.set_velocity_command(linear=manual_linear, angular=manual_angular)
-                elif current_mode == "exploration":
-                    self._update_exploration_control()
-                elif current_mode == "navigation" and self._vertices:
+                elif self._vertices:
                     self._update_pure_pursuit_control()
                     
                 self._robot.update(dt=dt)
@@ -638,20 +740,26 @@ class TriangleSlamNavigator:
 
     def _update_fused_pose_and_reset_robot(self) -> None:
         """
-        Get current robot odometry, fuse it with IMU, and then
-        OVERWRITE the robot's internal pose with the fused result.
-        This ensures navigation decisions use the fused heading.
+        Get current robot odometry, fuse it with IMU (heading) and SLAM (position),
+        and then OVERWRITE the robot's internal pose with the fused result.
+        This ensures navigation decisions use the fused pose.
         """
         pose = self._robot.pose
-        theta = pose.theta
+        x, y, theta = pose.x, pose.y, pose.theta
+        
+        # Fuse heading with IMU
         if self._heading_fusion is not None:
             theta = self._heading_fusion.fuse(theta)
         
-        # Create the fused pose
-        fused = Pose2D(pose.x, pose.y, theta)
+        # Fuse position with SLAM
+        if self._pose_fusion is not None:
+            x, y, _ = self._pose_fusion.fuse(x, y, theta)
         
-        # CRITICAL: Update the robot controller's internal state so it knows its true heading
-        # We preserve x/y from odometry but force the fused theta
+        # Create the fused pose
+        fused = Pose2D(x, y, theta)
+        
+        # CRITICAL: Update the robot controller's internal state so it knows its true pose
+        # This prevents odometry drift from accumulating unboundedly
         self._robot.reset_pose(fused)
         
         self._set_pose_snapshot(fused)
@@ -756,155 +864,6 @@ class TriangleSlamNavigator:
             self._waypoint_index = 1
         self._logger.info("Advancing waypoint: %d -> %d", old_idx, self._waypoint_index)
 
-    def _update_exploration_control(self) -> None:
-        """Control logic for exploration mode - navigate to map frontiers."""
-        pose = self._robot.pose
-        
-        # Initialize A* planner if needed
-        if self._astar_planner is None:
-            self._astar_planner = AStarPlanner(
-                self._slam.occupancy_grid,
-                obstacle_threshold=200,
-                inflation_radius=1,  # 1 cell inflation for safety
-                allow_diagonal=False,
-            )
-        
-        # Check if we need to re-plan
-        need_replan = self._exploration_replan_needed
-        
-        # Re-plan periodically (every 5 seconds) to adapt to new map data
-        now = time.time()
-        if now - self._exploration_last_plan_time > 5.0:
-            need_replan = True
-        
-        # Check if we've reached the current target
-        if self._exploration_path and self._exploration_waypoint_idx >= len(self._exploration_path):
-            self._logger.info("Reached exploration target, planning to next frontier")
-            need_replan = True
-        
-        # Check if we're close enough to current waypoint to advance
-        if self._exploration_path and self._exploration_waypoint_idx < len(self._exploration_path):
-            target = self._exploration_path[self._exploration_waypoint_idx]
-            dist_to_waypoint = math.hypot(target[0] - pose.x, target[1] - pose.y)
-            if dist_to_waypoint < 0.2:  # 20cm threshold
-                self._exploration_waypoint_idx += 1
-                if self._exploration_waypoint_idx >= len(self._exploration_path):
-                    self._logger.info("Reached end of exploration path")
-                    need_replan = True
-        
-        # Re-plan if needed
-        if need_replan:
-            self._plan_to_frontier()
-        
-        # Execute path following if we have a valid path
-        if self._exploration_path and self._exploration_waypoint_idx < len(self._exploration_path):
-            self._follow_exploration_path()
-        else:
-            # No path available - stop and wait
-            self._robot.set_velocity_command(linear=0.0, angular=0.0)
-
-    def _plan_to_frontier(self) -> None:
-        """Plan a path to the nearest reachable frontier."""
-        pose = self._robot.pose
-        start = (pose.x, pose.y)
-        
-        # Re-create planner to use latest map data
-        self._astar_planner = AStarPlanner(
-            self._slam.occupancy_grid,
-            obstacle_threshold=200,
-            inflation_radius=1,
-            allow_diagonal=False,
-        )
-        
-        result = self._astar_planner.plan_to_nearest_frontier(start)
-        
-        if result is None:
-            self._logger.info("No reachable frontiers found - exploration may be complete")
-            self._exploration_path = []
-            self._exploration_waypoint_idx = 0
-            self._exploration_target_frontier = None
-        else:
-            frontier, path = result
-            self._exploration_path = path
-            self._exploration_waypoint_idx = 0
-            self._exploration_target_frontier = frontier
-            self._logger.info(
-                "Planned path to frontier at (%.2f, %.2f), distance=%.2f, %d waypoints",
-                frontier.world[0], frontier.world[1], frontier.distance, len(path)
-            )
-        
-        self._exploration_replan_needed = False
-        self._exploration_last_plan_time = time.time()
-
-    def _follow_exploration_path(self) -> None:
-        """Follow the current exploration path using pure pursuit."""
-        if not self._exploration_path or self._exploration_waypoint_idx >= len(self._exploration_path):
-            self._robot.set_velocity_command(linear=0.0, angular=0.0)
-            return
-        
-        pose = self._robot.pose
-        
-        # Pure Pursuit Parameters (same as navigation mode)
-        lookahead = 0.3  # meters
-        cruise_speed = 0.15  # Slightly slower for exploration (more careful)
-        
-        # Get current target waypoint
-        target_idx = self._exploration_waypoint_idx
-        target = self._exploration_path[target_idx]
-        
-        # Look ahead along path for smoother following
-        lookahead_target = target
-        accumulated_dist = 0.0
-        for i in range(target_idx, len(self._exploration_path)):
-            wp = self._exploration_path[i]
-            if i == target_idx:
-                accumulated_dist = math.hypot(wp[0] - pose.x, wp[1] - pose.y)
-            else:
-                prev_wp = self._exploration_path[i - 1]
-                accumulated_dist += math.hypot(wp[0] - prev_wp[0], wp[1] - prev_wp[1])
-            
-            if accumulated_dist >= lookahead:
-                lookahead_target = wp
-                break
-            lookahead_target = wp
-        
-        # Calculate control to lookahead point
-        dx = lookahead_target[0] - pose.x
-        dy = lookahead_target[1] - pose.y
-        
-        # Transform to robot frame
-        sin_t = math.sin(pose.theta)
-        cos_t = math.cos(pose.theta)
-        local_x = cos_t * dx + sin_t * dy
-        local_y = -sin_t * dx + cos_t * dy
-        
-        # Curvature = 2*y / L^2
-        l_sq = local_x**2 + local_y**2
-        if l_sq < 1e-4:
-            omega = 0.0
-            linear_cmd = cruise_speed
-        else:
-            curvature = 2.0 * local_y / l_sq
-            
-            # Calculate heading error
-            heading_error = math.atan2(local_y, local_x)
-            
-            # Scale linear speed based on heading error
-            if abs(heading_error) > math.pi / 3.0:
-                # Pivot in place for large heading errors
-                linear_cmd = 0.0
-                omega = math.copysign(0.4, heading_error)
-            else:
-                scale = max(0.1, math.cos(heading_error) ** 2)
-                linear_cmd = cruise_speed * scale
-                omega = cruise_speed * curvature
-        
-        # Clamp omega for safety
-        max_omega = self._robot.max_angular_speed
-        omega = max(-max_omega, min(max_omega, omega))
-        
-        self._robot.set_velocity_command(linear=linear_cmd, angular=omega)
-
     # _update_fused_pose is replaced by _update_fused_pose_and_reset_robot
     
     def _set_pose_snapshot(self, pose: Pose2D) -> None:
@@ -1003,6 +962,19 @@ class TriangleSlamNavigator:
                 # Update SLAM pose for visualization
                 self._slam_pose = Pose2D(slam_mean[0], slam_mean[1], slam_mean[2])
                 self._last_pose_for_slam = Pose2D(curr.x, curr.y, curr.theta)
+                
+                # Feed SLAM estimate to pose fusion for odometry correction
+                if self._pose_fusion is not None:
+                    self._pose_fusion.update_slam_pose(
+                        slam_mean[0], slam_mean[1], slam_mean[2]
+                    )
+                    # Log divergence periodically for debugging
+                    divergence = self._pose_fusion.get_divergence(curr.x, curr.y)
+                    if divergence > 0.1:  # Log if >10cm divergence
+                        self._logger.debug(
+                            "Odom-SLAM divergence: %.3f m (odom: %.2f,%.2f slam: %.2f,%.2f)",
+                            divergence, curr.x, curr.y, slam_mean[0], slam_mean[1]
+                        )
             except Exception:
                 self._logger.exception("SLAM step failed")
             # Rate pacing (we already block on scan; small sleep to avoid tight loop if scan is fast)
@@ -1041,40 +1013,17 @@ class TriangleSlamNavigator:
         display_pose = self._slam_pose if self._slam_pose is not None else pose
         scan_subset = self._downsample_scan(self._latest_scan, max_samples=360)
         
-        # Get current control mode
-        with self._control_lock:
-            current_mode = self._control_mode
-        
-        # Select planned path based on mode
-        if current_mode == "exploration" and self._exploration_path:
-            planned_path = list(self._exploration_path)
-        else:
-            planned_path = list(self._vertices)
-        
         payload: Dict[str, Any] = {
             "type": "triangle_update",
             "pose": {"x": display_pose.x, "y": display_pose.y, "theta": display_pose.theta},
             "poseHeadingDeg": math.degrees(display_pose.theta),
             "trajectory": self._get_recent_trajectory(),
-            "plannedVertices": planned_path,
-            "controlMode": current_mode,
+            "plannedVertices": list(self._vertices),
             "lidarScan": [
                 [float(m.angle_radians), float(max(0.0, m.distance_m))] for m in scan_subset
             ],
             "odomPose": {"x": pose.x, "y": pose.y, "theta": pose.theta},
         }
-        
-        # Add exploration-specific info
-        if current_mode == "exploration":
-            payload["explorationWaypointIdx"] = self._exploration_waypoint_idx
-            payload["explorationPathLength"] = len(self._exploration_path)
-            if self._exploration_target_frontier is not None:
-                payload["targetFrontier"] = {
-                    "x": self._exploration_target_frontier.world[0],
-                    "y": self._exploration_target_frontier.world[1],
-                    "distance": self._exploration_target_frontier.distance,
-                }
-        
         if self._imu_sampler is not None:
             imu_heading = self._imu_sampler.latest_heading_deg()
             if imu_heading is not None:
@@ -1082,6 +1031,14 @@ class TriangleSlamNavigator:
                 age = self._imu_sampler.seconds_since_update()
                 if age is not None:
                     payload["imuHeadingAgeSec"] = age
+        # Add pose fusion info
+        if self._pose_fusion is not None:
+            slam_pose = self._pose_fusion.get_slam_pose()
+            if slam_pose is not None:
+                payload["slamPose"] = {"x": slam_pose.x, "y": slam_pose.y, "theta": slam_pose.theta}
+                payload["poseDivergence"] = self._pose_fusion.get_divergence(pose.x, pose.y)
+                corr_x, corr_y = self._pose_fusion.get_total_correction()
+                payload["totalCorrection"] = {"x": corr_x, "y": corr_y}
         await self._viewer.send_update(payload)
 
     async def _send_map_update(self) -> None:
@@ -1404,6 +1361,22 @@ async def run_test(args: argparse.Namespace) -> None:
             imu_sampler = None
             logger.exception("Failed to start IMU sampler; continuing without IMU fusion")
 
+    # Pose fusion (SLAM + odometry position)
+    pose_fusion: Optional[PoseFusion] = None
+    if args.use_pose_fusion:
+        pose_fusion = PoseFusion(
+            position_blend=args.pose_fusion_blend,
+            max_correction_m=args.pose_fusion_max_correction,
+            logger=logger,
+        )
+        logger.info(
+            "Pose fusion enabled: blend=%.2f, max_correction=%.3f m",
+            args.pose_fusion_blend,
+            args.pose_fusion_max_correction,
+        )
+    else:
+        logger.info("Pose fusion disabled")
+
     # Navigator
     navigator = TriangleSlamNavigator(
         lidar=lidar,
@@ -1413,6 +1386,7 @@ async def run_test(args: argparse.Namespace) -> None:
         planned_vertices=planned,
         viewer=viewer,
         heading_fusion=heading_fusion,
+        pose_fusion=pose_fusion,
         imu_sampler=imu_sampler,
         lidar_max_range=args.lidar_max_range,
         slam_update_hz=SLAM_HZ,
@@ -1430,7 +1404,7 @@ async def run_test(args: argparse.Namespace) -> None:
             elif msg_type == "control":
                 command = data.get("command")
                 if command == "set_mode":
-                    mode = str(data.get("mode", "navigation"))
+                    mode = str(data.get("mode", "auto"))
                     navigator.set_control_mode(mode)
                 elif command == "velocity":
                     lin = float(data.get("linear", 0.0))
@@ -1574,6 +1548,27 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument("--imu-bus", type=int, default=1, help="I2C bus number for IMU")
     parser.add_argument("--imu-address", type=lambda x: int(x, 0), default=0x68, help="IMU I2C address (hex, default 0x68)")
     parser.add_argument("--invert-imu", action="store_true", default=True, help="Invert IMU yaw polarity")
+
+    # Pose fusion (SLAM + odometry) parameters
+    parser.add_argument(
+        "--pose-fusion-blend",
+        type=float,
+        default=0.3,
+        help="Blend factor [0,1] for SLAM->odometry position correction (0=pure odom, 1=jump to SLAM)",
+    )
+    parser.add_argument(
+        "--pose-fusion-max-correction",
+        type=float,
+        default=0.1,
+        help="Maximum position correction per control cycle (meters). Limits sudden jumps.",
+    )
+    parser.add_argument(
+        "--no-pose-fusion",
+        dest="use_pose_fusion",
+        action="store_false",
+        default=True,
+        help="Disable SLAM-odometry position fusion",
+    )
 
     parser.add_argument(
         "--log-level", type=str, default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"], help="Log level"

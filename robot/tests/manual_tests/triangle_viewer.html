@@ -447,8 +447,7 @@
                 <h2>Control Mode</h2>
                 
                 <div class="btn-group">
-                    <button id="mode-navigation-btn" class="btn active">Navigation</button>
-                    <button id="mode-exploration-btn" class="btn">Exploration</button>
+                    <button id="mode-auto-btn" class="btn active">Auto</button>
                     <button id="mode-manual-btn" class="btn">Manual</button>
                 </div>
 
@@ -594,12 +593,11 @@
     let estopEnabled = false;
     
     // Manual Control Logic
-    let controlMode = 'navigation';
+    let controlMode = 'auto';
     let maxLinear = 0.2;
     let maxAngular = 0.5;
     
-    const modeNavigationBtn = document.getElementById('mode-navigation-btn');
-    const modeExplorationBtn = document.getElementById('mode-exploration-btn');
+    const modeAutoBtn = document.getElementById('mode-auto-btn');
     const modeManualBtn = document.getElementById('mode-manual-btn');
     const manualControls = document.getElementById('manual-controls');
     
@@ -609,18 +607,12 @@
     const angularVal = document.getElementById('angular-val');
 
     function updateModeUI() {
-        // Reset all buttons
-        modeNavigationBtn.classList.remove('active');
-        modeExplorationBtn.classList.remove('active');
-        modeManualBtn.classList.remove('active');
-        
-        if (controlMode === 'navigation') {
-            modeNavigationBtn.classList.add('active');
+        if (controlMode === 'auto') {
+            modeAutoBtn.classList.add('active');
+            modeManualBtn.classList.remove('active');
             manualControls.style.display = 'none';
-        } else if (controlMode === 'exploration') {
-            modeExplorationBtn.classList.add('active');
-            manualControls.style.display = 'none';
-        } else if (controlMode === 'manual') {
+        } else {
+            modeAutoBtn.classList.remove('active');
             modeManualBtn.classList.add('active');
             manualControls.style.display = 'block';
         }
@@ -634,8 +626,7 @@
         }
     }
 
-    modeNavigationBtn.addEventListener('click', () => setMode('navigation'));
-    modeExplorationBtn.addEventListener('click', () => setMode('exploration'));
+    modeAutoBtn.addEventListener('click', () => setMode('auto'));
     modeManualBtn.addEventListener('click', () => setMode('manual'));
 
     linearSlider.addEventListener('input', (e) => {
@@ -958,12 +949,6 @@
                     if (msg.plannedVertices) state.plannedVertices = msg.plannedVertices;
                     if (msg.lidarScan) state.lidarScan = msg.lidarScan;
                     if (msg.imuHeadingDeg !== undefined) state.imuHeadingDeg = msg.imuHeadingDeg;
-                    
-                    // Sync control mode from robot
-                    if (msg.controlMode && msg.controlMode !== controlMode) {
-                        controlMode = msg.controlMode;
-                        updateModeUI();
-                    }
                     
                     if (msg.map) {
                         await processMapData(msg.map);
