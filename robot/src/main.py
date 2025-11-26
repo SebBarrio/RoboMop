@@ -392,6 +392,15 @@ class PoseFusion:
         """Return cumulative X/Y corrections applied (for monitoring)."""
         return (self._total_correction_x, self._total_correction_y)
 
+    def reset(self) -> None:
+        """Reset the fusion state (clear SLAM pose and correction history)."""
+        with self._lock:
+            self._slam_pose = None
+            self._slam_timestamp = 0.0
+            self._last_correction_time = 0.0
+            self._total_correction_x = 0.0
+            self._total_correction_y = 0.0
+
 
 def _mean_angle(values: Sequence[float]) -> float:
     if not values:
@@ -1339,6 +1348,16 @@ async def run_test(args: argparse.Namespace) -> None:
                 yaw_bias = float(result)
             elif name == "map":
                 logger.info("Map warmup integrated %d scans", int(result))
+        
+        # CRITICAL: Reset SLAM and odometry to origin (0,0,0) after warmup
+        # During warmup, the particle filter may have drifted from the origin
+        logger.info("Resetting SLAM and odometry to origin (0,0,0) after warmup...")
+        slam.particle_filter.initialize_gaussian(
+            mean=[0.0, 0.0, 0.0],
+            covariance=np.diag([0.01, 0.01, math.radians(2.0) ** 2]),  # Small uncertainty at origin
+        )
+        robot.reset_pose(Pose2D(0.0, 0.0, 0.0))
+        logger.info("SLAM and odometry reset to origin complete")
     else:
         logger.info("Map/IMU warmup disabled; starting navigation immediately")
 
