@@ -46,8 +46,7 @@ import numpy as np
 
 # Make 'src' importable when running this script directly
 _THIS_FILE = Path(__file__).resolve()
-# _THIS_FILE is robot/src/main.py, so parents[1] is robot/
-_ROBOT_DIR = _THIS_FILE.parents[1]  # .../RoboMop/robot
+_ROBOT_DIR = _THIS_FILE.parents[2]  # .../RoboMop/robot
 if str(_ROBOT_DIR) not in sys.path:
     sys.path.insert(0, str(_ROBOT_DIR))
 
@@ -83,10 +82,10 @@ from src.control.robot_controller import Pose2D, RobotController
 from src.sensors.encoders import EncoderReading, GpioZeroEncoderHardware, QuadratureEncoder
 from src.sensors.imu import MPU9250
 from src.sensors.lidar import LidarMeasurement, RPLidarSerial
+from src.navigation.astar import AStarPlanner, Frontier
 from src.slam.occupancy_grid import OccupancyGrid
 from src.slam.particle_filter import ParticleFilter
 from src.slam.slam_manager import SlamManager
-from src.navigation.astar import AStarPlanner, Frontier
 
 
 # -----------------------------
@@ -131,12 +130,6 @@ TRAJECTORY_STORE_INTERVAL: int = 5  # Store trajectory every N control iteration
 SLAM_MOTION_THRESHOLD_M: float = 0.01  # Skip SLAM if moved less than this (meters)
 SLAM_ROTATION_THRESHOLD_RAD: float = 0.02  # Skip SLAM if rotated less than this (radians)
 
-# Exploration settings
-EXPLORATION_REPLAN_INTERVAL: float = 3.0  # Seconds between frontier re-planning
-EXPLORATION_INFLATION_RADIUS: int = 2  # Cells to inflate around obstacles
-
-# To keep WebSocket payloads bounded, only publish this many frontier samples
-EXPLORATION_FRONTIER_PUBLISH_LIMIT: int = 300
 
 # -----------------------------
 # Utility data structures
@@ -482,8 +475,8 @@ class TriangleSlamNavigator:
         self._map_period = 1.0 / float(map_hz)
         self._state_period = 1.0 / float(state_hz)
 
-        self._nav_path: List[Tuple[float, float]] = list(planned_vertices)
-        self._nav_waypoint_index: int = 0
+        self._vertices = list(planned_vertices)
+        self._waypoint_index = 0
         self._trajectory: Deque[Tuple[float, float]] = deque(maxlen=2000)
         self._trajectory_lock = threading.Lock()
         self._pose_lock = threading.Lock()
@@ -499,23 +492,16 @@ class TriangleSlamNavigator:
         self._manual_cmd: Tuple[float, float] = (0.0, 0.0)  # linear, angular
         self._control_lock = threading.Lock()
         
-        # Optimization: trajectory storage counter to reduce lock contention
-        self._trajectory_store_counter: int = 0
-        
         # Exploration mode state
-        self._astar_planner: AStarPlanner = AStarPlanner(
-            grid=slam.occupancy_grid,
-            obstacle_threshold=200,
-            inflation_radius=EXPLORATION_INFLATION_RADIUS,
-            allow_diagonal=False,
-        )
         self._exploration_path: List[Tuple[float, float]] = []
         self._exploration_waypoint_idx: int = 0
-        self._current_frontier: Optional[Frontier] = None
-        self._last_replan_time: float = 0.0
-        self._exploration_complete: bool = False
-        self._frontier_points: List[Tuple[float, float]] = []
-        self._frontier_lock = threading.Lock()
+        self._exploration_target_frontier: Optional[Frontier] = None
+        self._exploration_replan_needed: bool = True
+        self._exploration_last_plan_time: float = 0.0
+        self._astar_planner: Optional[AStarPlanner] = None
+        
+        # Optimization: trajectory storage counter to reduce lock contention
+        self._trajectory_store_counter: int = 0
 
     def set_control_mode(self, mode: str) -> None:
         with self._control_lock:
@@ -532,20 +518,13 @@ class TriangleSlamNavigator:
                     # Cancel any active goals
                     self._robot.cancel_goal()
                     self._robot.set_velocity_command(linear=0.0, angular=0.0)
-                if mode == "exploration":
-                    # Reset exploration state for fresh start
+                elif mode == "exploration":
+                    # Reset exploration state to trigger re-planning
                     self._exploration_path = []
                     self._exploration_waypoint_idx = 0
-                    self._current_frontier = None
-                    self._last_replan_time = 0.0
-                    self._exploration_complete = False
-                    self._clear_frontiers()
-                elif old_mode == "exploration":
-                    # Clear exploration state when leaving exploration mode
-                    self._exploration_path = []
-                    self._exploration_waypoint_idx = 0
-                    self._current_frontier = None
-                    self._clear_frontiers()
+                    self._exploration_replan_needed = True
+                    self._exploration_target_frontier = None
+                    self._logger.info("Exploration mode enabled - will seek frontiers")
 
     def set_manual_velocity(self, linear: float, angular: float) -> None:
         with self._control_lock:
@@ -631,19 +610,19 @@ class TriangleSlamNavigator:
                 self._update_fused_pose_and_reset_robot()
                 
                 # Determine control source based on mode
-                is_manual = False
+                current_mode = "navigation"
                 manual_linear, manual_angular = 0.0, 0.0
                 
                 with self._control_lock:
-                    if self._control_mode == "manual":
-                        is_manual = True
+                    current_mode = self._control_mode
+                    if current_mode == "manual":
                         manual_linear, manual_angular = self._manual_cmd
                 
-                if is_manual:
+                if current_mode == "manual":
                     self._robot.set_velocity_command(linear=manual_linear, angular=manual_angular)
-                elif self._control_mode == "exploration":
+                elif current_mode == "exploration":
                     self._update_exploration_control()
-                elif self._control_mode == "navigation" and self._nav_path:
+                elif current_mode == "navigation" and self._vertices:
                     self._update_pure_pursuit_control()
                     
                 self._robot.update(dt=dt)
@@ -683,103 +662,62 @@ class TriangleSlamNavigator:
             self._trajectory_store_counter = 0
             self._append_trajectory(fused)
 
-    def _update_pure_pursuit_control(
-        self,
-        path: Optional[Sequence[Tuple[float, float]]] = None,
-        *,
-        waypoint_attr: str = "_nav_waypoint_index",
-        loop_path: bool = True,
-        lookahead: float = 0.3,
-        cruise_speed: float = 0.2,
-        log_advances: bool = True,
-    ) -> None:
-        """Generic pure-pursuit follower used by both navigation and exploration."""
-
-        if path is None:
-            path = self._nav_path
-        if not path or len(path) < 2:
-            self._robot.set_velocity_command(linear=0.0, angular=0.0)
+    def _update_pure_pursuit_control(self) -> None:
+        if not self._vertices:
             return
 
-        path_len = len(path)
-        target_idx = getattr(self, waypoint_attr)
-
-        if target_idx >= path_len:
-            if loop_path and path_len > 1:
-                target_idx = 1
-            else:
-                setattr(self, waypoint_attr, path_len)
-                self._robot.set_velocity_command(linear=0.0, angular=0.0)
-                return
-
-        if not loop_path and target_idx <= 0 and path_len > 1:
-            target_idx = 1
-
         pose = self._robot.pose
+        
+        # Pure Pursuit Parameters
+        lookahead = 0.3  # meters
+        cruise_speed = 0.2  # m/s
+        
+        # Identify current segment
+        target_idx = self._waypoint_index
+        # Previous waypoint is start of segment
+        prev_idx = (target_idx - 1) % len(self._vertices)
+        
+        p_start = np.array(self._vertices[prev_idx])
+        p_end = np.array(self._vertices[target_idx])
         p_robot = np.array([pose.x, pose.y])
-
-        prev_idx = (target_idx - 1) % path_len if loop_path else max(0, target_idx - 1)
-        p_start = np.array(path[prev_idx])
-        p_end = np.array(path[target_idx])
-
+        
         segment_vec = p_end - p_start
         segment_len = np.linalg.norm(segment_vec)
-
+        
         if segment_len < 1e-3:
-            # Degenerate segment; advance to next waypoint
-            old_idx = target_idx
-            target_idx += 1
-            if loop_path and target_idx >= path_len and path_len > 1:
-                target_idx = 1
-            setattr(self, waypoint_attr, target_idx)
-            if log_advances:
-                self._logger.info("Advancing waypoint: %d -> %d (degenerate)", old_idx, target_idx)
+            self._advance_waypoint()
             return
 
         segment_dir = segment_vec / segment_len
-
+        
         # Project robot onto line segment
         robot_vec = p_robot - p_start
         proj_dist = np.dot(robot_vec, segment_dir)
-
+        
         # Lookahead point logic
         lookahead_dist_on_line = proj_dist + lookahead
-
+        
         # Check distance to target vertex
         dist_to_end = np.linalg.norm(p_end - p_robot)
-
+        
         if dist_to_end < lookahead:
-            old_idx = target_idx
-            target_idx += 1
-            if target_idx >= path_len:
-                if loop_path and path_len > 1:
-                    target_idx = 1
-                    if log_advances:
-                        self._logger.info("Advancing waypoint: %d -> %d", old_idx, target_idx)
-                else:
-                    setattr(self, waypoint_attr, path_len)
-                    self._robot.set_velocity_command(linear=0.0, angular=0.0)
-                    return
-            else:
-                if log_advances:
-                    self._logger.info("Advancing waypoint: %d -> %d", old_idx, target_idx)
-            setattr(self, waypoint_attr, target_idx)
+            self._advance_waypoint()
             return
 
         # Clamp lookahead to segment length
         clamp_dist = max(0.0, min(lookahead_dist_on_line, segment_len))
         lookahead_pt = p_start + segment_dir * clamp_dist
-
+        
         # Calculate curvature to lookahead point
         dx = lookahead_pt[0] - pose.x
         dy = lookahead_pt[1] - pose.y
-
+        
         # Transform to robot frame
         sin_t = math.sin(pose.theta)
         cos_t = math.cos(pose.theta)
         local_x = cos_t * dx + sin_t * dy
         local_y = -sin_t * dx + cos_t * dy
-
+        
         # Curvature = 2*y / L^2
         l_sq = local_x**2 + local_y**2
         if l_sq < 1e-4:
@@ -787,91 +725,185 @@ class TriangleSlamNavigator:
             linear_cmd = cruise_speed
         else:
             curvature = 2.0 * local_y / l_sq
-
+            
             # Calculate heading error to lookahead point
             heading_error = math.atan2(local_y, local_x)
-
+            
             # Scale linear speed based on heading error (slow down for turns)
+            # If error is > 60 degrees, pivot in place (linear=0)
             if abs(heading_error) > math.pi / 3.0:
                 linear_cmd = 0.0
+                # Pivot speed
                 omega = math.copysign(0.5, heading_error)
+            else:
+                # Slow down as we turn: v = v_max * cos(heading_error)^2
+                scale = max(0.1, math.cos(heading_error) ** 2)
+                linear_cmd = cruise_speed * scale
+                # Use nominal cruise speed for curvature calculation to maintain path geometry
+                omega = cruise_speed * curvature
+            
+        # Clamp omega for safety
+        max_omega = self._robot.max_angular_speed
+        omega = max(-max_omega, min(max_omega, omega))
+        
+        self._robot.set_velocity_command(linear=linear_cmd, angular=omega)
+
+    def _advance_waypoint(self) -> None:
+        old_idx = self._waypoint_index
+        self._waypoint_index += 1
+        if self._waypoint_index >= len(self._vertices):
+            # Loop back to 1 because 0 is same as last (closed loop visual artifact)
+            self._waypoint_index = 1
+        self._logger.info("Advancing waypoint: %d -> %d", old_idx, self._waypoint_index)
+
+    def _update_exploration_control(self) -> None:
+        """Control logic for exploration mode - navigate to map frontiers."""
+        pose = self._robot.pose
+        
+        # Initialize A* planner if needed
+        if self._astar_planner is None:
+            self._astar_planner = AStarPlanner(
+                self._slam.occupancy_grid,
+                obstacle_threshold=200,
+                inflation_radius=1,  # 1 cell inflation for safety
+                allow_diagonal=False,
+            )
+        
+        # Check if we need to re-plan
+        need_replan = self._exploration_replan_needed
+        
+        # Re-plan periodically (every 5 seconds) to adapt to new map data
+        now = time.time()
+        if now - self._exploration_last_plan_time > 5.0:
+            need_replan = True
+        
+        # Check if we've reached the current target
+        if self._exploration_path and self._exploration_waypoint_idx >= len(self._exploration_path):
+            self._logger.info("Reached exploration target, planning to next frontier")
+            need_replan = True
+        
+        # Check if we're close enough to current waypoint to advance
+        if self._exploration_path and self._exploration_waypoint_idx < len(self._exploration_path):
+            target = self._exploration_path[self._exploration_waypoint_idx]
+            dist_to_waypoint = math.hypot(target[0] - pose.x, target[1] - pose.y)
+            if dist_to_waypoint < 0.2:  # 20cm threshold
+                self._exploration_waypoint_idx += 1
+                if self._exploration_waypoint_idx >= len(self._exploration_path):
+                    self._logger.info("Reached end of exploration path")
+                    need_replan = True
+        
+        # Re-plan if needed
+        if need_replan:
+            self._plan_to_frontier()
+        
+        # Execute path following if we have a valid path
+        if self._exploration_path and self._exploration_waypoint_idx < len(self._exploration_path):
+            self._follow_exploration_path()
+        else:
+            # No path available - stop and wait
+            self._robot.set_velocity_command(linear=0.0, angular=0.0)
+
+    def _plan_to_frontier(self) -> None:
+        """Plan a path to the nearest reachable frontier."""
+        pose = self._robot.pose
+        start = (pose.x, pose.y)
+        
+        # Re-create planner to use latest map data
+        self._astar_planner = AStarPlanner(
+            self._slam.occupancy_grid,
+            obstacle_threshold=200,
+            inflation_radius=1,
+            allow_diagonal=False,
+        )
+        
+        result = self._astar_planner.plan_to_nearest_frontier(start)
+        
+        if result is None:
+            self._logger.info("No reachable frontiers found - exploration may be complete")
+            self._exploration_path = []
+            self._exploration_waypoint_idx = 0
+            self._exploration_target_frontier = None
+        else:
+            frontier, path = result
+            self._exploration_path = path
+            self._exploration_waypoint_idx = 0
+            self._exploration_target_frontier = frontier
+            self._logger.info(
+                "Planned path to frontier at (%.2f, %.2f), distance=%.2f, %d waypoints",
+                frontier.world[0], frontier.world[1], frontier.distance, len(path)
+            )
+        
+        self._exploration_replan_needed = False
+        self._exploration_last_plan_time = time.time()
+
+    def _follow_exploration_path(self) -> None:
+        """Follow the current exploration path using pure pursuit."""
+        if not self._exploration_path or self._exploration_waypoint_idx >= len(self._exploration_path):
+            self._robot.set_velocity_command(linear=0.0, angular=0.0)
+            return
+        
+        pose = self._robot.pose
+        
+        # Pure Pursuit Parameters (same as navigation mode)
+        lookahead = 0.3  # meters
+        cruise_speed = 0.15  # Slightly slower for exploration (more careful)
+        
+        # Get current target waypoint
+        target_idx = self._exploration_waypoint_idx
+        target = self._exploration_path[target_idx]
+        
+        # Look ahead along path for smoother following
+        lookahead_target = target
+        accumulated_dist = 0.0
+        for i in range(target_idx, len(self._exploration_path)):
+            wp = self._exploration_path[i]
+            if i == target_idx:
+                accumulated_dist = math.hypot(wp[0] - pose.x, wp[1] - pose.y)
+            else:
+                prev_wp = self._exploration_path[i - 1]
+                accumulated_dist += math.hypot(wp[0] - prev_wp[0], wp[1] - prev_wp[1])
+            
+            if accumulated_dist >= lookahead:
+                lookahead_target = wp
+                break
+            lookahead_target = wp
+        
+        # Calculate control to lookahead point
+        dx = lookahead_target[0] - pose.x
+        dy = lookahead_target[1] - pose.y
+        
+        # Transform to robot frame
+        sin_t = math.sin(pose.theta)
+        cos_t = math.cos(pose.theta)
+        local_x = cos_t * dx + sin_t * dy
+        local_y = -sin_t * dx + cos_t * dy
+        
+        # Curvature = 2*y / L^2
+        l_sq = local_x**2 + local_y**2
+        if l_sq < 1e-4:
+            omega = 0.0
+            linear_cmd = cruise_speed
+        else:
+            curvature = 2.0 * local_y / l_sq
+            
+            # Calculate heading error
+            heading_error = math.atan2(local_y, local_x)
+            
+            # Scale linear speed based on heading error
+            if abs(heading_error) > math.pi / 3.0:
+                # Pivot in place for large heading errors
+                linear_cmd = 0.0
+                omega = math.copysign(0.4, heading_error)
             else:
                 scale = max(0.1, math.cos(heading_error) ** 2)
                 linear_cmd = cruise_speed * scale
                 omega = cruise_speed * curvature
-
+        
         # Clamp omega for safety
         max_omega = self._robot.max_angular_speed
         omega = max(-max_omega, min(max_omega, omega))
-
+        
         self._robot.set_velocity_command(linear=linear_cmd, angular=omega)
-        setattr(self, waypoint_attr, target_idx)
-
-    def _update_exploration_control(self) -> None:
-        """Control loop for exploration mode - reuse navigation controller with frontier paths."""
-        if self._exploration_complete:
-            self._robot.set_velocity_command(linear=0.0, angular=0.0)
-            return
-
-        now = time.time()
-        path_ready = (
-            len(self._exploration_path) >= 2
-            and self._exploration_waypoint_idx < len(self._exploration_path)
-        )
-        need_replan = (not path_ready) or (now - self._last_replan_time > EXPLORATION_REPLAN_INTERVAL)
-
-        if need_replan:
-            self._replan_exploration()
-            path_ready = (
-                len(self._exploration_path) >= 2
-                and self._exploration_waypoint_idx < len(self._exploration_path)
-            )
-            if not path_ready:
-                self._robot.set_velocity_command(linear=0.0, angular=0.0)
-                return
-
-        self._update_pure_pursuit_control(
-            path=self._exploration_path,
-            waypoint_attr="_exploration_waypoint_idx",
-            loop_path=False,
-            log_advances=False,
-        )
-    
-    def _replan_exploration(self) -> None:
-        """Plan a path to the nearest frontier."""
-        pose = self._robot.pose
-        start = (pose.x, pose.y)
-        
-        result = self._astar_planner.plan_to_nearest_frontier(start)
-        self._capture_frontiers_from_planner()
-        
-        if result is None:
-            # No reachable frontiers - exploration complete
-            self._exploration_path = []
-            self._exploration_waypoint_idx = 0
-            self._current_frontier = None
-            self._exploration_complete = True
-            self._logger.info("Exploration complete - no more reachable frontiers")
-            return
-        
-        frontier, path = result
-        self._current_frontier = frontier
-        full_path: List[Tuple[float, float]] = [start]
-        full_path.extend(path)
-        if len(full_path) < 2:
-            self._exploration_path = []
-            self._exploration_waypoint_idx = 0
-            return
-        self._exploration_path = full_path
-        self._exploration_waypoint_idx = 1
-        self._exploration_complete = False
-        self._last_replan_time = time.time()
-        self._logger.info(
-            "Exploration: replanned to frontier at (%.2f, %.2f), path has %d waypoints",
-            frontier.world[0],
-            frontier.world[1],
-            len(full_path),
-        )
 
     # _update_fused_pose is replaced by _update_fused_pose_and_reset_robot
     
@@ -891,43 +923,6 @@ class TriangleSlamNavigator:
     def _get_recent_trajectory(self) -> List[Tuple[float, float]]:
         with self._trajectory_lock:
             return list(self._trajectory)
-
-    def _set_frontiers(self, points: Sequence[Tuple[float, float]]) -> None:
-        with self._frontier_lock:
-            self._frontier_points = list(points)
-
-    def _get_frontiers(self) -> List[Tuple[float, float]]:
-        with self._frontier_lock:
-            return list(self._frontier_points)
-
-    def _clear_frontiers(self) -> None:
-        self._set_frontiers([])
-
-    def _capture_frontiers_from_planner(self) -> None:
-        """Convert planner frontier cells into world coordinates for visualization."""
-        cells = sorted(self._astar_planner.frontier_cells)
-        if not cells:
-            self._clear_frontiers()
-            return
-
-        grid = self._slam.occupancy_grid
-        origin_x, origin_y, _ = grid.origin
-        resolution = grid.resolution
-
-        points: List[Tuple[float, float]] = []
-        for row, col in cells:
-            x = origin_x + (col + 0.5) * resolution
-            y = origin_y + (row + 0.5) * resolution
-            points.append((x, y))
-
-        if len(points) > EXPLORATION_FRONTIER_PUBLISH_LIMIT:
-            step = len(points) / EXPLORATION_FRONTIER_PUBLISH_LIMIT
-            sampled: List[Tuple[float, float]] = []
-            for idx in range(EXPLORATION_FRONTIER_PUBLISH_LIMIT):
-                sampled.append(points[int(idx * step)])
-            points = sampled
-
-        self._set_frontiers(points)
 
     async def _slam_loop(self) -> None:
         """Lower-rate loop that waits for full LIDAR scans and updates SLAM."""
@@ -1045,32 +1040,40 @@ class TriangleSlamNavigator:
         # Use SLAM pose if available for visualization alignment with map
         display_pose = self._slam_pose if self._slam_pose is not None else pose
         scan_subset = self._downsample_scan(self._latest_scan, max_samples=360)
+        
+        # Get current control mode
         with self._control_lock:
-            control_mode = self._control_mode
+            current_mode = self._control_mode
+        
+        # Select planned path based on mode
+        if current_mode == "exploration" and self._exploration_path:
+            planned_path = list(self._exploration_path)
+        else:
+            planned_path = list(self._vertices)
         
         payload: Dict[str, Any] = {
             "type": "triangle_update",
             "pose": {"x": display_pose.x, "y": display_pose.y, "theta": display_pose.theta},
             "poseHeadingDeg": math.degrees(display_pose.theta),
             "trajectory": self._get_recent_trajectory(),
-            "plannedVertices": list(self._nav_path),
+            "plannedVertices": planned_path,
+            "controlMode": current_mode,
             "lidarScan": [
                 [float(m.angle_radians), float(max(0.0, m.distance_m))] for m in scan_subset
             ],
             "odomPose": {"x": pose.x, "y": pose.y, "theta": pose.theta},
-            "controlMode": control_mode,
         }
         
-        # Add exploration data
-        payload["explorationPath"] = list(self._exploration_path)
-        payload["explorationComplete"] = self._exploration_complete
-        if self._current_frontier is not None:
-            payload["frontierTarget"] = {
-                "x": self._current_frontier.world[0],
-                "y": self._current_frontier.world[1],
-            }
-        
-        payload["frontiers"] = self._get_frontiers() if control_mode == "exploration" else []
+        # Add exploration-specific info
+        if current_mode == "exploration":
+            payload["explorationWaypointIdx"] = self._exploration_waypoint_idx
+            payload["explorationPathLength"] = len(self._exploration_path)
+            if self._exploration_target_frontier is not None:
+                payload["targetFrontier"] = {
+                    "x": self._exploration_target_frontier.world[0],
+                    "y": self._exploration_target_frontier.world[1],
+                    "distance": self._exploration_target_frontier.distance,
+                }
         
         if self._imu_sampler is not None:
             imu_heading = self._imu_sampler.latest_heading_deg()
@@ -1427,7 +1430,7 @@ async def run_test(args: argparse.Namespace) -> None:
             elif msg_type == "control":
                 command = data.get("command")
                 if command == "set_mode":
-                    mode = str(data.get("mode", "auto"))
+                    mode = str(data.get("mode", "navigation"))
                     navigator.set_control_mode(mode)
                 elif command == "velocity":
                     lin = float(data.get("linear", 0.0))
@@ -1589,5 +1592,6 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
 
 if __name__ == "__main__":
     main()
+
 
 
