@@ -275,36 +275,37 @@ class PoseEKF:
         position_threshold: float = 0.5,
         angle_threshold: float = 0.3,
     ) -> Tuple[FusedPose, bool]:
-        """Update from SLAM only if the difference is not too large.
+        """Update from SLAM, tracking whether the correction was large.
         
-        This prevents the filter from making huge jumps when SLAM has a
-        localization failure or when the robot is kidnapped.
+        The Kalman filter always applies SLAM updates - the covariance-based
+        weighting (Kalman gain) naturally handles how much to trust each source.
+        Rejecting SLAM updates based on a fixed threshold breaks the filter's
+        ability to correct accumulated drift.
         
         Args:
             slam_x: SLAM estimated x position
             slam_y: SLAM estimated y position  
             slam_theta: SLAM estimated heading
             slam_covariance: Optional 3x3 SLAM covariance
-            position_threshold: Max position difference to accept (m)
-            angle_threshold: Max angle difference to accept (rad)
+            position_threshold: Threshold for logging large corrections (m)
+            angle_threshold: Threshold for logging large corrections (rad)
             
         Returns:
-            Tuple of (updated pose, whether update was applied)
+            Tuple of (updated pose, whether correction was small)
         """
-        # Check if SLAM pose is too far from current estimate
+        # Compute how large the correction will be
         dx = slam_x - self._state[0]
         dy = slam_y - self._state[1]
         dtheta = abs(_wrap_angle(slam_theta - self._state[2]))
         dist = math.sqrt(dx * dx + dy * dy)
         
-        if dist > position_threshold or dtheta > angle_threshold:
-            # SLAM pose is too different - might be a localization failure
-            # Don't apply the update, but return current pose
-            return self.get_pose(), False
-        
-        # Apply the update
+        # Always apply the SLAM update - let Kalman gain handle the weighting
+        # The filter's covariance tracks uncertainty and weights appropriately
         pose = self.update_from_slam(slam_x, slam_y, slam_theta, slam_covariance)
-        return pose, True
+        
+        # Return whether the correction was "small" (for logging purposes)
+        was_small = dist <= position_threshold and dtheta <= angle_threshold
+        return pose, was_small
     
     def sync_odometry_reference(
         self,

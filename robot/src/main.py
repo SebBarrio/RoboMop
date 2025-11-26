@@ -657,12 +657,15 @@ class TriangleSlamNavigator:
         # This tracks uncertainty and prepares for SLAM measurement updates
         with self._ekf_lock:
             fused_ekf = self._pose_ekf.predict_from_odometry(pose.x, pose.y, theta)
-        
-        # Create the fused pose from EKF output
-        fused = Pose2D(fused_ekf.x, fused_ekf.y, fused_ekf.theta)
-        
-        # CRITICAL: Update the robot controller's internal state so it knows its true pose
-        self._robot.reset_pose(fused)
+            fused = Pose2D(fused_ekf.x, fused_ekf.y, fused_ekf.theta)
+            
+            # CRITICAL: Update the robot controller's internal state so it knows its true pose
+            self._robot.reset_pose(fused)
+            
+            # CRITICAL: Sync EKF's odometry reference to the fused pose
+            # This ensures future delta computations are correct when the robot
+            # integrates odometry from the reset fused pose, not the raw odometry pose
+            self._pose_ekf.sync_odometry_reference(fused.x, fused.y, fused.theta)
         
         self._set_pose_snapshot(fused)
         
@@ -868,20 +871,25 @@ class TriangleSlamNavigator:
                 # Apply SLAM measurement update to the EKF
                 # This fuses the SLAM-corrected pose with the odometry-predicted pose
                 with self._ekf_lock:
-                    fused, was_applied = self._pose_ekf.update_from_slam_if_significant(
+                    # Get pre-update state for logging
+                    pre_update = self._pose_ekf.get_pose()
+                    
+                    fused, was_small = self._pose_ekf.update_from_slam_if_significant(
                         slam_mean[0], slam_mean[1], slam_mean[2],
                         slam_covariance=slam_cov,
-                        position_threshold=0.5,  # Don't jump more than 50cm
-                        angle_threshold=0.5,     # Don't jump more than ~28 degrees
+                        position_threshold=0.3,  # Log if correction > 30cm
+                        angle_threshold=0.3,     # Log if correction > ~17 degrees
                     )
-                    if was_applied:
-                        # Sync odometry reference to prevent drift accumulation
-                        odom_pose = self._robot.pose
-                        self._pose_ekf.sync_odometry_reference(
-                            odom_pose.x, odom_pose.y, odom_pose.theta
-                        )
+                    
+                    # Always sync odometry reference after SLAM update
+                    # Use the fused pose, not raw odometry, to prevent double-counting
+                    self._pose_ekf.sync_odometry_reference(
+                        fused.x, fused.y, fused.theta
+                    )
+                    
+                    if was_small:
                         self._logger.debug(
-                            "EKF SLAM update: fused=(%.3f, %.3f, %.2f°) "
+                            "EKF SLAM update (small): fused=(%.3f, %.3f, %.2f°) "
                             "slam=(%.3f, %.3f, %.2f°) "
                             "uncertainty=(%.4f, %.4f, %.4f)",
                             fused.x, fused.y, math.degrees(fused.theta),
@@ -889,10 +897,14 @@ class TriangleSlamNavigator:
                             fused.var_x, fused.var_y, fused.var_theta,
                         )
                     else:
-                        self._logger.warning(
-                            "EKF rejected SLAM update: too large jump "
-                            "(slam=(%.3f, %.3f) vs ekf=(%.3f, %.3f))",
-                            slam_mean[0], slam_mean[1], fused.x, fused.y,
+                        self._logger.info(
+                            "EKF SLAM update (large correction): "
+                            "pre=(%.3f, %.3f) -> slam=(%.3f, %.3f) -> fused=(%.3f, %.3f) "
+                            "uncertainty=(%.4f, %.4f)",
+                            pre_update.x, pre_update.y,
+                            slam_mean[0], slam_mean[1],
+                            fused.x, fused.y,
+                            fused.var_x, fused.var_y,
                         )
             except Exception:
                 self._logger.exception("SLAM step failed")
