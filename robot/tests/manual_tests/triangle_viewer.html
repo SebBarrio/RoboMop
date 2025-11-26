@@ -417,10 +417,9 @@
                 <h2>Map Legend</h2>
                 <div class="legend-row"><div class="legend-dot" style="background: var(--accent)"></div>Robot</div>
                 <div class="legend-row"><div class="legend-dot" style="background: var(--danger)"></div>Trajectory</div>
-                <div class="legend-row"><div class="legend-dot" style="background: var(--accent); border: 1px dashed rgba(255,255,255,0.5)"></div>Path Plan</div>
+                <div class="legend-row"><div class="legend-dot" style="background: var(--accent); border: 1px dashed rgba(255,255,255,0.5)"></div>Clean Path</div>
+                <div class="legend-row"><div class="legend-dot" style="background: #10b981; border: 1px dashed rgba(255,255,255,0.5)"></div>Explore Path</div>
                 <div class="legend-row"><div class="legend-dot" style="background: cyan"></div>Lidar</div>
-                <div class="legend-row"><div class="legend-dot" style="background: #a855f7"></div>Frontiers</div>
-                <div class="legend-row"><div class="legend-dot" style="background: #22c55e"></div>Target</div>
             </div>
         </div>
 
@@ -428,10 +427,6 @@
         <div class="area-btm-left">
             <div class="card">
                 <h2>Telemetry</h2>
-                <div class="stat-row">
-                    <span class="stat-label">Mode</span>
-                    <span class="stat-value" id="mode-value" style="text-transform: capitalize;">Clean</span>
-                </div>
                 <div class="stat-row">
                     <span class="stat-label">Position (X, Y)</span>
                     <span class="stat-value" id="pose-value">0.00, 0.00</span>
@@ -443,10 +438,6 @@
                 <div class="stat-row">
                     <span class="stat-label">IMU Yaw</span>
                     <span class="stat-value" id="imu-value">--</span>
-                </div>
-                <div class="stat-row" id="frontiers-row" style="display: none;">
-                    <span class="stat-label">Frontiers</span>
-                    <span class="stat-value" id="frontiers-value">0</span>
                 </div>
             </div>
         </div>
@@ -511,14 +502,13 @@
         pose: { x: 0, y: 0, theta: 0 },
         trajectory: [],
         plannedVertices: [],
+        explorationPath: [],
         lidarScan: [],
         map: null,
         imuHeadingDeg: null,
+        controlMode: 'clean',
         connected: false,
-        lastUpdate: 0,
-        frontiers: [],
-        targetFrontier: null,
-        controlMode: 'clean'
+        lastUpdate: 0
     };
 
     // Theme Management
@@ -533,8 +523,6 @@
             lidar: '#06b6d4',
             mapOccupied: [200, 200, 200], // Lighter walls in dark mode for contrast
             mapFree: [30, 30, 30],
-            frontier: '#a855f7',  // Purple for frontiers
-            targetFrontier: '#22c55e',  // Green for target frontier
         },
         light: {
             bg: '#f8fafc',
@@ -546,8 +534,6 @@
             lidar: '#0891b2',
             mapOccupied: [0, 0, 0],
             mapFree: [255, 255, 255],
-            frontier: '#9333ea',  // Purple for frontiers
-            targetFrontier: '#16a34a',  // Green for target frontier
         }
     };
 
@@ -610,7 +596,7 @@
     // E-Stop Logic
     let estopEnabled = false;
     
-    // Control Mode Logic
+    // Manual Control Logic
     let controlMode = 'clean';
     let maxLinear = 0.2;
     let maxAngular = 0.5;
@@ -631,11 +617,10 @@
         modeExploreBtn.classList.remove('active');
         modeManualBtn.classList.remove('active');
         
-        // Activate the current mode button
         if (controlMode === 'clean') {
             modeCleanBtn.classList.add('active');
             manualControls.style.display = 'none';
-        } else if (controlMode === 'explore') {
+        } else if (controlMode === 'exploration') {
             modeExploreBtn.classList.add('active');
             manualControls.style.display = 'none';
         } else if (controlMode === 'manual') {
@@ -646,7 +631,6 @@
 
     function setMode(mode) {
         controlMode = mode;
-        state.controlMode = mode;
         updateModeUI();
         if (ws && ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({ type: 'control', command: 'set_mode', mode: mode }));
@@ -654,7 +638,7 @@
     }
 
     modeCleanBtn.addEventListener('click', () => setMode('clean'));
-    modeExploreBtn.addEventListener('click', () => setMode('explore'));
+    modeExploreBtn.addEventListener('click', () => setMode('exploration'));
     modeManualBtn.addEventListener('click', () => setMode('manual'));
 
     linearSlider.addEventListener('input', (e) => {
@@ -975,17 +959,13 @@
                     }
                     if (msg.trajectory) state.trajectory = msg.trajectory;
                     if (msg.plannedVertices) state.plannedVertices = msg.plannedVertices;
+                    if (msg.explorationPath) state.explorationPath = msg.explorationPath;
+                    else state.explorationPath = [];
                     if (msg.lidarScan) state.lidarScan = msg.lidarScan;
                     if (msg.imuHeadingDeg !== undefined) state.imuHeadingDeg = msg.imuHeadingDeg;
-                    
-                    // Exploration mode data
-                    if (msg.frontiers) state.frontiers = msg.frontiers;
-                    else state.frontiers = [];
-                    if (msg.targetFrontier) state.targetFrontier = msg.targetFrontier;
-                    else state.targetFrontier = null;
                     if (msg.controlMode) {
                         state.controlMode = msg.controlMode;
-                        // Sync UI if mode changed from robot side
+                        // Sync local UI if mode changed from robot
                         if (controlMode !== msg.controlMode) {
                             controlMode = msg.controlMode;
                             updateModeUI();
@@ -1096,13 +1076,44 @@
             const p = worldToScreen(v[i][0], v[i][1]);
             ctx.lineTo(p.x, p.y);
         }
-        // Only close the loop for clean mode (triangle path), not for explore mode
-        if (state.controlMode === 'clean' && v.length > 2) { 
+        if (v.length > 2) { 
              const end = worldToScreen(v[0][0], v[0][1]);
              ctx.lineTo(end.x, end.y);
         }
         ctx.stroke();
         ctx.setLineDash([]);
+    }
+
+    function drawExplorationPath() {
+        if (state.explorationPath.length < 2) return;
+        
+        // Draw exploration path in a distinct color (green/teal)
+        ctx.strokeStyle = '#10b981'; // Emerald green
+        ctx.lineWidth = 3;
+        ctx.setLineDash([5, 5]);
+        ctx.beginPath();
+        const path = state.explorationPath;
+        const start = worldToScreen(path[0][0], path[0][1]);
+        ctx.moveTo(start.x, start.y);
+        for (let i = 1; i < path.length; i++) {
+            const p = worldToScreen(path[i][0], path[i][1]);
+            ctx.lineTo(p.x, p.y);
+        }
+        ctx.stroke();
+        ctx.setLineDash([]);
+        
+        // Draw target (last point) as a marker
+        if (path.length > 0) {
+            const target = path[path.length - 1];
+            const tp = worldToScreen(target[0], target[1]);
+            ctx.fillStyle = '#10b981';
+            ctx.beginPath();
+            ctx.arc(tp.x, tp.y, 8, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = '#ffffff';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+        }
     }
 
     function drawLidar() {
@@ -1118,48 +1129,6 @@
             const wy = pose.y + dist * Math.sin(pose.theta + angle);
             const p = worldToScreen(wx, wy);
             ctx.fillRect(p.x - 1.5, p.y - 1.5, 3, 3);
-        }
-    }
-
-    function drawFrontiers() {
-        if (!state.frontiers.length) return;
-        const theme = themeConfig[currentTheme];
-        
-        // Draw all frontiers as small dots
-        ctx.fillStyle = theme.frontier;
-        for (const f of state.frontiers) {
-            const p = worldToScreen(f.x, f.y);
-            ctx.beginPath();
-            ctx.arc(p.x, p.y, 4, 0, Math.PI * 2);
-            ctx.fill();
-        }
-        
-        // Draw target frontier with highlight
-        if (state.targetFrontier) {
-            const p = worldToScreen(state.targetFrontier.x, state.targetFrontier.y);
-            
-            // Outer glow
-            ctx.fillStyle = theme.targetFrontier;
-            ctx.globalAlpha = 0.3;
-            ctx.beginPath();
-            ctx.arc(p.x, p.y, 16, 0, Math.PI * 2);
-            ctx.fill();
-            
-            // Inner dot
-            ctx.globalAlpha = 1.0;
-            ctx.beginPath();
-            ctx.arc(p.x, p.y, 8, 0, Math.PI * 2);
-            ctx.fill();
-            
-            // Crosshair
-            ctx.strokeStyle = theme.targetFrontier;
-            ctx.lineWidth = 2;
-            ctx.beginPath();
-            ctx.moveTo(p.x - 12, p.y);
-            ctx.lineTo(p.x + 12, p.y);
-            ctx.moveTo(p.x, p.y - 12);
-            ctx.lineTo(p.x, p.y + 12);
-            ctx.stroke();
         }
     }
 
@@ -1207,20 +1176,6 @@
         poseValue.innerText = `${state.pose.x.toFixed(2)}, ${state.pose.y.toFixed(2)}`;
         headingValue.innerText = `${(state.pose.theta * 180 / Math.PI).toFixed(1)}°`;
         imuValue.innerText = state.imuHeadingDeg !== null ? `${state.imuHeadingDeg.toFixed(1)}°` : '--';
-        
-        // Update mode display
-        const modeValue = document.getElementById('mode-value');
-        modeValue.innerText = state.controlMode.charAt(0).toUpperCase() + state.controlMode.slice(1);
-        
-        // Show/hide frontiers count based on mode
-        const frontiersRow = document.getElementById('frontiers-row');
-        const frontiersValue = document.getElementById('frontiers-value');
-        if (state.controlMode === 'explore') {
-            frontiersRow.style.display = 'flex';
-            frontiersValue.innerText = state.frontiers.length;
-        } else {
-            frontiersRow.style.display = 'none';
-        }
 
         // Robot Status Logic
         const timeSinceUpdate = now - state.lastUpdate;
@@ -1244,8 +1199,8 @@
 
         drawGrid();
         drawMap();
-        drawFrontiers();
         drawPlannedPath();
+        drawExplorationPath();
         drawTrajectory();
         drawLidar();
         drawRobot();
