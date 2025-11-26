@@ -46,7 +46,8 @@ import numpy as np
 
 # Make 'src' importable when running this script directly
 _THIS_FILE = Path(__file__).resolve()
-_ROBOT_DIR = _THIS_FILE.parents[2]  # .../RoboMop/robot
+# _THIS_FILE is robot/src/main.py, so parents[1] is robot/
+_ROBOT_DIR = _THIS_FILE.parents[1]  # .../RoboMop/robot
 if str(_ROBOT_DIR) not in sys.path:
     sys.path.insert(0, str(_ROBOT_DIR))
 
