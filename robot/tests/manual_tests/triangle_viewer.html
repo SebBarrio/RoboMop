@@ -418,6 +418,7 @@
                 <div class="legend-row"><div class="legend-dot" style="background: var(--accent)"></div>Robot</div>
                 <div class="legend-row"><div class="legend-dot" style="background: var(--danger)"></div>Trajectory</div>
                 <div class="legend-row"><div class="legend-dot" style="background: var(--accent); border: 1px dashed rgba(255,255,255,0.5)"></div>Path Plan</div>
+                <div class="legend-row"><div class="legend-dot" style="background: #22c55e"></div>Explore Target</div>
                 <div class="legend-row"><div class="legend-dot" style="background: cyan"></div>Lidar</div>
             </div>
         </div>
@@ -447,7 +448,8 @@
                 <h2>Control Mode</h2>
                 
                 <div class="btn-group">
-                    <button id="mode-auto-btn" class="btn active">Auto</button>
+                    <button id="mode-clean-btn" class="btn active">Clean</button>
+                    <button id="mode-explore-btn" class="btn">Explore</button>
                     <button id="mode-manual-btn" class="btn">Manual</button>
                 </div>
 
@@ -504,7 +506,9 @@
         map: null,
         imuHeadingDeg: null,
         connected: false,
-        lastUpdate: 0
+        lastUpdate: 0,
+        controlMode: 'clean',
+        explorationTarget: null  // { x, y, distance }
     };
 
     // Theme Management
@@ -593,11 +597,12 @@
     let estopEnabled = false;
     
     // Manual Control Logic
-    let controlMode = 'auto';
+    let controlMode = 'clean';
     let maxLinear = 0.2;
     let maxAngular = 0.5;
     
-    const modeAutoBtn = document.getElementById('mode-auto-btn');
+    const modeCleanBtn = document.getElementById('mode-clean-btn');
+    const modeExploreBtn = document.getElementById('mode-explore-btn');
     const modeManualBtn = document.getElementById('mode-manual-btn');
     const manualControls = document.getElementById('manual-controls');
     
@@ -607,12 +612,18 @@
     const angularVal = document.getElementById('angular-val');
 
     function updateModeUI() {
-        if (controlMode === 'auto') {
-            modeAutoBtn.classList.add('active');
-            modeManualBtn.classList.remove('active');
+        // Reset all buttons
+        modeCleanBtn.classList.remove('active');
+        modeExploreBtn.classList.remove('active');
+        modeManualBtn.classList.remove('active');
+        
+        if (controlMode === 'clean') {
+            modeCleanBtn.classList.add('active');
+            manualControls.style.display = 'none';
+        } else if (controlMode === 'explore') {
+            modeExploreBtn.classList.add('active');
             manualControls.style.display = 'none';
         } else {
-            modeAutoBtn.classList.remove('active');
             modeManualBtn.classList.add('active');
             manualControls.style.display = 'block';
         }
@@ -626,7 +637,8 @@
         }
     }
 
-    modeAutoBtn.addEventListener('click', () => setMode('auto'));
+    modeCleanBtn.addEventListener('click', () => setMode('clean'));
+    modeExploreBtn.addEventListener('click', () => setMode('explore'));
     modeManualBtn.addEventListener('click', () => setMode('manual'));
 
     linearSlider.addEventListener('input', (e) => {
@@ -950,6 +962,20 @@
                     if (msg.lidarScan) state.lidarScan = msg.lidarScan;
                     if (msg.imuHeadingDeg !== undefined) state.imuHeadingDeg = msg.imuHeadingDeg;
                     
+                    // Sync control mode from robot
+                    if (msg.controlMode && msg.controlMode !== controlMode) {
+                        controlMode = msg.controlMode;
+                        state.controlMode = msg.controlMode;
+                        updateModeUI();
+                    }
+                    
+                    // Exploration target
+                    if (msg.explorationTarget) {
+                        state.explorationTarget = msg.explorationTarget;
+                    } else {
+                        state.explorationTarget = null;
+                    }
+                    
                     if (msg.map) {
                         await processMapData(msg.map);
                     }
@@ -1110,6 +1136,49 @@
         ctx.restore();
     }
 
+    function drawExplorationTarget() {
+        if (!state.explorationTarget) return;
+        
+        const p = worldToScreen(state.explorationTarget.x, state.explorationTarget.y);
+        
+        // Pulsing target marker for exploration goal
+        const pulse = 0.5 + 0.5 * Math.sin(Date.now() / 200);
+        const radius = 10 + pulse * 4;
+        
+        ctx.save();
+        
+        // Outer ring (pulsing)
+        ctx.strokeStyle = '#22c55e';  // Green for exploration target
+        ctx.lineWidth = 2;
+        ctx.globalAlpha = 0.3 + pulse * 0.4;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, radius + 6, 0, Math.PI * 2);
+        ctx.stroke();
+        
+        // Inner marker
+        ctx.globalAlpha = 0.8;
+        ctx.fillStyle = '#22c55e';
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 6, 0, Math.PI * 2);
+        ctx.fill();
+        
+        // Crosshairs
+        ctx.strokeStyle = '#22c55e';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(p.x - radius, p.y);
+        ctx.lineTo(p.x - 8, p.y);
+        ctx.moveTo(p.x + 8, p.y);
+        ctx.lineTo(p.x + radius, p.y);
+        ctx.moveTo(p.x, p.y - radius);
+        ctx.lineTo(p.x, p.y - 8);
+        ctx.moveTo(p.x, p.y + 8);
+        ctx.lineTo(p.x, p.y + radius);
+        ctx.stroke();
+        
+        ctx.restore();
+    }
+
     function loop() {
         const now = Date.now();
         frameCount++;
@@ -1148,6 +1217,7 @@
         drawPlannedPath();
         drawTrajectory();
         drawLidar();
+        drawExplorationTarget();
         drawRobot();
 
         requestAnimationFrame(loop);
