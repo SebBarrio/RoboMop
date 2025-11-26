@@ -84,6 +84,7 @@ from src.sensors.imu import MPU9250
 from src.sensors.lidar import LidarMeasurement, RPLidarSerial
 from src.slam.occupancy_grid import OccupancyGrid
 from src.slam.particle_filter import ParticleFilter
+from src.slam.pose_fusion import FusedPose, PoseEKF
 from src.slam.slam_manager import SlamManager
 
 
@@ -274,134 +275,6 @@ class HeadingFusion:
             return self._latest_yaw
 
 
-class PoseFusion:
-    """
-    Fuses odometry position (X, Y) with SLAM-corrected position.
-    
-    Uses exponential smoothing to gradually pull odometry toward SLAM estimates,
-    preventing the two from diverging too much over time.
-    """
-
-    def __init__(
-        self,
-        *,
-        position_blend: float = 0.3,
-        max_correction_m: float = 0.5,
-        min_slam_age_s: float = 0.0,
-        logger: Optional[logging.Logger] = None,
-    ) -> None:
-        """
-        Args:
-            position_blend: Blend factor [0,1] for position correction.
-                           0 = pure odometry, 1 = jump to SLAM position.
-                           Recommended: 0.2-0.4 for smooth corrections.
-            max_correction_m: Maximum position correction per update (meters).
-                             Limits sudden jumps when SLAM and odom diverge significantly.
-            min_slam_age_s: Minimum time between SLAM updates to apply correction.
-                           Helps debounce rapid SLAM updates.
-            logger: Optional logger for debug output.
-        """
-        self._position_blend = max(0.0, min(1.0, position_blend))
-        self._max_correction = float(max_correction_m)
-        self._min_slam_age = float(min_slam_age_s)
-        self._logger = logger or logging.getLogger("pose_fusion")
-        
-        self._lock = threading.Lock()
-        self._slam_pose: Optional[Pose2D] = None
-        self._slam_timestamp: float = 0.0
-        self._last_correction_time: float = 0.0
-        
-        # Track cumulative correction for monitoring
-        self._total_correction_x: float = 0.0
-        self._total_correction_y: float = 0.0
-
-    def update_slam_pose(self, slam_x: float, slam_y: float, slam_theta: float) -> None:
-        """Called when SLAM produces a new pose estimate."""
-        with self._lock:
-            self._slam_pose = Pose2D(slam_x, slam_y, slam_theta)
-            self._slam_timestamp = time.time()
-
-    def fuse(self, odom_x: float, odom_y: float, odom_theta: float) -> Tuple[float, float, float]:
-        """
-        Fuse odometry position with SLAM estimate.
-        
-        Returns:
-            Tuple of (fused_x, fused_y, odom_theta) - note: theta is passed through unchanged,
-            as heading fusion is handled separately by HeadingFusion.
-        """
-        with self._lock:
-            slam_pose = self._slam_pose
-            slam_ts = self._slam_timestamp
-        
-        # If no SLAM estimate yet, return odometry unchanged
-        if slam_pose is None:
-            return (odom_x, odom_y, odom_theta)
-        
-        now = time.time()
-        
-        # Check if enough time has passed since last SLAM update
-        if now - self._last_correction_time < self._min_slam_age:
-            return (odom_x, odom_y, odom_theta)
-        
-        # Calculate position error (odometry vs SLAM)
-        error_x = slam_pose.x - odom_x
-        error_y = slam_pose.y - odom_y
-        error_dist = math.hypot(error_x, error_y)
-        
-        if error_dist < 1e-6:
-            # Already aligned
-            return (odom_x, odom_y, odom_theta)
-        
-        # Calculate correction amount
-        correction_scale = self._position_blend
-        
-        # Limit maximum correction to prevent jumps
-        if error_dist * correction_scale > self._max_correction:
-            correction_scale = self._max_correction / error_dist
-        
-        # Apply correction
-        correction_x = error_x * correction_scale
-        correction_y = error_y * correction_scale
-        
-        fused_x = odom_x + correction_x
-        fused_y = odom_y + correction_y
-        
-        # Track cumulative correction for debugging
-        self._total_correction_x += correction_x
-        self._total_correction_y += correction_y
-        self._last_correction_time = now
-        
-        return (fused_x, fused_y, odom_theta)
-
-    def get_divergence(self, odom_x: float, odom_y: float) -> float:
-        """Return current distance between odometry and SLAM positions."""
-        with self._lock:
-            slam_pose = self._slam_pose
-        if slam_pose is None:
-            return 0.0
-        return math.hypot(slam_pose.x - odom_x, slam_pose.y - odom_y)
-
-    def get_slam_pose(self) -> Optional[Pose2D]:
-        """Return the latest SLAM pose estimate."""
-        with self._lock:
-            if self._slam_pose is None:
-                return None
-            return Pose2D(self._slam_pose.x, self._slam_pose.y, self._slam_pose.theta)
-
-    def get_total_correction(self) -> Tuple[float, float]:
-        """Return cumulative X/Y corrections applied (for monitoring)."""
-        return (self._total_correction_x, self._total_correction_y)
-
-    def reset(self) -> None:
-        """Reset the fusion state (clear SLAM pose and correction history)."""
-        with self._lock:
-            self._slam_pose = None
-            self._slam_timestamp = 0.0
-            self._last_correction_time = 0.0
-            self._total_correction_x = 0.0
-            self._total_correction_y = 0.0
-
-
 def _mean_angle(values: Sequence[float]) -> float:
     if not values:
         return 0.0
@@ -582,13 +455,17 @@ class TriangleSlamNavigator:
         planned_vertices: Sequence[Tuple[float, float]],
         viewer: Optional[ViewerClient],
         heading_fusion: Optional[HeadingFusion],
-        pose_fusion: Optional[PoseFusion],
         imu_sampler: Optional[ImuSampler],
         lidar_max_range: float,
         slam_update_hz: float,
         map_hz: float,
         state_hz: float,
         logger: logging.Logger,
+        # EKF parameters for odometry-SLAM fusion
+        ekf_process_noise_linear: float = 0.01,
+        ekf_process_noise_angular: float = 0.005,
+        ekf_measurement_noise_xy: float = 0.05,
+        ekf_measurement_noise_theta: float = 0.02,
     ) -> None:
         self._lidar = lidar
         self._motor = motor_controller
@@ -596,7 +473,6 @@ class TriangleSlamNavigator:
         self._slam = slam
         self._viewer = viewer
         self._heading_fusion = heading_fusion
-        self._pose_fusion = pose_fusion
         self._imu_sampler = imu_sampler
         self._logger = logger
         self._lidar_max_range = float(lidar_max_range)
@@ -623,6 +499,23 @@ class TriangleSlamNavigator:
         
         # Optimization: trajectory storage counter to reduce lock contention
         self._trajectory_store_counter: int = 0
+        
+        # Extended Kalman Filter for fusing odometry and SLAM poses
+        # This provides optimal fusion that accounts for uncertainty in both sources
+        self._pose_ekf = PoseEKF(
+            initial_pose=(0.0, 0.0, 0.0),
+            process_noise_linear=ekf_process_noise_linear,
+            process_noise_angular=ekf_process_noise_angular,
+            measurement_noise_xy=ekf_measurement_noise_xy,
+            measurement_noise_theta=ekf_measurement_noise_theta,
+        )
+        self._ekf_lock = threading.Lock()
+        self._logger.info(
+            "PoseEKF initialized (process_noise: linear=%.4f, angular=%.4f; "
+            "measurement_noise: xy=%.4f, theta=%.4f)",
+            ekf_process_noise_linear, ekf_process_noise_angular,
+            ekf_measurement_noise_xy, ekf_measurement_noise_theta,
+        )
 
     def set_control_mode(self, mode: str) -> None:
         with self._control_lock:
@@ -749,26 +642,26 @@ class TriangleSlamNavigator:
 
     def _update_fused_pose_and_reset_robot(self) -> None:
         """
-        Get current robot odometry, fuse it with IMU (heading) and SLAM (position),
-        and then OVERWRITE the robot's internal pose with the fused result.
-        This ensures navigation decisions use the fused pose.
+        Get current robot odometry, fuse it with IMU and SLAM via EKF, and then
+        OVERWRITE the robot's internal pose with the fused result.
+        This ensures navigation decisions use the optimally fused pose.
         """
         pose = self._robot.pose
-        x, y, theta = pose.x, pose.y, pose.theta
+        theta = pose.theta
         
-        # Fuse heading with IMU
+        # First apply IMU heading fusion if available (for high-rate heading correction)
         if self._heading_fusion is not None:
             theta = self._heading_fusion.fuse(theta)
         
-        # Fuse position with SLAM
-        if self._pose_fusion is not None:
-            x, y, _ = self._pose_fusion.fuse(x, y, theta)
+        # Now run odometry through the EKF prediction step
+        # This tracks uncertainty and prepares for SLAM measurement updates
+        with self._ekf_lock:
+            fused_ekf = self._pose_ekf.predict_from_odometry(pose.x, pose.y, theta)
         
-        # Create the fused pose
-        fused = Pose2D(x, y, theta)
+        # Create the fused pose from EKF output
+        fused = Pose2D(fused_ekf.x, fused_ekf.y, fused_ekf.theta)
         
         # CRITICAL: Update the robot controller's internal state so it knows its true pose
-        # This prevents odometry drift from accumulating unboundedly
         self._robot.reset_pose(fused)
         
         self._set_pose_snapshot(fused)
@@ -960,7 +853,7 @@ class TriangleSlamNavigator:
             
             # Optimization: Run SLAM step in thread pool to not block event loop
             try:
-                slam_mean, _ = await loop.run_in_executor(
+                slam_mean, slam_cov = await loop.run_in_executor(
                     None,  # Use default thread pool
                     lambda: self._slam.step(
                         control=ctrl,
@@ -972,17 +865,34 @@ class TriangleSlamNavigator:
                 self._slam_pose = Pose2D(slam_mean[0], slam_mean[1], slam_mean[2])
                 self._last_pose_for_slam = Pose2D(curr.x, curr.y, curr.theta)
                 
-                # Feed SLAM estimate to pose fusion for odometry correction
-                if self._pose_fusion is not None:
-                    self._pose_fusion.update_slam_pose(
-                        slam_mean[0], slam_mean[1], slam_mean[2]
+                # Apply SLAM measurement update to the EKF
+                # This fuses the SLAM-corrected pose with the odometry-predicted pose
+                with self._ekf_lock:
+                    fused, was_applied = self._pose_ekf.update_from_slam_if_significant(
+                        slam_mean[0], slam_mean[1], slam_mean[2],
+                        slam_covariance=slam_cov,
+                        position_threshold=0.5,  # Don't jump more than 50cm
+                        angle_threshold=0.5,     # Don't jump more than ~28 degrees
                     )
-                    # Log divergence periodically for debugging
-                    divergence = self._pose_fusion.get_divergence(curr.x, curr.y)
-                    if divergence > 0.1:  # Log if >10cm divergence
+                    if was_applied:
+                        # Sync odometry reference to prevent drift accumulation
+                        odom_pose = self._robot.pose
+                        self._pose_ekf.sync_odometry_reference(
+                            odom_pose.x, odom_pose.y, odom_pose.theta
+                        )
                         self._logger.debug(
-                            "Odom-SLAM divergence: %.3f m (odom: %.2f,%.2f slam: %.2f,%.2f)",
-                            divergence, curr.x, curr.y, slam_mean[0], slam_mean[1]
+                            "EKF SLAM update: fused=(%.3f, %.3f, %.2f°) "
+                            "slam=(%.3f, %.3f, %.2f°) "
+                            "uncertainty=(%.4f, %.4f, %.4f)",
+                            fused.x, fused.y, math.degrees(fused.theta),
+                            slam_mean[0], slam_mean[1], math.degrees(slam_mean[2]),
+                            fused.var_x, fused.var_y, fused.var_theta,
+                        )
+                    else:
+                        self._logger.warning(
+                            "EKF rejected SLAM update: too large jump "
+                            "(slam=(%.3f, %.3f) vs ekf=(%.3f, %.3f))",
+                            slam_mean[0], slam_mean[1], fused.x, fused.y,
                         )
             except Exception:
                 self._logger.exception("SLAM step failed")
@@ -1017,10 +927,17 @@ class TriangleSlamNavigator:
     async def _send_state_update(self) -> None:
         if self._viewer is None:
             return
-        pose = self._get_pose_snapshot()
-        # Use SLAM pose if available for visualization alignment with map
-        display_pose = self._slam_pose if self._slam_pose is not None else pose
+        pose = self._get_pose_snapshot()  # This is now the EKF-fused pose
+        # Use EKF fused pose for primary display (it's what the robot is actually using)
+        display_pose = pose
         scan_subset = self._downsample_scan(self._latest_scan, max_samples=360)
+        
+        # Get raw odometry pose for comparison
+        raw_odom = self._robot.pose
+        
+        # Get EKF uncertainty for visualization
+        with self._ekf_lock:
+            ekf_pose = self._pose_ekf.get_pose()
         
         payload: Dict[str, Any] = {
             "type": "triangle_update",
@@ -1031,8 +948,21 @@ class TriangleSlamNavigator:
             "lidarScan": [
                 [float(m.angle_radians), float(max(0.0, m.distance_m))] for m in scan_subset
             ],
-            "odomPose": {"x": pose.x, "y": pose.y, "theta": pose.theta},
+            # Raw odometry pose (before EKF fusion)
+            "odomPose": {"x": raw_odom.x, "y": raw_odom.y, "theta": raw_odom.theta},
+            # EKF fused pose with uncertainty
+            "ekfPose": {
+                "x": ekf_pose.x, "y": ekf_pose.y, "theta": ekf_pose.theta,
+                "varX": ekf_pose.var_x, "varY": ekf_pose.var_y, "varTheta": ekf_pose.var_theta,
+            },
         }
+        # SLAM pose if available
+        if self._slam_pose is not None:
+            payload["slamPose"] = {
+                "x": self._slam_pose.x, 
+                "y": self._slam_pose.y, 
+                "theta": self._slam_pose.theta,
+            }
         if self._imu_sampler is not None:
             imu_heading = self._imu_sampler.latest_heading_deg()
             if imu_heading is not None:
@@ -1040,14 +970,6 @@ class TriangleSlamNavigator:
                 age = self._imu_sampler.seconds_since_update()
                 if age is not None:
                     payload["imuHeadingAgeSec"] = age
-        # Add pose fusion info
-        if self._pose_fusion is not None:
-            slam_pose = self._pose_fusion.get_slam_pose()
-            if slam_pose is not None:
-                payload["slamPose"] = {"x": slam_pose.x, "y": slam_pose.y, "theta": slam_pose.theta}
-                payload["poseDivergence"] = self._pose_fusion.get_divergence(pose.x, pose.y)
-                corr_x, corr_y = self._pose_fusion.get_total_correction()
-                payload["totalCorrection"] = {"x": corr_x, "y": corr_y}
         await self._viewer.send_update(payload)
 
     async def _send_map_update(self) -> None:
@@ -1348,16 +1270,6 @@ async def run_test(args: argparse.Namespace) -> None:
                 yaw_bias = float(result)
             elif name == "map":
                 logger.info("Map warmup integrated %d scans", int(result))
-        
-        # CRITICAL: Reset SLAM and odometry to origin (0,0,0) after warmup
-        # During warmup, the particle filter may have drifted from the origin
-        logger.info("Resetting SLAM and odometry to origin (0,0,0) after warmup...")
-        slam.particle_filter.initialize_gaussian(
-            mean=[0.0, 0.0, 0.0],
-            covariance=np.diag([0.01, 0.01, math.radians(2.0) ** 2]),  # Small uncertainty at origin
-        )
-        robot.reset_pose(Pose2D(0.0, 0.0, 0.0))
-        logger.info("SLAM and odometry reset to origin complete")
     else:
         logger.info("Map/IMU warmup disabled; starting navigation immediately")
 
@@ -1380,22 +1292,6 @@ async def run_test(args: argparse.Namespace) -> None:
             imu_sampler = None
             logger.exception("Failed to start IMU sampler; continuing without IMU fusion")
 
-    # Pose fusion (SLAM + odometry position)
-    pose_fusion: Optional[PoseFusion] = None
-    if args.use_pose_fusion:
-        pose_fusion = PoseFusion(
-            position_blend=args.pose_fusion_blend,
-            max_correction_m=args.pose_fusion_max_correction,
-            logger=logger,
-        )
-        logger.info(
-            "Pose fusion enabled: blend=%.2f, max_correction=%.3f m",
-            args.pose_fusion_blend,
-            args.pose_fusion_max_correction,
-        )
-    else:
-        logger.info("Pose fusion disabled")
-
     # Navigator
     navigator = TriangleSlamNavigator(
         lidar=lidar,
@@ -1405,13 +1301,16 @@ async def run_test(args: argparse.Namespace) -> None:
         planned_vertices=planned,
         viewer=viewer,
         heading_fusion=heading_fusion,
-        pose_fusion=pose_fusion,
         imu_sampler=imu_sampler,
         lidar_max_range=args.lidar_max_range,
         slam_update_hz=SLAM_HZ,
         map_hz=MAP_HZ,
         state_hz=STATE_HZ,
         logger=logger,
+        ekf_process_noise_linear=args.ekf_process_noise_linear,
+        ekf_process_noise_angular=args.ekf_process_noise_angular,
+        ekf_measurement_noise_xy=args.ekf_measurement_noise_xy,
+        ekf_measurement_noise_theta=args.ekf_measurement_noise_theta,
     )
 
     if viewer is not None:
@@ -1568,25 +1467,30 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument("--imu-address", type=lambda x: int(x, 0), default=0x68, help="IMU I2C address (hex, default 0x68)")
     parser.add_argument("--invert-imu", action="store_true", default=True, help="Invert IMU yaw polarity")
 
-    # Pose fusion (SLAM + odometry) parameters
+    # EKF pose fusion parameters
     parser.add_argument(
-        "--pose-fusion-blend",
+        "--ekf-process-noise-linear",
         type=float,
-        default=0.3,
-        help="Blend factor [0,1] for SLAM->odometry position correction (0=pure odom, 1=jump to SLAM)",
+        default=0.01,
+        help="EKF process noise for linear motion (m^2, default 0.01)",
     )
     parser.add_argument(
-        "--pose-fusion-max-correction",
+        "--ekf-process-noise-angular",
         type=float,
-        default=0.1,
-        help="Maximum position correction per control cycle (meters). Limits sudden jumps.",
+        default=0.005,
+        help="EKF process noise for angular motion (rad^2, default 0.005)",
     )
     parser.add_argument(
-        "--no-pose-fusion",
-        dest="use_pose_fusion",
-        action="store_false",
-        default=True,
-        help="Disable SLAM-odometry position fusion",
+        "--ekf-measurement-noise-xy",
+        type=float,
+        default=0.05,
+        help="EKF SLAM measurement noise for x,y (m^2, default 0.05)",
+    )
+    parser.add_argument(
+        "--ekf-measurement-noise-theta",
+        type=float,
+        default=0.02,
+        help="EKF SLAM measurement noise for theta (rad^2, default 0.02)",
     )
 
     parser.add_argument(
