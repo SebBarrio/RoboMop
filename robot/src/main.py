@@ -501,6 +501,7 @@ class TriangleSlamNavigator:
         # Exploration mode state
         self._explore_path: List[Tuple[float, float]] = []
         self._explore_waypoint_index: int = 0
+        self._cached_frontiers: List[Tuple[float, float]] = []  # Cached for visualization
         self._astar_planner: AStarPlanner = AStarPlanner(
             self._slam.occupancy_grid,
             obstacle_threshold=200,
@@ -546,6 +547,7 @@ class TriangleSlamNavigator:
                     # Reset exploration state when entering explore mode
                     self._explore_path = []
                     self._explore_waypoint_index = 0
+                    self._cached_frontiers = []
 
     def set_manual_velocity(self, linear: float, angular: float) -> None:
         with self._control_lock:
@@ -831,6 +833,11 @@ class TriangleSlamNavigator:
     def _plan_to_frontier(self) -> None:
         """Find nearest frontier and plan simplified path to it."""
         pose = self._get_pose_snapshot()
+        
+        # Recalculate frontiers and cache them for visualization
+        frontiers = self._astar_planner.find_frontiers()
+        self._cached_frontiers = [f.world for f in frontiers[:100]]
+        
         result = self._astar_planner.plan_to_nearest_frontier([pose.x, pose.y])
         
         if result is None:
@@ -845,9 +852,9 @@ class TriangleSlamNavigator:
         self._explore_waypoint_index = 0
         self._logger.info(
             "Exploration: planned path to frontier at (%.2f, %.2f), "
-            "%d waypoints (simplified from %d)",
+            "%d waypoints (simplified from %d), %d frontiers detected",
             frontier.world[0], frontier.world[1],
-            len(simplified), len(path),
+            len(simplified), len(path), len(frontiers),
         )
 
     def _advance_waypoint(self) -> None:
@@ -1125,12 +1132,9 @@ class TriangleSlamNavigator:
             payload["explorePath"] = list(self._explore_path)
             payload["exploreWaypointIndex"] = self._explore_waypoint_index
         
-        # Add detected frontiers (limit to avoid excessive data)
-        frontiers = self._astar_planner.find_frontiers()
-        if frontiers:
-            # Send up to 100 frontier points for visualization
-            frontier_points = [f.world for f in frontiers[:100]]
-            payload["frontiers"] = frontier_points
+        # Add cached frontiers for visualization (recalculated only when path exhausted)
+        if self._cached_frontiers:
+            payload["frontiers"] = list(self._cached_frontiers)
         
         await self._viewer.send_update(payload)
 
