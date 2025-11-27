@@ -1115,6 +1115,23 @@ class TriangleSlamNavigator:
                 age = self._imu_sampler.seconds_since_update()
                 if age is not None:
                     payload["imuHeadingAgeSec"] = age
+        
+        # Add current control mode
+        with self._control_lock:
+            payload["controlMode"] = self._control_mode
+        
+        # Add exploration data when in explore mode
+        if self._explore_path:
+            payload["explorePath"] = list(self._explore_path)
+            payload["exploreWaypointIndex"] = self._explore_waypoint_index
+        
+        # Add detected frontiers (limit to avoid excessive data)
+        frontiers = self._astar_planner.find_frontiers()
+        if frontiers:
+            # Send up to 100 frontier points for visualization
+            frontier_points = [f.world for f in frontiers[:100]]
+            payload["frontiers"] = frontier_points
+        
         await self._viewer.send_update(payload)
 
     async def _send_map_update(self) -> None:

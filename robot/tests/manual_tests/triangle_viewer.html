@@ -417,7 +417,10 @@
                 <h2>Map Legend</h2>
                 <div class="legend-row"><div class="legend-dot" style="background: var(--accent)"></div>Robot</div>
                 <div class="legend-row"><div class="legend-dot" style="background: var(--danger)"></div>Trajectory</div>
-                <div class="legend-row"><div class="legend-dot" style="background: var(--accent); border: 1px dashed rgba(255,255,255,0.5)"></div>Path Plan</div>
+                <div class="legend-row"><div class="legend-dot" style="background: var(--accent); border: 1px dashed rgba(255,255,255,0.5)"></div>Clean Path</div>
+                <div class="legend-row"><div class="legend-dot" style="background: #10b981"></div>Explore Path</div>
+                <div class="legend-row"><div class="legend-dot" style="background: #8b5cf6"></div>Waypoints</div>
+                <div class="legend-row"><div class="legend-dot" style="background: #f59e0b"></div>Frontiers</div>
                 <div class="legend-row"><div class="legend-dot" style="background: cyan"></div>Lidar</div>
             </div>
         </div>
@@ -505,7 +508,12 @@
         map: null,
         imuHeadingDeg: null,
         connected: false,
-        lastUpdate: 0
+        lastUpdate: 0,
+        // Exploration mode data
+        explorePath: [],
+        exploreWaypointIndex: 0,
+        frontiers: [],
+        controlMode: 'clean'
     };
 
     // Theme Management
@@ -520,6 +528,10 @@
             lidar: '#06b6d4',
             mapOccupied: [200, 200, 200], // Lighter walls in dark mode for contrast
             mapFree: [30, 30, 30],
+            // Exploration visualization
+            frontier: '#f59e0b',      // Amber for frontiers
+            explorePath: '#10b981',   // Green for exploration path
+            exploreWaypoint: '#8b5cf6', // Purple for waypoints
         },
         light: {
             bg: '#f8fafc',
@@ -531,6 +543,10 @@
             lidar: '#0891b2',
             mapOccupied: [0, 0, 0],
             mapFree: [255, 255, 255],
+            // Exploration visualization
+            frontier: '#d97706',      // Darker amber for light mode
+            explorePath: '#059669',   // Darker green
+            exploreWaypoint: '#7c3aed', // Darker purple
         }
     };
 
@@ -959,6 +975,21 @@
                     if (msg.lidarScan) state.lidarScan = msg.lidarScan;
                     if (msg.imuHeadingDeg !== undefined) state.imuHeadingDeg = msg.imuHeadingDeg;
                     
+                    // Exploration data
+                    if (msg.explorePath) state.explorePath = msg.explorePath;
+                    else state.explorePath = [];
+                    if (msg.exploreWaypointIndex !== undefined) state.exploreWaypointIndex = msg.exploreWaypointIndex;
+                    if (msg.frontiers) state.frontiers = msg.frontiers;
+                    else state.frontiers = [];
+                    if (msg.controlMode) {
+                        state.controlMode = msg.controlMode;
+                        // Sync UI if mode changed externally
+                        if (controlMode !== msg.controlMode) {
+                            controlMode = msg.controlMode;
+                            updateModeUI();
+                        }
+                    }
+                    
                     if (msg.map) {
                         await processMapData(msg.map);
                     }
@@ -1087,6 +1118,79 @@
         }
     }
 
+    function drawFrontiers() {
+        if (!state.frontiers.length) return;
+        const theme = themeConfig[currentTheme];
+        ctx.fillStyle = theme.frontier;
+        ctx.globalAlpha = 0.7;
+        
+        for (const frontier of state.frontiers) {
+            const p = worldToScreen(frontier[0], frontier[1]);
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, 4, 0, Math.PI * 2);
+            ctx.fill();
+        }
+        ctx.globalAlpha = 1.0;
+    }
+
+    function drawExplorePath() {
+        if (!state.explorePath.length) return;
+        const theme = themeConfig[currentTheme];
+        
+        // Draw path line
+        ctx.strokeStyle = theme.explorePath;
+        ctx.lineWidth = 3;
+        ctx.setLineDash([8, 4]);
+        ctx.beginPath();
+        const start = worldToScreen(state.explorePath[0][0], state.explorePath[0][1]);
+        ctx.moveTo(start.x, start.y);
+        for (let i = 1; i < state.explorePath.length; i++) {
+            const p = worldToScreen(state.explorePath[i][0], state.explorePath[i][1]);
+            ctx.lineTo(p.x, p.y);
+        }
+        ctx.stroke();
+        ctx.setLineDash([]);
+        
+        // Draw waypoints
+        ctx.fillStyle = theme.exploreWaypoint;
+        for (let i = 0; i < state.explorePath.length; i++) {
+            const wp = state.explorePath[i];
+            const p = worldToScreen(wp[0], wp[1]);
+            ctx.beginPath();
+            
+            // Highlight current waypoint
+            if (i === state.exploreWaypointIndex) {
+                ctx.arc(p.x, p.y, 8, 0, Math.PI * 2);
+                ctx.fill();
+                // Add ring around current waypoint
+                ctx.strokeStyle = theme.exploreWaypoint;
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, 12, 0, Math.PI * 2);
+                ctx.stroke();
+            } else {
+                ctx.arc(p.x, p.y, 5, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        }
+        
+        // Draw target (last waypoint) with special marker
+        if (state.explorePath.length > 0) {
+            const target = state.explorePath[state.explorePath.length - 1];
+            const p = worldToScreen(target[0], target[1]);
+            ctx.strokeStyle = theme.frontier;
+            ctx.lineWidth = 2;
+            // Draw X marker
+            const s = 10;
+            ctx.beginPath();
+            ctx.moveTo(p.x - s, p.y - s);
+            ctx.lineTo(p.x + s, p.y + s);
+            ctx.moveTo(p.x + s, p.y - s);
+            ctx.lineTo(p.x - s, p.y + s);
+            ctx.stroke();
+        }
+    }
+
     function drawRobot() {
         const theme = themeConfig[currentTheme];
         const p = worldToScreen(state.pose.x, state.pose.y);
@@ -1154,7 +1258,9 @@
 
         drawGrid();
         drawMap();
+        drawFrontiers();
         drawPlannedPath();
+        drawExplorePath();
         drawTrajectory();
         drawLidar();
         drawRobot();
