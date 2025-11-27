@@ -1,15 +1,22 @@
-"""A* path planning utilities for navigating occupancy grids."""
+"""A* path planning utilities for navigating occupancy grids.
+
+This module provides path planning that accounts for robot physical dimensions
+by inflating obstacles based on the robot's footprint.
+"""
 
 from __future__ import annotations
 
 import heapq
 import math
 from dataclasses import dataclass
-from typing import Iterable, Sequence
+from typing import Iterable, Optional, Sequence, TYPE_CHECKING
 
 import numpy as np
 
 from src.slam.occupancy_grid import OccupancyGrid
+
+if TYPE_CHECKING:
+    from src.navigation.robot_safety import RobotFootprint
 
 
 GridCell = tuple[int, int]
@@ -25,7 +32,18 @@ class Frontier:
 
 
 class AStarPlanner:
-    """Plan collision-free paths on an occupancy grid using the A* algorithm."""
+    """Plan collision-free paths on an occupancy grid using the A* algorithm.
+    
+    The planner supports robot footprint-aware inflation to ensure paths are
+    traversable by the actual robot dimensions, not just a point.
+    
+    Attributes:
+        grid: The occupancy grid to plan on.
+        obstacle_threshold: Cell value above which a cell is considered occupied.
+        inflation_radius: Number of cells to inflate around obstacles.
+        robot_footprint: Optional robot footprint for automatic inflation calculation.
+        allow_diagonal: Whether diagonal movement is allowed.
+    """
 
     def __init__(
         self,
@@ -33,8 +51,20 @@ class AStarPlanner:
         *,
         obstacle_threshold: int = 200,
         inflation_radius: int = 0,
+        robot_footprint: Optional["RobotFootprint"] = None,
         allow_diagonal: bool = False,
     ) -> None:
+        """Initialize the A* path planner.
+        
+        Args:
+            grid: Occupancy grid to plan paths on.
+            obstacle_threshold: Cells with values >= this are obstacles (0-255).
+            inflation_radius: Manual inflation radius in cells. If robot_footprint
+                is provided, this value is computed automatically and this
+                parameter is ignored.
+            robot_footprint: Robot physical dimensions for automatic inflation.
+            allow_diagonal: Enable 8-connected movement instead of 4-connected.
+        """
         if not 0 <= obstacle_threshold <= 255:
             raise ValueError("obstacle_threshold must be between 0 and 255")
         if inflation_radius < 0:
@@ -42,18 +72,125 @@ class AStarPlanner:
 
         self._grid = grid
         self._obstacle_threshold = int(obstacle_threshold)
-        self._inflation_radius = int(inflation_radius)
+        self._robot_footprint = robot_footprint
         self._allow_diagonal = bool(allow_diagonal)
         self._frontier_cells: set[GridCell] = set()
         self._frontier_neighbors: dict[GridCell, set[GridCell]] = {}
+        
+        # Compute inflation radius from robot footprint if provided
+        if robot_footprint is not None:
+            self._inflation_radius = robot_footprint.inflation_cells(grid.resolution)
+        else:
+            self._inflation_radius = int(inflation_radius)
+        
+        # Cache for inflated obstacle map (invalidated when grid changes)
+        self._inflated_map: Optional[np.ndarray] = None
+        self._inflated_map_version: int = 0
 
     @property
     def obstacle_threshold(self) -> int:
         return self._obstacle_threshold
 
     @property
+    def inflation_radius(self) -> int:
+        """Current inflation radius in grid cells."""
+        return self._inflation_radius
+    
+    @property
+    def robot_footprint(self) -> Optional["RobotFootprint"]:
+        """Robot footprint used for inflation calculation."""
+        return self._robot_footprint
+    
+    def set_robot_footprint(self, footprint: Optional["RobotFootprint"]) -> None:
+        """Update the robot footprint and recalculate inflation radius.
+        
+        Args:
+            footprint: New robot footprint, or None to disable footprint-based inflation.
+        """
+        self._robot_footprint = footprint
+        if footprint is not None:
+            self._inflation_radius = footprint.inflation_cells(self._grid.resolution)
+        # Invalidate cached inflated map
+        self._inflated_map = None
+
+    @property
     def frontier_cells(self) -> frozenset[GridCell]:
         return frozenset(self._frontier_cells)
+    
+    def _get_inflated_map(self) -> np.ndarray:
+        """Get or compute the inflated obstacle map.
+        
+        This method caches the inflated map for performance. The cache is
+        invalidated when the inflation radius changes.
+        
+        Returns:
+            Boolean array where True indicates a cell is blocked (obstacle or
+            within inflation radius of an obstacle).
+        """
+        if self._inflated_map is not None:
+            return self._inflated_map
+        
+        # Create base obstacle mask
+        obstacles = self._grid.array >= self._obstacle_threshold
+        
+        if self._inflation_radius == 0:
+            self._inflated_map = obstacles
+            return self._inflated_map
+        
+        # Inflate obstacles using morphological dilation
+        # Create a circular structuring element for the inflation
+        radius = self._inflation_radius
+        y, x = np.ogrid[-radius:radius + 1, -radius:radius + 1]
+        structuring_element = x * x + y * y <= radius * radius
+        
+        # Use scipy if available, otherwise fall back to manual dilation
+        try:
+            from scipy.ndimage import binary_dilation
+            inflated = binary_dilation(obstacles, structure=structuring_element)
+        except ImportError:
+            # Manual dilation fallback
+            inflated = self._manual_dilate(obstacles, structuring_element)
+        
+        self._inflated_map = inflated
+        return self._inflated_map
+    
+    def _manual_dilate(
+        self,
+        image: np.ndarray,
+        structuring_element: np.ndarray,
+    ) -> np.ndarray:
+        """Manually dilate a binary image (fallback if scipy unavailable)."""
+        h, w = image.shape
+        sh, sw = structuring_element.shape
+        pad_h, pad_w = sh // 2, sw // 2
+        
+        # Pad the image
+        padded = np.pad(image, ((pad_h, pad_h), (pad_w, pad_w)), mode='constant')
+        
+        result = np.zeros_like(image, dtype=bool)
+        
+        # Find all obstacle cells
+        obstacle_rows, obstacle_cols = np.where(image)
+        
+        # Expand each obstacle cell by the structuring element
+        for r, c in zip(obstacle_rows, obstacle_cols):
+            for dr in range(sh):
+                for dc in range(sw):
+                    if structuring_element[dr, dc]:
+                        nr = r + dr - pad_h
+                        nc = c + dc - pad_w
+                        if 0 <= nr < h and 0 <= nc < w:
+                            result[nr, nc] = True
+        
+        return result
+    
+    def invalidate_cache(self) -> None:
+        """Invalidate the cached inflated map.
+        
+        Call this method after the occupancy grid has been updated to ensure
+        the next path planning operation uses fresh obstacle data.
+        """
+        self._inflated_map = None
 
     def plan(
         self,
@@ -226,30 +363,44 @@ class AStarPlanner:
         return total
 
     def _is_traversable(self, cell: GridCell, *, allow_unknown: bool) -> bool:
+        """Check if a cell is traversable considering robot footprint inflation.
+        
+        Args:
+            cell: (row, col) grid cell to check.
+            allow_unknown: If True, unknown cells are considered traversable.
+            
+        Returns:
+            True if the robot can safely occupy this cell.
+        """
         row, col = cell
         value = self._grid.get_cell(row, col)
-        if value >= self._obstacle_threshold:
-            return False
+        
+        # Check unknown status first
         if value == OccupancyGrid.UNKNOWN_VALUE and not allow_unknown:
             return False
-        if self._inflation_radius > 0 and self._has_nearby_obstacle(row, col):
+        
+        # Use the inflated map for obstacle checking (includes robot footprint)
+        if self._inflation_radius > 0:
+            inflated = self._get_inflated_map()
+            if inflated[row, col]:
+                return False
+        elif value >= self._obstacle_threshold:
             return False
+        
         return True
 
     def _has_nearby_obstacle(self, row: int, col: int) -> bool:
+        """Check if there's an obstacle within inflation radius of a cell.
+        
+        This method is maintained for backward compatibility but the main
+        traversability check now uses the cached inflated map.
+        """
         if self._inflation_radius == 0:
             return False
-        for r in range(
-            max(0, row - self._inflation_radius),
-            min(self._grid.height, row + self._inflation_radius + 1),
-        ):
-            for c in range(
-                max(0, col - self._inflation_radius),
-                min(self._grid.width, col + self._inflation_radius + 1),
-            ):
-                if self._grid.get_cell(r, c) >= self._obstacle_threshold:
-                    return True
-        return False
+        
+        # Use cached inflated map for efficiency
+        inflated = self._get_inflated_map()
+        return bool(inflated[row, col])
 
     def _traversable_neighbors(self, cell: GridCell) -> set[GridCell]:
         neighbors: set[GridCell] = set()
@@ -277,4 +428,5 @@ class AStarPlanner:
         return (x, y)
 
 
-__all__ = ["AStarPlanner", "Frontier"]
+__all__ = ["AStarPlanner", "Frontier", "GridCell"]
+

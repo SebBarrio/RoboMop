@@ -83,6 +83,11 @@ from src.sensors.encoders import EncoderReading, GpioZeroEncoderHardware, Quadra
 from src.sensors.imu import MPU9250
 from src.sensors.lidar import LidarMeasurement, RPLidarSerial
 from src.navigation.astar import AStarPlanner
+from src.navigation.robot_safety import (
+    CollisionThreat,
+    LidarObstacleDetector,
+    RobotFootprint,
+)
 from src.slam.occupancy_grid import OccupancyGrid
 from src.slam.particle_filter import ParticleFilter
 from src.slam.pose_fusion import FusedPose, PoseEKF
@@ -130,6 +135,14 @@ SLAM_SCAN_DOWNSAMPLE: int = 360  # Max points to process in SLAM (reduces CPU)
 TRAJECTORY_STORE_INTERVAL: int = 5  # Store trajectory every N control iterations
 SLAM_MOTION_THRESHOLD_M: float = 0.01  # Skip SLAM if moved less than this (meters)
 SLAM_ROTATION_THRESHOLD_RAD: float = 0.02  # Skip SLAM if rotated less than this (radians)
+
+# Robot safety configuration
+DEFAULT_ROBOT_WIDTH: float = 0.35  # Robot width in meters
+DEFAULT_ROBOT_LENGTH: float = 0.40  # Robot length in meters
+DEFAULT_SAFETY_MARGIN: float = 0.10  # Safety buffer around robot (meters)
+DEFAULT_CRITICAL_DISTANCE: float = 0.20  # Emergency stop distance (meters)
+DEFAULT_WARNING_DISTANCE: float = 0.50  # Slowdown distance (meters)
+DEFAULT_OBSTACLE_AVOIDANCE: bool = True  # Enable raw LIDAR obstacle avoidance
 
 
 # -----------------------------
@@ -467,6 +480,11 @@ class TriangleSlamNavigator:
         ekf_process_noise_angular: float = 0.005,
         ekf_measurement_noise_xy: float = 0.05,
         ekf_measurement_noise_theta: float = 0.02,
+        # Robot safety parameters
+        robot_footprint: Optional[RobotFootprint] = None,
+        enable_obstacle_avoidance: bool = True,
+        critical_distance: float = 0.20,
+        warning_distance: float = 0.50,
     ) -> None:
         self._lidar = lidar
         self._motor = motor_controller
@@ -493,6 +511,24 @@ class TriangleSlamNavigator:
         self._running = False
         self._estop_active = False
         
+        # Robot safety configuration
+        self._robot_footprint = robot_footprint or RobotFootprint()
+        self._enable_obstacle_avoidance = enable_obstacle_avoidance
+        self._obstacle_detector = LidarObstacleDetector(
+            footprint=self._robot_footprint,
+            critical_distance=critical_distance,
+            warning_distance=warning_distance,
+        )
+        self._latest_threat: Optional[CollisionThreat] = None
+        self._threat_lock = threading.Lock()
+        self._logger.info(
+            "Robot safety initialized (footprint: %.2fm x %.2fm, margin: %.2fm, "
+            "obstacle_avoidance: %s, critical: %.2fm, warning: %.2fm)",
+            self._robot_footprint.width, self._robot_footprint.length,
+            self._robot_footprint.safety_margin, enable_obstacle_avoidance,
+            critical_distance, warning_distance,
+        )
+        
         # Control mode state
         self._control_mode: str = "clean"  # "clean", "explore", or "manual"
         self._manual_cmd: Tuple[float, float] = (0.0, 0.0)  # linear, angular
@@ -505,8 +541,12 @@ class TriangleSlamNavigator:
         self._astar_planner: AStarPlanner = AStarPlanner(
             self._slam.occupancy_grid,
             obstacle_threshold=200,
-            inflation_radius=1,  # 1 cell safety margin
+            robot_footprint=self._robot_footprint,  # Use robot footprint for inflation
             allow_diagonal=False,
+        )
+        self._logger.info(
+            "A* planner initialized with robot footprint inflation: %d cells",
+            self._astar_planner.inflation_radius,
         )
         
         # Optimization: trajectory storage counter to reduce lock contention
@@ -565,6 +605,85 @@ class TriangleSlamNavigator:
                 self._logger.error(f"Failed to stop motors on E-stop: {e}")
         else:
             self._logger.info("E-STOP DISABLED. Resuming.")
+    
+    def set_obstacle_avoidance(self, enabled: bool) -> None:
+        """Enable or disable raw LIDAR obstacle avoidance."""
+        if enabled != self._enable_obstacle_avoidance:
+            self._logger.info("Obstacle avoidance: %s", "ENABLED" if enabled else "DISABLED")
+            self._enable_obstacle_avoidance = enabled
+    
+    def _get_scan_for_obstacle_detection(
+        self,
+    ) -> List[Tuple[float, float, int]]:
+        """Convert latest LIDAR scan to obstacle detection format.
+        
+        Returns:
+            List of (angle_radians, distance_m, quality) tuples.
+        """
+        scan = self._latest_scan
+        if not scan:
+            return []
+        return [(m.angle_radians, m.distance_m, m.quality) for m in scan]
+    
+    def _apply_obstacle_avoidance(
+        self,
+        desired_linear: float,
+        desired_angular: float,
+    ) -> Tuple[float, float]:
+        """Apply obstacle avoidance to desired velocity commands.
+        
+        Uses raw LIDAR scan data (not occupancy grid) for real-time collision
+        avoidance. This provides faster response to obstacles than grid-based
+        methods.
+        
+        Args:
+            desired_linear: Desired linear velocity (m/s).
+            desired_angular: Desired angular velocity (rad/s).
+            
+        Returns:
+            Tuple of (safe_linear, safe_angular) velocities.
+        """
+        if not self._enable_obstacle_avoidance:
+            return desired_linear, desired_angular
+        
+        scan_data = self._get_scan_for_obstacle_detection()
+        if not scan_data:
+            # No scan data available, allow commanded motion but log warning
+            return desired_linear, desired_angular
+        
+        safe_linear, safe_angular, threat = self._obstacle_detector.compute_safe_velocity(
+            scan_data,
+            desired_linear,
+            desired_angular,
+            max_linear=self._robot.max_linear_speed,
+            max_angular=self._robot.max_angular_speed,
+        )
+        
+        # Store threat for visualization
+        with self._threat_lock:
+            self._latest_threat = threat
+        
+        # Log significant velocity reductions
+        if threat is not None:
+            if threat.severity > 0.8:
+                self._logger.warning(
+                    "Obstacle avoidance: %s obstacle at %.2fm, severity=%.2f, "
+                    "linear: %.2f->%.2f, angular: %.2f->%.2f",
+                    threat.direction, threat.zone.distance, threat.severity,
+                    desired_linear, safe_linear, desired_angular, safe_angular,
+                )
+            elif threat.severity > 0.5:
+                self._logger.debug(
+                    "Obstacle avoidance: %s obstacle at %.2fm (slowing)",
+                    threat.direction, threat.zone.distance,
+                )
+        
+        return safe_linear, safe_angular
+    
+    def _get_latest_threat(self) -> Optional[CollisionThreat]:
+        """Get the latest collision threat for visualization."""
+        with self._threat_lock:
+            return self._latest_threat
 
     async def run(self) -> None:
         self._running = True
@@ -642,7 +761,11 @@ class TriangleSlamNavigator:
                         manual_linear, manual_angular = self._manual_cmd
                 
                 if is_manual:
-                    self._robot.set_velocity_command(linear=manual_linear, angular=manual_angular)
+                    # Apply obstacle avoidance to manual commands (raw LIDAR-based)
+                    safe_linear, safe_angular = self._apply_obstacle_avoidance(
+                        manual_linear, manual_angular
+                    )
+                    self._robot.set_velocity_command(linear=safe_linear, angular=safe_angular)
                 elif self._control_mode == "clean" and self._vertices:
                     self._update_pure_pursuit_control()
                 elif self._control_mode == "explore":
@@ -789,7 +912,9 @@ class TriangleSlamNavigator:
         max_omega = self._robot.max_angular_speed
         omega = max(-max_omega, min(max_omega, omega))
 
-        self._robot.set_velocity_command(linear=linear_cmd, angular=omega)
+        # Apply obstacle avoidance using raw LIDAR data
+        safe_linear, safe_omega = self._apply_obstacle_avoidance(linear_cmd, omega)
+        self._robot.set_velocity_command(linear=safe_linear, angular=safe_omega)
         return False
 
     def _update_pure_pursuit_control(self) -> None:
@@ -1008,6 +1133,9 @@ class TriangleSlamNavigator:
                 self._slam_pose = Pose2D(slam_mean[0], slam_mean[1], slam_mean[2])
                 self._last_pose_for_slam = Pose2D(curr.x, curr.y, curr.theta)
                 
+                # Invalidate A* planner cache since map has been updated
+                self._astar_planner.invalidate_cache()
+                
                 # Apply SLAM measurement update to the EKF
                 # This fuses the SLAM-corrected pose with the odometry-predicted pose
                 with self._ekf_lock:
@@ -1135,6 +1263,25 @@ class TriangleSlamNavigator:
         # Add cached frontiers for visualization (recalculated only when path exhausted)
         if self._cached_frontiers:
             payload["frontiers"] = list(self._cached_frontiers)
+        
+        # Add robot safety information
+        payload["robotFootprint"] = {
+            "width": self._robot_footprint.total_width,
+            "length": self._robot_footprint.total_length,
+            "circumscribedRadius": self._robot_footprint.circumscribed_radius,
+        }
+        payload["obstacleAvoidanceEnabled"] = self._enable_obstacle_avoidance
+        
+        # Add collision threat if present
+        threat = self._get_latest_threat()
+        if threat is not None:
+            payload["collisionThreat"] = {
+                "direction": threat.direction,
+                "distance": threat.zone.distance,
+                "angle": threat.zone.angle,
+                "severity": threat.severity,
+                "timeToCollision": threat.time_to_collision,
+            }
         
         await self._viewer.send_update(payload)
 
@@ -1458,6 +1605,18 @@ async def run_test(args: argparse.Namespace) -> None:
             imu_sampler = None
             logger.exception("Failed to start IMU sampler; continuing without IMU fusion")
 
+    # Robot footprint configuration
+    robot_footprint = RobotFootprint(
+        width=args.robot_width,
+        length=args.robot_length,
+        safety_margin=args.safety_margin,
+    )
+    logger.info(
+        "Robot footprint configured: %.2fm x %.2fm (margin: %.2fm, circumscribed radius: %.3fm)",
+        robot_footprint.width, robot_footprint.length,
+        robot_footprint.safety_margin, robot_footprint.circumscribed_radius,
+    )
+
     # Navigator
     navigator = TriangleSlamNavigator(
         lidar=lidar,
@@ -1477,6 +1636,10 @@ async def run_test(args: argparse.Namespace) -> None:
         ekf_process_noise_angular=args.ekf_process_noise_angular,
         ekf_measurement_noise_xy=args.ekf_measurement_noise_xy,
         ekf_measurement_noise_theta=args.ekf_measurement_noise_theta,
+        robot_footprint=robot_footprint,
+        enable_obstacle_avoidance=args.obstacle_avoidance,
+        critical_distance=args.critical_distance,
+        warning_distance=args.warning_distance,
     )
 
     if viewer is not None:
@@ -1657,6 +1820,51 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         type=float,
         default=0.02,
         help="EKF SLAM measurement noise for theta (rad^2, default 0.02)",
+    )
+
+    # Robot safety parameters
+    parser.add_argument(
+        "--robot-width",
+        type=float,
+        default=DEFAULT_ROBOT_WIDTH,
+        help="Robot width in meters (default: 0.35)",
+    )
+    parser.add_argument(
+        "--robot-length",
+        type=float,
+        default=DEFAULT_ROBOT_LENGTH,
+        help="Robot length in meters (default: 0.40)",
+    )
+    parser.add_argument(
+        "--safety-margin",
+        type=float,
+        default=DEFAULT_SAFETY_MARGIN,
+        help="Safety margin around robot in meters (default: 0.10)",
+    )
+    parser.add_argument(
+        "--critical-distance",
+        type=float,
+        default=DEFAULT_CRITICAL_DISTANCE,
+        help="Emergency stop distance in meters (default: 0.20)",
+    )
+    parser.add_argument(
+        "--warning-distance",
+        type=float,
+        default=DEFAULT_WARNING_DISTANCE,
+        help="Slowdown distance in meters (default: 0.50)",
+    )
+    parser.add_argument(
+        "--obstacle-avoidance",
+        dest="obstacle_avoidance",
+        action="store_true",
+        default=DEFAULT_OBSTACLE_AVOIDANCE,
+        help="Enable raw LIDAR obstacle avoidance (default: enabled)",
+    )
+    parser.add_argument(
+        "--no-obstacle-avoidance",
+        dest="obstacle_avoidance",
+        action="store_false",
+        help="Disable raw LIDAR obstacle avoidance",
     )
 
     parser.add_argument(
