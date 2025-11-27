@@ -447,7 +447,8 @@
                 <h2>Control Mode</h2>
                 
                 <div class="btn-group">
-                    <button id="mode-auto-btn" class="btn active">Auto</button>
+                    <button id="mode-clean-btn" class="btn active">Clean</button>
+                    <button id="mode-explore-btn" class="btn">Explore</button>
                     <button id="mode-manual-btn" class="btn">Manual</button>
                 </div>
 
@@ -593,11 +594,12 @@
     let estopEnabled = false;
     
     // Manual Control Logic
-    let controlMode = 'auto';
+    let controlMode = 'clean';
     let maxLinear = 0.2;
     let maxAngular = 0.5;
     
-    const modeAutoBtn = document.getElementById('mode-auto-btn');
+    const modeCleanBtn = document.getElementById('mode-clean-btn');
+    const modeExploreBtn = document.getElementById('mode-explore-btn');
     const modeManualBtn = document.getElementById('mode-manual-btn');
     const manualControls = document.getElementById('manual-controls');
     
@@ -607,12 +609,18 @@
     const angularVal = document.getElementById('angular-val');
 
     function updateModeUI() {
-        if (controlMode === 'auto') {
-            modeAutoBtn.classList.add('active');
-            modeManualBtn.classList.remove('active');
+        // Reset all buttons
+        modeCleanBtn.classList.remove('active');
+        modeExploreBtn.classList.remove('active');
+        modeManualBtn.classList.remove('active');
+        
+        if (controlMode === 'clean') {
+            modeCleanBtn.classList.add('active');
+            manualControls.style.display = 'none';
+        } else if (controlMode === 'explore') {
+            modeExploreBtn.classList.add('active');
             manualControls.style.display = 'none';
         } else {
-            modeAutoBtn.classList.remove('active');
             modeManualBtn.classList.add('active');
             manualControls.style.display = 'block';
         }
@@ -626,7 +634,8 @@
         }
     }
 
-    modeAutoBtn.addEventListener('click', () => setMode('auto'));
+    modeCleanBtn.addEventListener('click', () => setMode('clean'));
+    modeExploreBtn.addEventListener('click', () => setMode('explore'));
     modeManualBtn.addEventListener('click', () => setMode('manual'));
 
     linearSlider.addEventListener('input', (e) => {

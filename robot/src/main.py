@@ -82,6 +82,7 @@ from src.control.robot_controller import Pose2D, RobotController
 from src.sensors.encoders import EncoderReading, GpioZeroEncoderHardware, QuadratureEncoder
 from src.sensors.imu import MPU9250
 from src.sensors.lidar import LidarMeasurement, RPLidarSerial
+from src.navigation.astar import AStarPlanner
 from src.slam.occupancy_grid import OccupancyGrid
 from src.slam.particle_filter import ParticleFilter
 from src.slam.pose_fusion import FusedPose, PoseEKF
@@ -493,9 +494,19 @@ class TriangleSlamNavigator:
         self._estop_active = False
         
         # Control mode state
-        self._control_mode: str = "auto"  # "auto" or "manual"
+        self._control_mode: str = "clean"  # "clean", "explore", or "manual"
         self._manual_cmd: Tuple[float, float] = (0.0, 0.0)  # linear, angular
         self._control_lock = threading.Lock()
+        
+        # Exploration mode state
+        self._explore_path: List[Tuple[float, float]] = []
+        self._explore_waypoint_index: int = 0
+        self._astar_planner: AStarPlanner = AStarPlanner(
+            self._slam.occupancy_grid,
+            obstacle_threshold=200,
+            inflation_radius=1,  # 1 cell safety margin
+            allow_diagonal=False,
+        )
         
         # Optimization: trajectory storage counter to reduce lock contention
         self._trajectory_store_counter: int = 0
@@ -519,7 +530,7 @@ class TriangleSlamNavigator:
 
     def set_control_mode(self, mode: str) -> None:
         with self._control_lock:
-            if mode not in ("auto", "manual"):
+            if mode not in ("clean", "explore", "manual"):
                 self._logger.warning("Invalid control mode: %s", mode)
                 return
             if mode != self._control_mode:
@@ -528,9 +539,13 @@ class TriangleSlamNavigator:
                 # Reset commands when switching
                 self._manual_cmd = (0.0, 0.0)
                 if mode == "manual":
-                    # Cancel any active auto goals
+                    # Cancel any active goals
                     self._robot.cancel_goal()
                     self._robot.set_velocity_command(linear=0.0, angular=0.0)
+                elif mode == "explore":
+                    # Reset exploration state when entering explore mode
+                    self._explore_path = []
+                    self._explore_waypoint_index = 0
 
     def set_manual_velocity(self, linear: float, angular: float) -> None:
         with self._control_lock:
@@ -626,8 +641,10 @@ class TriangleSlamNavigator:
                 
                 if is_manual:
                     self._robot.set_velocity_command(linear=manual_linear, angular=manual_angular)
-                elif self._vertices:
+                elif self._control_mode == "clean" and self._vertices:
                     self._update_pure_pursuit_control()
+                elif self._control_mode == "explore":
+                    self._update_exploration_control()
                     
                 self._robot.update(dt=dt)
             except Exception:
@@ -790,6 +807,49 @@ class TriangleSlamNavigator:
         if reached:
             self._advance_waypoint()
 
+    def _update_exploration_control(self) -> None:
+        """Update control for exploration mode - navigate to nearest frontier."""
+        # Re-plan if path exhausted or empty
+        if not self._explore_path or self._explore_waypoint_index >= len(self._explore_path):
+            self._plan_to_frontier()
+            if not self._explore_path:
+                # No frontiers found - exploration complete, stop the robot
+                self._robot.set_velocity_command(linear=0.0, angular=0.0)
+                return
+        
+        # Navigate to current waypoint using same logic as clean mode
+        target = self._explore_path[self._explore_waypoint_index]
+        prev_idx = max(0, self._explore_waypoint_index - 1)
+        segment_start = self._explore_path[prev_idx]
+        
+        reached = self.move_to_waypoint(target, segment_start)
+        if reached:
+            self._explore_waypoint_index += 1
+            if self._explore_waypoint_index >= len(self._explore_path):
+                self._logger.info("Exploration: reached frontier, searching for next...")
+
+    def _plan_to_frontier(self) -> None:
+        """Find nearest frontier and plan simplified path to it."""
+        pose = self._get_pose_snapshot()
+        result = self._astar_planner.plan_to_nearest_frontier([pose.x, pose.y])
+        
+        if result is None:
+            self._explore_path = []
+            self._explore_waypoint_index = 0
+            self._logger.info("No reachable frontiers - exploration complete")
+            return
+        
+        frontier, path = result
+        simplified = self._simplify_path(path, tolerance=0.15)
+        self._explore_path = simplified
+        self._explore_waypoint_index = 0
+        self._logger.info(
+            "Exploration: planned path to frontier at (%.2f, %.2f), "
+            "%d waypoints (simplified from %d)",
+            frontier.world[0], frontier.world[1],
+            len(simplified), len(path),
+        )
+
     def _advance_waypoint(self) -> None:
         old_idx = self._waypoint_index
         self._waypoint_index += 1
@@ -797,6 +857,52 @@ class TriangleSlamNavigator:
             # Loop back to 1 because 0 is same as last (closed loop visual artifact)
             self._waypoint_index = 1
         self._logger.info("Advancing waypoint: %d -> %d", old_idx, self._waypoint_index)
+
+    def _simplify_path(
+        self,
+        path: List[Tuple[float, float]],
+        tolerance: float = 0.15,  # ~1 cell at 20cm resolution
+    ) -> List[Tuple[float, float]]:
+        """Douglas-Peucker-like simplification to reduce waypoint count.
+        
+        Args:
+            path: List of (x, y) waypoints from A* planner.
+            tolerance: Maximum perpendicular distance to drop points (meters).
+            
+        Returns:
+            Simplified list of key waypoints.
+        """
+        if len(path) <= 2:
+            return list(path)
+        
+        # Find point with max perpendicular distance from line start->end
+        start = np.array(path[0])
+        end = np.array(path[-1])
+        line_vec = end - start
+        line_len = float(np.linalg.norm(line_vec))
+        
+        if line_len < 1e-6:
+            return [path[0], path[-1]]
+        
+        line_dir = line_vec / line_len
+        max_dist = 0.0
+        max_idx = 0
+        
+        for i in range(1, len(path) - 1):
+            pt = np.array(path[i])
+            proj = float(np.dot(pt - start, line_dir))
+            proj_pt = start + proj * line_dir
+            dist = float(np.linalg.norm(pt - proj_pt))
+            if dist > max_dist:
+                max_dist = dist
+                max_idx = i
+        
+        if max_dist > tolerance:
+            left = self._simplify_path(path[: max_idx + 1], tolerance)
+            right = self._simplify_path(path[max_idx:], tolerance)
+            return left[:-1] + right
+        else:
+            return [path[0], path[-1]]
 
     def _set_pose_snapshot(self, pose: Pose2D) -> None:
         with self._pose_lock:
