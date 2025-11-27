@@ -417,8 +417,7 @@
                 <h2>Map Legend</h2>
                 <div class="legend-row"><div class="legend-dot" style="background: var(--accent)"></div>Robot</div>
                 <div class="legend-row"><div class="legend-dot" style="background: var(--danger)"></div>Trajectory</div>
-                <div class="legend-row"><div class="legend-dot" style="background: var(--accent); border: 1px dashed rgba(255,255,255,0.5)"></div>Clean Path</div>
-                <div class="legend-row"><div class="legend-dot" style="background: #10b981; border: 1px dashed rgba(255,255,255,0.5)"></div>Explore Path</div>
+                <div class="legend-row"><div class="legend-dot" style="background: var(--accent); border: 1px dashed rgba(255,255,255,0.5)"></div>Path Plan</div>
                 <div class="legend-row"><div class="legend-dot" style="background: cyan"></div>Lidar</div>
             </div>
         </div>
@@ -448,8 +447,7 @@
                 <h2>Control Mode</h2>
                 
                 <div class="btn-group">
-                    <button id="mode-clean-btn" class="btn active">Clean</button>
-                    <button id="mode-explore-btn" class="btn">Explore</button>
+                    <button id="mode-auto-btn" class="btn active">Auto</button>
                     <button id="mode-manual-btn" class="btn">Manual</button>
                 </div>
 
@@ -502,11 +500,9 @@
         pose: { x: 0, y: 0, theta: 0 },
         trajectory: [],
         plannedVertices: [],
-        explorationPath: [],
         lidarScan: [],
         map: null,
         imuHeadingDeg: null,
-        controlMode: 'clean',
         connected: false,
         lastUpdate: 0
     };
@@ -597,12 +593,11 @@
     let estopEnabled = false;
     
     // Manual Control Logic
-    let controlMode = 'clean';
+    let controlMode = 'auto';
     let maxLinear = 0.2;
     let maxAngular = 0.5;
     
-    const modeCleanBtn = document.getElementById('mode-clean-btn');
-    const modeExploreBtn = document.getElementById('mode-explore-btn');
+    const modeAutoBtn = document.getElementById('mode-auto-btn');
     const modeManualBtn = document.getElementById('mode-manual-btn');
     const manualControls = document.getElementById('manual-controls');
     
@@ -612,18 +607,12 @@
     const angularVal = document.getElementById('angular-val');
 
     function updateModeUI() {
-        // Reset all buttons
-        modeCleanBtn.classList.remove('active');
-        modeExploreBtn.classList.remove('active');
-        modeManualBtn.classList.remove('active');
-        
-        if (controlMode === 'clean') {
-            modeCleanBtn.classList.add('active');
+        if (controlMode === 'auto') {
+            modeAutoBtn.classList.add('active');
+            modeManualBtn.classList.remove('active');
             manualControls.style.display = 'none';
-        } else if (controlMode === 'exploration') {
-            modeExploreBtn.classList.add('active');
-            manualControls.style.display = 'none';
-        } else if (controlMode === 'manual') {
+        } else {
+            modeAutoBtn.classList.remove('active');
             modeManualBtn.classList.add('active');
             manualControls.style.display = 'block';
         }
@@ -637,8 +626,7 @@
         }
     }
 
-    modeCleanBtn.addEventListener('click', () => setMode('clean'));
-    modeExploreBtn.addEventListener('click', () => setMode('exploration'));
+    modeAutoBtn.addEventListener('click', () => setMode('auto'));
     modeManualBtn.addEventListener('click', () => setMode('manual'));
 
     linearSlider.addEventListener('input', (e) => {
@@ -959,18 +947,8 @@
                     }
                     if (msg.trajectory) state.trajectory = msg.trajectory;
                     if (msg.plannedVertices) state.plannedVertices = msg.plannedVertices;
-                    if (msg.explorationPath) state.explorationPath = msg.explorationPath;
-                    else state.explorationPath = [];
                     if (msg.lidarScan) state.lidarScan = msg.lidarScan;
                     if (msg.imuHeadingDeg !== undefined) state.imuHeadingDeg = msg.imuHeadingDeg;
-                    if (msg.controlMode) {
-                        state.controlMode = msg.controlMode;
-                        // Sync local UI if mode changed from robot
-                        if (controlMode !== msg.controlMode) {
-                            controlMode = msg.controlMode;
-                            updateModeUI();
-                        }
-                    }
                     
                     if (msg.map) {
                         await processMapData(msg.map);
@@ -1084,38 +1062,6 @@
         ctx.setLineDash([]);
     }
 
-    function drawExplorationPath() {
-        if (state.explorationPath.length < 2) return;
-        
-        // Draw exploration path in a distinct color (green/teal)
-        ctx.strokeStyle = '#10b981'; // Emerald green
-        ctx.lineWidth = 3;
-        ctx.setLineDash([5, 5]);
-        ctx.beginPath();
-        const path = state.explorationPath;
-        const start = worldToScreen(path[0][0], path[0][1]);
-        ctx.moveTo(start.x, start.y);
-        for (let i = 1; i < path.length; i++) {
-            const p = worldToScreen(path[i][0], path[i][1]);
-            ctx.lineTo(p.x, p.y);
-        }
-        ctx.stroke();
-        ctx.setLineDash([]);
-        
-        // Draw target (last point) as a marker
-        if (path.length > 0) {
-            const target = path[path.length - 1];
-            const tp = worldToScreen(target[0], target[1]);
-            ctx.fillStyle = '#10b981';
-            ctx.beginPath();
-            ctx.arc(tp.x, tp.y, 8, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.strokeStyle = '#ffffff';
-            ctx.lineWidth = 2;
-            ctx.stroke();
-        }
-    }
-
     function drawLidar() {
         if (!state.lidarScan.length) return;
         const theme = themeConfig[currentTheme];
@@ -1200,7 +1146,6 @@
         drawGrid();
         drawMap();
         drawPlannedPath();
-        drawExplorationPath();
         drawTrajectory();
         drawLidar();
         drawRobot();
