@@ -486,8 +486,8 @@ class TriangleSlamNavigator:
         self._running = False
         self._estop_active = False
         
-        # Control mode state
-        self._control_mode: str = "auto"  # "auto" or "manual"
+        # Control mode state (default manual to avoid unintended motion)
+        self._control_mode: str = "manual"  # "auto" or "manual"
         self._manual_cmd: Tuple[float, float] = (0.0, 0.0)  # linear, angular
         self._control_lock = threading.Lock()
         
@@ -1239,7 +1239,7 @@ async def run_test(args: argparse.Namespace) -> None:
             elif msg_type == "control":
                 command = data.get("command")
                 if command == "set_mode":
-                    mode = str(data.get("mode", "auto"))
+                    mode = str(data.get("mode", "manual"))
                     navigator.set_control_mode(mode)
                 elif command == "velocity":
                     lin = float(data.get("linear", 0.0))

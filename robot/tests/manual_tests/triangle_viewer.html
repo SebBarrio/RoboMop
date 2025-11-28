@@ -513,7 +513,7 @@
         explorePath: [],
         exploreWaypointIndex: 0,
         frontiers: [],
-        controlMode: 'clean'
+        controlMode: 'manual'
     };
 
     // Theme Management
@@ -610,7 +610,7 @@
     let estopEnabled = false;
     
     // Manual Control Logic
-    let controlMode = 'clean';
+    let controlMode = 'manual';
     let maxLinear = 0.2;
     let maxAngular = 0.5;
     
@@ -653,6 +653,9 @@
     modeCleanBtn.addEventListener('click', () => setMode('clean'));
     modeExploreBtn.addEventListener('click', () => setMode('explore'));
     modeManualBtn.addEventListener('click', () => setMode('manual'));
+
+    // Ensure UI reflects default control mode on load
+    updateModeUI();
 
     linearSlider.addEventListener('input', (e) => {
         maxLinear = parseFloat(e.target.value);
