@@ -83,6 +83,7 @@ from src.sensors.encoders import EncoderReading, GpioZeroEncoderHardware, Quadra
 from src.sensors.imu import MPU9250
 from src.sensors.lidar import LidarMeasurement, RPLidarSerial
 from src.navigation.astar import AStarPlanner
+from src.navigation.coverage_planner import CoveragePlanner
 from src.navigation.robot_safety import (
     CollisionThreat,
     LidarObstacleDetector,
@@ -143,6 +144,7 @@ DEFAULT_SAFETY_MARGIN: float = 0.10  # Safety buffer around robot (meters)
 DEFAULT_CRITICAL_DISTANCE: float = 0.20  # Emergency stop distance (meters)
 DEFAULT_WARNING_DISTANCE: float = 0.50  # Slowdown distance (meters)
 DEFAULT_OBSTACLE_AVOIDANCE: bool = True  # Enable raw LIDAR obstacle avoidance
+DEFAULT_COVERAGE_OVERLAP: float = 0.10  # 10% lane overlap for coverage path
 
 
 # -----------------------------
@@ -500,6 +502,7 @@ class TriangleSlamNavigator:
         self._state_period = 1.0 / float(state_hz)
 
         self._vertices = list(planned_vertices)
+        self._default_cleaning_path: List[Tuple[float, float]] = list(planned_vertices)
         self._waypoint_index = 0
         self._trajectory: Deque[Tuple[float, float]] = deque(maxlen=2000)
         self._trajectory_lock = threading.Lock()
@@ -588,6 +591,63 @@ class TriangleSlamNavigator:
                     self._explore_path = []
                     self._explore_waypoint_index = 0
                     self._cached_frontiers = []
+                elif mode == "clean":
+                    self._prepare_cleaning_mode()
+
+    def _prepare_cleaning_mode(self) -> None:
+        """Plan a boustrophedon coverage path for the current map."""
+        # Ensure the robot is stationary before generating a new path
+        self._robot.cancel_goal()
+        self._robot.set_velocity_command(linear=0.0, angular=0.0)
+        coverage_path: Optional[List[Tuple[float, float]]] = None
+        try:
+            coverage_path = self._generate_cleaning_path()
+        except Exception:
+            self._logger.exception("Coverage planner failed; falling back to default trajectory")
+        if not coverage_path:
+            fallback = list(self._default_cleaning_path)
+            if fallback:
+                self._logger.warning(
+                    "Coverage planner produced no path; reverting to default trajectory (%d waypoints)",
+                    len(fallback),
+                )
+                coverage_path = fallback
+            else:
+                self._logger.error(
+                    "Coverage planner failed and no fallback trajectory is available; "
+                    "clean mode will hold position."
+                )
+                coverage_path = []
+        self._set_cleaning_path(coverage_path)
+
+    def _set_cleaning_path(self, path: Sequence[Tuple[float, float]]) -> None:
+        self._vertices = list(path)
+        self._waypoint_index = 0
+        if self._vertices:
+            self._logger.info("Loaded cleaning path with %d waypoints", len(self._vertices))
+        else:
+            self._logger.warning("Cleaning path empty; robot will remain stationary in clean mode")
+
+    def _generate_cleaning_path(self) -> Optional[List[Tuple[float, float]]]:
+        cleaning_width = max(self._robot_footprint.total_width, 0.05)
+        planner = CoveragePlanner(
+            self._slam.occupancy_grid,
+            cleaning_width=cleaning_width,
+            overlap_ratio=DEFAULT_COVERAGE_OVERLAP,
+            obstacle_threshold=self._astar_planner.obstacle_threshold,
+        )
+        pose = self._get_pose_snapshot()
+        path = planner.plan(start=(pose.x, pose.y))
+        if not path:
+            self._logger.warning("Coverage planner returned no traversable lanes")
+            return None
+        self._logger.info(
+            "Generated coverage path with %d waypoints (cleaning width %.2fm, overlap %.0f%%)",
+            len(path),
+            cleaning_width,
+            DEFAULT_COVERAGE_OVERLAP * 100.0,
+        )
+        return path
 
     def set_manual_velocity(self, linear: float, angular: float) -> None:
         with self._control_lock:
@@ -924,11 +984,12 @@ class TriangleSlamNavigator:
 
         # Identify current segment
         target_idx = self._waypoint_index
-        # Previous waypoint is start of segment
-        prev_idx = (target_idx - 1) % len(self._vertices)
-
-        segment_start = self._vertices[prev_idx]
         waypoint = self._vertices[target_idx]
+        if target_idx <= 0:
+            pose_snapshot = self._get_pose_snapshot()
+            segment_start = (pose_snapshot.x, pose_snapshot.y)
+        else:
+            segment_start = self._vertices[target_idx - 1]
 
         reached = self.move_to_waypoint(waypoint, segment_start)
         if reached:
@@ -983,12 +1044,15 @@ class TriangleSlamNavigator:
         )
 
     def _advance_waypoint(self) -> None:
+        if not self._vertices:
+            return
         old_idx = self._waypoint_index
         self._waypoint_index += 1
         if self._waypoint_index >= len(self._vertices):
-            # Loop back to 1 because 0 is same as last (closed loop visual artifact)
-            self._waypoint_index = 1
-        self._logger.info("Advancing waypoint: %d -> %d", old_idx, self._waypoint_index)
+            self._logger.info("Completed cleaning path; looping back to start")
+            self._waypoint_index = 0
+        else:
+            self._logger.info("Advancing waypoint: %d -> %d", old_idx, self._waypoint_index)
 
     def _simplify_path(
         self,
