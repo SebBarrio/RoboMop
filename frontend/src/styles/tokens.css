@@ -1,0 +1,50 @@
+:root {
+  /* Color (DESIGN.md palette) */
+  --bg: oklch(0.977 0.004 250);
+  --surface: oklch(1 0 0);
+  --surface-2: oklch(0.962 0.005 250);
+  --border: oklch(0.91 0.008 250);
+  --ink: oklch(0.27 0.02 260);
+  --ink-2: oklch(0.49 0.02 260);
+  --primary: oklch(0.55 0.19 259);
+  --primary-strong: oklch(0.48 0.19 259);
+  --primary-soft: oklch(0.94 0.03 255);
+  --success: oklch(0.63 0.14 155);
+  --success-soft: oklch(0.95 0.04 155);
+  --danger: oklch(0.55 0.2 27);
+  --danger-strong: oklch(0.48 0.2 27);
+  --danger-soft: oklch(0.96 0.025 27);
+  --warning: oklch(0.72 0.15 75);
+  --warning-soft: oklch(0.97 0.035 85);
+  --ink-inverse: oklch(0.99 0 0);
+
+  /* Shape */
+  --radius-card: 14px;
+  --radius-control: 10px;
+
+  /* Elevation: overlays only */
+  --shadow-overlay: 0 8px 24px oklch(0.2 0.02 260 / 0.12);
+
+  /* Motion */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --t-fast: 150ms;
+  --t-base: 200ms;
+
+  /* Z scale */
+  --z-sticky: 10;
+  --z-overlay: 20;
+  --z-modal: 30;
+  --z-toast: 40;
+
+  /* Layout */
+  --sidebar-w: 232px;
+  --rail-w: 320px;
+  --tabbar-h: 64px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --t-fast: 0ms;
+    --t-base: 0ms;
+  }
+}

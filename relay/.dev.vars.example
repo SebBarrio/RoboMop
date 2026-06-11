@@ -1,0 +1,3 @@
+# Copy to .dev.vars for local development (never commit .dev.vars).
+ROBOT_TOKEN=dev-robot-token
+APP_TOKEN=dev-app-token

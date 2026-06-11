@@ -1,0 +1,14 @@
+# Local secrets — never commit
+CREDENTIALS.local.md
+*.local.md
+
+# Python
+__pycache__/
+*.pyc
+
+# Node
+node_modules/
+
+# Local tooling
+.claude/
+.impeccable/

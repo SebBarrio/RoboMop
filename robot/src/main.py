@@ -153,37 +153,47 @@ DEFAULT_COVERAGE_OVERLAP: float = 0.10  # 10% lane overlap for coverage path
 
 @dataclass(slots=True)
 class ViewerClient:
+    """Streams telemetry to (and receives commands from) a WebSocket endpoint.
+
+    Works with both the LAN triangle viewer and the cloud relay — they speak
+    the same JSON protocol. The connection is supervised in the background:
+    the robot keeps running when the endpoint is unreachable, telemetry frames
+    are dropped while disconnected, and reconnection uses exponential backoff.
+    """
+
     url: str
+    robot_name: str = "RoboMop"
     websocket: Optional[Any] = None
     logger: logging.Logger = logging.getLogger("triangle_stream")
     _callback: Optional[Callable[[Dict[str, Any]], None]] = None
-    _recv_task: Optional[asyncio.Task] = None
+    _supervisor_task: Optional[asyncio.Task] = None
+    _send_warning_at: float = 0.0
 
     def set_callback(self, callback: Callable[[Dict[str, Any]], None]) -> None:
         self._callback = callback
 
-    async def connect(self) -> None:
-        # If we have a stale connection reference, close it before reconnecting
-        if self.websocket is not None and not self._is_open(self.websocket):
-            try:
-                await self.websocket.close()
-            except Exception:
-                pass
-            self.websocket = None
-        self.logger.info("Connecting to triangle viewer at %s", self.url)
-        self.websocket = await websockets.connect(self.url, max_size=10 * 1024 * 1024)
-        self.logger.info("Connected to triangle viewer")
-        
-        if self._recv_task:
-            self._recv_task.cancel()
-        self._recv_task = asyncio.create_task(self._receive_loop())
+    def start(self) -> None:
+        """Begin connecting in the background; never blocks robot startup."""
+        if self._supervisor_task is None or self._supervisor_task.done():
+            self._supervisor_task = asyncio.create_task(
+                self._supervise(), name="viewer-supervisor"
+            )
 
-    async def _receive_loop(self) -> None:
+    async def _supervise(self) -> None:
+        backoff = 1.0
         while True:
-            if self.websocket is None or not self._is_open(self.websocket):
-                await asyncio.sleep(1)
-                continue
             try:
+                self.logger.info("Connecting to viewer/relay at %s", self.url)
+                self.websocket = await websockets.connect(
+                    self.url,
+                    max_size=10 * 1024 * 1024,
+                    ping_interval=20,
+                    ping_timeout=20,
+                )
+                self.logger.info("Connected to viewer/relay")
+                backoff = 1.0
+                await self._send_hello()
+                # Receive commands until the connection drops
                 async for message in self.websocket:
                     if self._callback:
                         try:
@@ -191,25 +201,51 @@ class ViewerClient:
                             self._callback(data)
                         except Exception:
                             pass
-            except Exception:
-                pass
-            await asyncio.sleep(1)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                self.logger.warning(
+                    "Viewer/relay connection lost (%s); retrying in %.0fs", exc, backoff
+                )
+            self.websocket = None
+            await asyncio.sleep(backoff)
+            backoff = min(backoff * 2.0, 30.0)
+
+    async def _send_hello(self) -> None:
+        if self.websocket is None:
+            return
+        hello = {
+            "type": "hello",
+            "robot": {
+                "name": self.robot_name,
+                "startedAt": time.time(),
+            },
+        }
+        await self.websocket.send(json.dumps(hello))
 
     async def send_update(self, payload: Dict[str, Any]) -> None:
-        if self.websocket is None or not self._is_open(self.websocket):
-            await self.connect()
-        assert self.websocket is not None
+        ws = self.websocket
+        if ws is None or not self._is_open(ws):
+            # Telemetry is ephemeral: drop frames while disconnected
+            # (log at most every 10 s to avoid spam).
+            now = time.time()
+            if now >= self._send_warning_at:
+                self._send_warning_at = now + 10.0
+                self.logger.debug("Viewer/relay disconnected; dropping telemetry frame")
+            return
         try:
-            await self.websocket.send(json.dumps(payload))
+            await ws.send(json.dumps(payload))
         except Exception as exc:
-            self.logger.warning("Viewer send failed: %s; reconnecting...", exc)
-            try:
-                await self.connect()
-                await self.websocket.send(json.dumps(payload))
-            except Exception as exc2:
-                self.logger.error("Viewer reconnection/send failed: %s", exc2)
+            self.logger.warning("Viewer send failed: %s (supervisor will reconnect)", exc)
 
     async def close(self) -> None:
+        if self._supervisor_task is not None:
+            self._supervisor_task.cancel()
+            try:
+                await self._supervisor_task
+            except (asyncio.CancelledError, Exception):
+                pass
+            self._supervisor_task = None
         if self.websocket is not None:
             try:
                 await self.websocket.close()
@@ -535,6 +571,7 @@ class TriangleSlamNavigator:
         # Control mode state (default to manual to prevent autonomous motion on boot)
         self._control_mode: str = "manual"  # "clean", "explore", or "manual"
         self._manual_cmd: Tuple[float, float] = (0.0, 0.0)  # linear, angular
+        self._manual_cmd_time: float = 0.0  # monotonic time of last velocity command
         self._control_lock = threading.Lock()
         
         # Exploration mode state
@@ -649,9 +686,14 @@ class TriangleSlamNavigator:
         )
         return path
 
+    # Teleop deadman: manual velocity expires if the app stops refreshing it
+    # (e.g. connection drop mid-drive). The app streams commands at 10 Hz.
+    MANUAL_CMD_TIMEOUT_S: float = 1.0
+
     def set_manual_velocity(self, linear: float, angular: float) -> None:
         with self._control_lock:
             self._manual_cmd = (linear, angular)
+            self._manual_cmd_time = time.monotonic()
 
     def set_estop(self, enabled: bool) -> None:
         if enabled == self._estop_active:
@@ -819,6 +861,15 @@ class TriangleSlamNavigator:
                     if self._control_mode == "manual":
                         is_manual = True
                         manual_linear, manual_angular = self._manual_cmd
+                        # Deadman: zero stale commands so a dropped connection
+                        # can't leave the robot driving blind.
+                        if (
+                            (manual_linear != 0.0 or manual_angular != 0.0)
+                            and time.monotonic() - self._manual_cmd_time
+                            > self.MANUAL_CMD_TIMEOUT_S
+                        ):
+                            manual_linear, manual_angular = 0.0, 0.0
+                            self._manual_cmd = (0.0, 0.0)
                 
                 if is_manual:
                     # Apply obstacle avoidance to manual commands (raw LIDAR-based)
@@ -1315,9 +1366,10 @@ class TriangleSlamNavigator:
                 if age is not None:
                     payload["imuHeadingAgeSec"] = age
         
-        # Add current control mode
+        # Add current control mode and e-stop state
         with self._control_lock:
             payload["controlMode"] = self._control_mode
+        payload["estopActive"] = self._estop_active
         
         # Add exploration data when in explore mode
         if self._explore_path:
@@ -1403,6 +1455,23 @@ class TriangleSlamNavigator:
 
 def _wrap_angle(angle: float) -> float:
     return (angle + math.pi) % (2.0 * math.pi) - math.pi
+
+
+def _resolve_stream_url(args: argparse.Namespace) -> str:
+    """Build the telemetry WebSocket URL.
+
+    --relay-url (cloud relay) takes precedence over --viewer (LAN viewer).
+    The relay URL is the bare worker origin, e.g. wss://robomop-relay.<acct>.workers.dev
+    """
+    if getattr(args, "relay_url", ""):
+        from urllib.parse import quote
+
+        base = args.relay_url.rstrip("/")
+        return (
+            f"{base}/ws?robot={quote(args.robot_id)}"
+            f"&role=robot&token={quote(args.robot_token)}"
+        )
+    return args.viewer or ""
 
 
 def build_triangle_vertices(side_m: float) -> List[Tuple[float, float]]:
@@ -1583,10 +1652,11 @@ async def run_test(args: argparse.Namespace) -> None:
         lidar_max_range=args.lidar_max_range,
     )
 
-    # Viewer
-    viewer = ViewerClient(url=args.viewer) if args.viewer else None
+    # Viewer / cloud relay (same protocol; relay URL takes precedence)
+    stream_url = _resolve_stream_url(args)
+    viewer = ViewerClient(url=stream_url, robot_name=args.robot_id) if stream_url else None
     if viewer is not None:
-        await viewer.connect()
+        viewer.start()  # connects in the background; robot runs even if offline
 
     # Planned triangle
     planned = build_triangle_vertices(args.triangle_side)
@@ -1792,8 +1862,29 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         "--viewer",
         type=str,
-        default="ws://10.21.83.244:8765",
-        help="Triangle viewer WebSocket URL (ws://host:port). Empty to disable streaming.",
+        default="",
+        help="LAN triangle viewer WebSocket URL (ws://host:port). Empty to disable.",
+    )
+    parser.add_argument(
+        "--relay-url",
+        type=str,
+        default="",
+        help=(
+            "Cloud relay origin (e.g. wss://robomop-relay.<account>.workers.dev). "
+            "Takes precedence over --viewer."
+        ),
+    )
+    parser.add_argument(
+        "--robot-id",
+        type=str,
+        default="robomop-s1",
+        help="Robot identifier used by the relay and shown in the app",
+    )
+    parser.add_argument(
+        "--robot-token",
+        type=str,
+        default="",
+        help="Auth token for the cloud relay (ROBOT_TOKEN secret on the worker)",
     )
     parser.add_argument(
         "--lidar-port",
