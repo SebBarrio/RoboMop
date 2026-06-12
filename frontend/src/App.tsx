@@ -3,7 +3,7 @@ import { Home, Settings as SettingsIcon } from "lucide-react";
 import { Sidebar } from "./components/Sidebar";
 import { HomeView } from "./components/HomeView";
 import { SettingsView } from "./components/SettingsView";
-import { EStopFab } from "./components/EStop";
+import { EStopTab } from "./components/EStop";
 
 export type View = "home" | "settings";
 
@@ -29,6 +29,7 @@ export default function App() {
           <Home size={20} aria-hidden />
           Home
         </button>
+        <EStopTab />
         <button
           aria-current={view === "settings" ? "page" : undefined}
           onClick={() => setView("settings")}
@@ -37,7 +38,6 @@ export default function App() {
           Settings
         </button>
       </nav>
-      <EStopFab />
     </div>
   );
 }

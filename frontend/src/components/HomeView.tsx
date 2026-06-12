@@ -56,13 +56,13 @@ export function HomeView({ onOpenSettings }: { onOpenSettings: () => void }) {
         </div>
       </header>
       <div className="home">
-        <div>
+        <div className="home__map">
           <MapView />
         </div>
         <div className="rail">
-          <StatCards />
-          <ModeSwitch />
           <Joystick />
+          <ModeSwitch />
+          <StatCards />
           <AlertsCard />
         </div>
       </div>

@@ -26,17 +26,17 @@ export function EStopButton() {
   );
 }
 
-/** Mobile-only floating e-stop, always under the thumb. */
-export function EStopFab() {
+/** Mobile-only e-stop, raised out of the center of the bottom tab bar. */
+export function EStopTab() {
   const { engaged, usable, toggle } = useEstop();
-  if (!usable) return null;
   return (
     <button
-      className={engaged ? "estop-fab estop-fab--engaged" : "estop-fab"}
+      className={engaged ? "tabbar__estop tabbar__estop--engaged" : "tabbar__estop"}
       onClick={toggle}
+      disabled={!usable}
       aria-label={engaged ? "Resume robot (release emergency stop)" : "Emergency stop"}
     >
-      {engaged ? <Play size={26} aria-hidden /> : <OctagonX size={26} aria-hidden />}
+      {engaged ? <Play size={22} aria-hidden /> : <OctagonX size={22} aria-hidden />}
       {engaged ? "RESUME" : "STOP"}
     </button>
   );
