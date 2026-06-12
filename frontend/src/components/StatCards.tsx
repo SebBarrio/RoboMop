@@ -13,7 +13,10 @@ export function StatCards() {
   const estop = useAppStore((s) => s.estopActive);
   const hasData = useAppStore((s) => s.lastStateAt) > 0;
 
-  const heading = pose ? `${((pose.theta * 180) / Math.PI).toFixed(1)}°` : "—";
+  // Unwrapped theta can exceed 360° after a few turns; show compass range.
+  const heading = pose
+    ? `${(((((pose.theta * 180) / Math.PI) % 360) + 360) % 360).toFixed(1)}°`
+    : "—";
   const position = pose ? `${pose.x.toFixed(2)}, ${pose.y.toFixed(2)}` : "—";
   const uncertainty =
     ekf && hasData ? `±${Math.sqrt(Math.max(ekf.varX, ekf.varY)).toFixed(2)} m` : "no data";

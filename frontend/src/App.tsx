@@ -14,7 +14,13 @@ export default function App() {
     <div className="shell">
       <Sidebar view={view} onNavigate={setView} />
       <main className="main">
-        {view === "home" ? <HomeView onOpenSettings={() => setView("settings")} /> : <SettingsView />}
+        <div className="view" key={view}>
+          {view === "home" ? (
+            <HomeView onOpenSettings={() => setView("settings")} />
+          ) : (
+            <SettingsView onViewMap={() => setView("home")} />
+          )}
+        </div>
       </main>
 
       {/* Mobile chrome */}

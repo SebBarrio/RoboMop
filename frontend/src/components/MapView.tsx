@@ -19,6 +19,12 @@ interface ViewState {
   follow: boolean;
 }
 
+const PING_MS = 800; // first-pose sonar ping duration
+
+const reducedMotion = () =>
+  typeof window.matchMedia === "function" &&
+  window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
 /** Build an offscreen bitmap of the occupancy grid (row 0 = world y-min → drawn flipped). */
 function buildMapBitmap(map: DecodedMap): HTMLCanvasElement {
   const canvas = document.createElement("canvas");
@@ -76,6 +82,8 @@ export function MapView() {
   const dirty = useRef(true);
   const pointers = useRef(new Map<number, { x: number; y: number }>());
   const pinchDist = useRef(0);
+  const pingStart = useRef<number | null>(null);
+  const hadPose = useRef(getState().pose !== null);
   const [followUi, setFollowUi] = useState(true);
   const [showLidar, setShowLidar] = useState(true);
   const showLidarRef = useRef(true);
@@ -84,6 +92,8 @@ export function MapView() {
   const hasMap = useAppStore((s) => s.map) !== null;
   const hasPose = useAppStore((s) => s.pose) !== null;
   const connection = useAppStore((s) => s.connection);
+  const connectionHint = useAppStore((s) => s.connectionHint);
+  const robotOnline = useAppStore((s) => s.robotOnline);
 
   // Imperative draw loop: store changes mark dirty; rAF repaints at most once a frame.
   useEffect(() => {
@@ -94,6 +104,12 @@ export function MapView() {
 
     const unsubscribe = subscribe(() => {
       dirty.current = true;
+      // One sonar ping when the robot's pose first arrives: the map is alive.
+      const pose = getState().pose !== null;
+      if (pose && !hadPose.current && !reducedMotion()) {
+        pingStart.current = performance.now();
+      }
+      hadPose.current = pose;
     });
 
     const resize = new ResizeObserver(() => {
@@ -106,9 +122,14 @@ export function MapView() {
 
     const frame = () => {
       if (!running) return;
+      // Keep repainting while the ping plays.
+      if (pingStart.current !== null) {
+        if (performance.now() - pingStart.current > PING_MS) pingStart.current = null;
+        dirty.current = true;
+      }
       if (dirty.current) {
         dirty.current = false;
-        draw(ctx, canvas, view.current, bitmap, showLidarRef.current);
+        draw(ctx, canvas, view.current, bitmap, showLidarRef.current, pingStart.current);
       }
       raf = requestAnimationFrame(frame);
     };
@@ -220,7 +241,22 @@ export function MapView() {
     zoomAt(e.deltaY < 0 ? 1.15 : 1 / 1.15, e.clientX - rect.left, e.clientY - rect.top);
   }
 
-  const waiting = connection === "connected" && !hasMap && !hasPose;
+  // The overlay only covers the canvas when there is nothing real to show;
+  // once map data exists, badges and alerts carry connection state instead.
+  let empty: { title: string; sub: string } | null = null;
+  if (!hasMap && !hasPose) {
+    if (connection === "idle") {
+      empty = { title: "Not connected", sub: "Connect to the relay in Settings to load the live map." };
+    } else if (connection === "connecting" || connection === "reconnecting") {
+      empty = connectionHint
+        ? { title: "Can't connect to the relay", sub: "Check the connection details in Settings." }
+        : { title: "Connecting to the relay…", sub: "The live map loads once the link is up." };
+    } else if (!robotOnline) {
+      empty = { title: "Robot is offline", sub: "The map resumes as soon as the robot reconnects to the relay." };
+    } else {
+      empty = { title: "Waiting for telemetry", sub: "The map appears as soon as the robot starts streaming." };
+    }
+  }
 
   return (
     <div className="map-card">
@@ -278,10 +314,10 @@ export function MapView() {
           <i style={{ background: WARNING }} /> Frontier
         </span>
       </div>
-      {waiting && (
-        <div className="map-empty">
-          <strong>Waiting for the robot</strong>
-          <span>The map appears as soon as telemetry arrives.</span>
+      {empty && (
+        <div className="map-empty" role="status" key={empty.title}>
+          <strong>{empty.title}</strong>
+          <span>{empty.sub}</span>
         </div>
       )}
     </div>
@@ -294,6 +330,7 @@ function draw(
   v: ViewState,
   bitmapRef: React.MutableRefObject<{ canvas: HTMLCanvasElement; version: number } | null>,
   showLidar: boolean,
+  pingStart: number | null,
 ) {
   const s = getState();
   const dpr = window.devicePixelRatio || 1;
@@ -415,6 +452,17 @@ function draw(
       ctx.arc(toX(x), toY(y), s.collisionThreat.distance * v.scale, -(a + 0.35), -(a - 0.35));
       ctx.closePath();
       ctx.fill();
+    }
+
+    // First-pose sonar ping: one expanding ring, then gone.
+    if (pingStart !== null) {
+      const t = Math.min(1, (performance.now() - pingStart) / PING_MS);
+      const ease = 1 - Math.pow(1 - t, 4); // ease-out-quart
+      ctx.beginPath();
+      ctx.strokeStyle = `rgba(37, 99, 235, ${0.45 * (1 - ease)})`;
+      ctx.lineWidth = 2;
+      ctx.arc(toX(x), toY(y), 12 + ease * 48, 0, Math.PI * 2);
+      ctx.stroke();
     }
 
     // Robot marker

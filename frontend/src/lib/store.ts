@@ -11,6 +11,9 @@ import type { DecodedMap } from "./decodeMap";
 
 export type ConnectionStatus = "idle" | "connecting" | "connected" | "reconnecting";
 
+/** Diagnosis of why the relay link keeps failing, from an HTTPS probe. */
+export type ConnectionHint = "unauthorized" | "bad-robot-id" | "unreachable";
+
 export interface Settings {
   relayUrl: string;
   robotId: string;
@@ -20,6 +23,7 @@ export interface Settings {
 export interface AppState {
   settings: Settings;
   connection: ConnectionStatus;
+  connectionHint: ConnectionHint | null;
   robotOnline: boolean;
   robotLastSeen: number | null;
   robotName: string | null;
@@ -56,6 +60,7 @@ function loadSettings(): Settings {
 let state: AppState = {
   settings: loadSettings(),
   connection: "idle",
+  connectionHint: null,
   robotOnline: false,
   robotLastSeen: null,
   robotName: null,

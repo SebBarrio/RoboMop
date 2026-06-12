@@ -17,11 +17,27 @@ export function HomeView({ onOpenSettings }: { onOpenSettings: () => void }) {
           <h1>Home</h1>
         </header>
         <div className="card setup-card">
-          <h2>Connect to your robot</h2>
-          <p>
-            Point the app at your relay to see the live map and drive the robot from anywhere.
+          <h2 style={{ "--i": 0 } as React.CSSProperties}>Connect to your robot</h2>
+          <p style={{ "--i": 1 } as React.CSSProperties}>
+            Enter the relay details once. The app remembers them, reconnects automatically, and
+            works from anywhere.
           </p>
-          <button className="btn btn--primary" onClick={onOpenSettings}>
+          <ul className="setup-list" style={{ "--i": 2 } as React.CSSProperties}>
+            <li>
+              <strong>Relay URL</strong> Your Cloudflare Worker address
+            </li>
+            <li>
+              <strong>Robot ID</strong> The ID the robot was started with
+            </li>
+            <li>
+              <strong>App token</strong> The APP_TOKEN secret on the relay
+            </li>
+          </ul>
+          <button
+            className="btn btn--primary"
+            style={{ "--i": 3 } as React.CSSProperties}
+            onClick={onOpenSettings}
+          >
             <SettingsIcon size={16} aria-hidden />
             Open settings
           </button>

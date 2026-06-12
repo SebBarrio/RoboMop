@@ -27,40 +27,56 @@ export interface Env {
 
 const ROBOT_ID_RE = /^[a-zA-Z0-9_-]{1,64}$/;
 
+/**
+ * Non-upgrade responses carry CORS headers so the app (served from another
+ * origin) can probe credentials over plain HTTPS and read the status code.
+ */
+function plain(body: string, status: number): Response {
+  return new Response(body, {
+    status,
+    headers: { "Access-Control-Allow-Origin": "*" },
+  });
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
 
     if (url.pathname === "/" || url.pathname === "/health") {
-      return Response.json({ service: "robomop-relay", ok: true });
+      return Response.json(
+        { service: "robomop-relay", ok: true },
+        { headers: { "Access-Control-Allow-Origin": "*" } },
+      );
     }
 
     if (url.pathname === "/ws") {
-      if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") {
-        return new Response("Expected WebSocket upgrade", { status: 426 });
-      }
-
       const robotId = url.searchParams.get("robot") ?? "";
       const role = url.searchParams.get("role") ?? "";
       const token = url.searchParams.get("token") ?? "";
 
       if (!ROBOT_ID_RE.test(robotId)) {
-        return new Response("Invalid robot id", { status: 400 });
+        return plain("Invalid robot id", 400);
       }
       if (role !== "robot" && role !== "app") {
-        return new Response("Invalid role", { status: 400 });
+        return plain("Invalid role", 400);
       }
 
       const expected = role === "robot" ? env.ROBOT_TOKEN : env.APP_TOKEN;
       if (!expected || !timingSafeEqual(token, expected)) {
-        return new Response("Unauthorized", { status: 401 });
+        return plain("Unauthorized", 401);
+      }
+
+      // Checked last so clients can probe credentials with a plain GET:
+      // 401/400 = fix your settings, 426 = credentials are fine.
+      if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") {
+        return plain("Expected WebSocket upgrade", 426);
       }
 
       const id = env.ROBOT_ROOM.idFromName(robotId);
       return env.ROBOT_ROOM.get(id).fetch(request);
     }
 
-    return new Response("Not found", { status: 404 });
+    return plain("Not found", 404);
   },
 };
 

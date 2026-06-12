@@ -56,6 +56,33 @@ button:disabled {
   padding: 24px 28px 28px;
 }
 
+/* ---------- View transitions ---------- */
+/* Keyed remount on navigation; pure fade so content is never displaced. */
+.view {
+  animation: view-enter 180ms var(--ease-out) both;
+}
+
+@keyframes view-enter {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Shared entrance for status panels and staggered first-run content. */
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 /* ---------- Sidebar ---------- */
 .sidebar {
   display: flex;
@@ -328,12 +355,18 @@ button:disabled {
   gap: 8px;
   text-align: center;
   color: var(--ink-2);
-  padding: 24px;
+  /* Side padding keeps copy clear of the floating toolbar */
+  padding: 24px 64px;
 }
 
 .map-empty strong {
   color: var(--ink);
   font-size: 1rem;
+}
+
+/* Keyed by message; crossfades when the state changes. */
+.map-empty {
+  animation: view-enter 200ms var(--ease-out) both;
 }
 
 .map-legend {
@@ -558,6 +591,11 @@ button:disabled {
   color: var(--primary-strong);
 }
 
+.alert--ok {
+  background: var(--success-soft);
+  color: oklch(0.42 0.11 155);
+}
+
 .alert svg {
   flex-shrink: 0;
   margin-top: 1px;
@@ -620,7 +658,11 @@ button:disabled {
   min-height: 44px;
   border-radius: var(--radius-control);
   font-weight: 500;
-  transition: background var(--t-fast) var(--ease-out);
+  transition: background var(--t-fast) var(--ease-out), transform var(--t-fast) var(--ease-out);
+}
+
+.btn:active:not(:disabled) {
+  transform: scale(0.98);
 }
 
 .btn--primary {
@@ -641,6 +683,61 @@ button:disabled {
   background: var(--surface-2);
 }
 
+/* ---------- Connection result (settings) ---------- */
+.conn-result {
+  display: grid;
+  gap: 10px;
+  justify-items: start;
+}
+
+.conn-result:not(:empty) {
+  margin-top: 16px;
+}
+
+.conn-result .alert {
+  animation: rise-in 200ms var(--ease-out) both;
+}
+
+/* The map CTA lands one beat after the success message, pulling the eye. */
+.conn-result .btn {
+  animation: rise-in 200ms var(--ease-out) 120ms both;
+}
+
+/* Checkmark draws itself when the relay link comes up. */
+.check-draw circle {
+  stroke-dasharray: 57;
+  stroke-dashoffset: 57;
+  animation: check-trace 300ms var(--ease-out) forwards;
+}
+
+.check-draw path {
+  stroke-dasharray: 14;
+  stroke-dashoffset: 14;
+  animation: check-trace 250ms var(--ease-out) 220ms forwards;
+}
+
+@keyframes check-trace {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spin {
+    animation: none;
+  }
+}
+
 /* ---------- First-run / empty ---------- */
 .setup-card {
   display: grid;
@@ -648,6 +745,11 @@ button:disabled {
   gap: 12px;
   text-align: center;
   padding: 48px 24px;
+}
+
+/* Welcome moment: children arrive in reading order. */
+.setup-card > * {
+  animation: rise-in 280ms var(--ease-out) calc(var(--i, 0) * 50ms) both;
 }
 
 .setup-card h2 {
@@ -659,6 +761,25 @@ button:disabled {
   margin: 0;
   color: var(--ink-2);
   max-width: 42ch;
+}
+
+.setup-list {
+  list-style: none;
+  margin: 4px 0 8px;
+  padding: 14px 18px;
+  display: grid;
+  gap: 8px;
+  text-align: left;
+  background: var(--surface-2);
+  border-radius: var(--radius-control);
+  font-size: 0.8125rem;
+  color: var(--ink-2);
+}
+
+.setup-list strong {
+  display: block;
+  color: var(--ink);
+  font-weight: 600;
 }
 
 /* ---------- Tab bar (mobile) ---------- */
@@ -744,5 +865,45 @@ button:disabled {
     background: var(--surface);
     color: var(--danger);
     border: 2px solid var(--danger);
+  }
+}
+
+/* ---------- Touch input ---------- */
+@media (pointer: coarse) {
+  /* 16px floor stops iOS Safari from zooming the page on focus. */
+  .field input {
+    font-size: 1rem;
+  }
+
+  .map-toolbar button {
+    width: 44px;
+    height: 44px;
+  }
+
+  .tabbar button:active,
+  .nav-item:active {
+    background: var(--surface-2);
+  }
+}
+
+/* ---------- Reduced motion ---------- */
+@media (prefers-reduced-motion: reduce) {
+  .view,
+  .setup-card > *,
+  .conn-result .alert,
+  .conn-result .btn,
+  .map-empty {
+    animation: none;
+  }
+
+  /* Checkmark renders fully drawn. */
+  .check-draw circle,
+  .check-draw path {
+    animation: none;
+    stroke-dashoffset: 0;
+  }
+
+  .btn:active:not(:disabled) {
+    transform: none;
   }
 }

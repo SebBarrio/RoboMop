@@ -3,6 +3,18 @@ import { decodeMap } from "./decodeMap";
 import { applyStateUpdate, getState, setState, type Settings } from "./store";
 
 /**
+ * Coerce whatever the user typed into a WebSocket origin:
+ * https:// → wss://, http:// → ws://, bare host → wss://, no trailing slash.
+ */
+export function normalizeRelayUrl(input: string): string {
+  let url = input.trim().replace(/\/+$/, "");
+  if (!url) return "";
+  url = url.replace(/^https:\/\//i, "wss://").replace(/^http:\/\//i, "ws://");
+  if (!/^wss?:\/\//i.test(url)) url = `wss://${url}`;
+  return url;
+}
+
+/**
  * Supervised WebSocket connection to the relay.
  * Reconnects with exponential backoff, keeps the connection alive with
  * app-level pings (the relay answers even while hibernated), and feeds
@@ -15,12 +27,15 @@ class RelayConnection {
   private backoff = 1000;
   private enabled = false;
   private decodingMap = false;
+  private failures = 0;
+  private probing = false;
 
   start(settings: Settings): void {
     this.stop();
     if (!settings.relayUrl) return;
     this.enabled = true;
-    setState({ connection: "connecting" });
+    this.failures = 0;
+    setState({ connection: "connecting", connectionHint: null });
     this.open(settings);
   }
 
@@ -35,7 +50,7 @@ class RelayConnection {
       this.ws.close();
       this.ws = null;
     }
-    setState({ connection: "idle", robotOnline: false });
+    setState({ connection: "idle", robotOnline: false, connectionHint: null });
   }
 
   send(command: Command): boolean {
@@ -72,7 +87,8 @@ class RelayConnection {
 
     ws.onopen = () => {
       this.backoff = 1000;
-      setState({ connection: "connected" });
+      this.failures = 0;
+      setState({ connection: "connected", connectionHint: null });
       if (this.pingTimer !== null) window.clearInterval(this.pingTimer);
       this.pingTimer = window.setInterval(() => {
         if (ws.readyState === WebSocket.OPEN) ws.send('{"type":"ping"}');
@@ -95,10 +111,41 @@ class RelayConnection {
       this.pingTimer = null;
       this.ws = null;
       if (this.enabled) {
+        this.failures += 1;
         setState({ connection: "reconnecting", robotOnline: false });
+        // After a couple of straight failures, find out WHY over plain HTTPS
+        // (the browser hides WebSocket handshake status codes from us).
+        if (this.failures === 2 || this.failures % 6 === 0) void this.diagnose(settings);
         this.scheduleReconnect(settings);
       }
     };
+  }
+
+  private async diagnose(settings: Settings): Promise<void> {
+    if (this.probing) return;
+    this.probing = true;
+    const base = settings.relayUrl.replace(/^wss:\/\//i, "https://").replace(/^ws:\/\//i, "http://");
+    try {
+      const params = new URLSearchParams({ robot: settings.robotId, role: "app", token: settings.token });
+      const res = await fetch(`${base}/ws?${params}`, { signal: AbortSignal.timeout(5000) });
+      if (!this.enabled) return;
+      if (res.status === 401) setState({ connectionHint: "unauthorized" });
+      else if (res.status === 400) setState({ connectionHint: "bad-robot-id" });
+      else if (res.status === 426) setState({ connectionHint: null }); // credentials fine; transient drop
+      else setState({ connectionHint: "unreachable" });
+    } catch {
+      if (!this.enabled) return;
+      // The probe needs CORS headers from the relay; an older relay blocks it.
+      // An opaque no-cors ping still proves whether the host is reachable.
+      try {
+        await fetch(`${base}/health`, { mode: "no-cors", signal: AbortSignal.timeout(5000) });
+        if (this.enabled) setState({ connectionHint: null });
+      } catch {
+        if (this.enabled) setState({ connectionHint: "unreachable" });
+      }
+    } finally {
+      this.probing = false;
+    }
   }
 
   private scheduleReconnect(settings: Settings): void {
