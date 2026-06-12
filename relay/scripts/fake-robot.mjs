@@ -1,13 +1,18 @@
 // Minimal fake robot for manual testing: connects to a local relay and
 // streams pose frames so the app's live map has something to draw.
-//   node scripts/fake-robot.mjs [url] [robotId] [token]
+// Provision first, then pass the printed per-robot secret:
+//   node scripts/fake-robot.mjs [url] [robotId] [robotSecret]
 import WebSocket from "ws";
 
 const url = process.argv[2] ?? "ws://localhost:8787";
 const robotId = process.argv[3] ?? "robomop-s1";
-const token = process.argv[4] ?? "dev-robot-token";
+const robotSecret = process.argv[4];
+if (!robotSecret) {
+  console.error("Missing robot secret from scripts/provision-robot.mjs");
+  process.exit(2);
+}
 
-const ws = new WebSocket(`${url}/ws?robot=${robotId}&role=robot&token=${token}`);
+const ws = new WebSocket(`${url}/ws?robot=${robotId}&role=robot&token=${robotSecret}`);
 
 ws.on("open", () => {
   console.log("fake robot connected");

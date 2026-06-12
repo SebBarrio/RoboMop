@@ -5,8 +5,11 @@
  * needs to be reachable from the internet (no port forwarding, works through
  * NAT/CGNAT/cellular).
  *
- *   wss://<worker>/ws?robot=<robot-id>&role=robot&token=<ROBOT_TOKEN>
- *   wss://<worker>/ws?robot=<robot-id>&role=app&token=<APP_TOKEN>
+ * Robots authenticate with per-robot secrets stored as hashes in D1. Apps
+ * authenticate with account session tokens and must be paired to the robot.
+ *
+ *   wss://<worker>/ws?robot=<robot-id>&role=robot&token=<robot-secret>
+ *   wss://<worker>/ws?robot=<robot-id>&role=app&token=<session-token>
  *
  * Each robot id maps to one RobotRoom Durable Object which relays messages:
  *   robot -> all connected apps   (telemetry: state + map frames)
@@ -15,14 +18,15 @@
  * See src/room.ts for the message protocol.
  */
 
+import { handleApi } from "./api";
+import { sha256Hex, timingSafeEqual } from "./auth";
 import { RobotRoom } from "./room";
 
 export { RobotRoom };
 
 export interface Env {
   ROBOT_ROOM: DurableObjectNamespace;
-  ROBOT_TOKEN: string;
-  APP_TOKEN: string;
+  DB: D1Database;
 }
 
 const ROBOT_ID_RE = /^[a-zA-Z0-9_-]{1,64}$/;
@@ -49,6 +53,10 @@ export default {
       );
     }
 
+    if (url.pathname.startsWith("/api/")) {
+      return handleApi(request, env);
+    }
+
     if (url.pathname === "/ws") {
       const robotId = url.searchParams.get("robot") ?? "";
       const role = url.searchParams.get("role") ?? "";
@@ -61,13 +69,35 @@ export default {
         return plain("Invalid role", 400);
       }
 
-      const expected = role === "robot" ? env.ROBOT_TOKEN : env.APP_TOKEN;
-      if (!expected || !timingSafeEqual(token, expected)) {
-        return plain("Unauthorized", 401);
+      if (role === "robot") {
+        const robot = await env.DB
+          .prepare("SELECT secret_hash FROM robots WHERE id = ?")
+          .bind(robotId)
+          .first<{ secret_hash: string }>();
+        if (!robot || !timingSafeEqual(await sha256Hex(token), robot.secret_hash)) {
+          return plain("Unauthorized", 401);
+        }
+      } else {
+        const session = await env.DB
+          .prepare(
+            `SELECT sessions.user_id, user_robots.robot_id AS paired_robot_id
+             FROM sessions
+             LEFT JOIN user_robots
+               ON user_robots.user_id = sessions.user_id AND user_robots.robot_id = ?
+             WHERE sessions.id = ? AND sessions.expires_at > ?`,
+          )
+          .bind(robotId, await sha256Hex(token), Date.now())
+          .first<{ user_id: string; paired_robot_id: string | null }>();
+        if (!session) {
+          return plain("Unauthorized", 401);
+        }
+        if (!session.paired_robot_id) {
+          return plain("Not paired", 403);
+        }
       }
 
       // Checked last so clients can probe credentials with a plain GET:
-      // 401/400 = fix your settings, 426 = credentials are fine.
+      // 400/401/403 diagnose auth and pairing; 426 means credentials are fine.
       if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") {
         return plain("Expected WebSocket upgrade", 426);
       }
@@ -79,14 +109,3 @@ export default {
     return plain("Not found", 404);
   },
 };
-
-/** Constant-time string comparison to avoid leaking token prefixes. */
-function timingSafeEqual(a: string, b: string): boolean {
-  const enc = new TextEncoder();
-  const ab = enc.encode(a);
-  const bb = enc.encode(b);
-  if (ab.length !== bb.length) return false;
-  let diff = 0;
-  for (let i = 0; i < ab.length; i++) diff |= ab[i] ^ bb[i];
-  return diff === 0;
-}

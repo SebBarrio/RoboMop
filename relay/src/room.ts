@@ -22,10 +22,7 @@
  *  connect, so the UI renders instantly instead of waiting for the next frame.
  */
 
-export interface RoomEnv {
-  ROBOT_TOKEN: string;
-  APP_TOKEN: string;
-}
+export interface RoomEnv {}
 
 interface Attachment {
   role: "robot" | "app";

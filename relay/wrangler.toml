@@ -4,13 +4,12 @@
 #   cd relay
 #   npm install
 #   npx wrangler login
-#   npx wrangler secret put ROBOT_TOKEN   # token the robot connects with
-#   npx wrangler secret put APP_TOKEN     # token the web/mobile app connects with
+#   npx wrangler d1 migrations apply robomop-db --remote
 #   npm run deploy
 #
 # Local dev:
-#   copy .dev.vars.example .dev.vars   (edit tokens)
-#   npm run dev                        # ws://localhost:8787
+#   npx wrangler d1 migrations apply robomop-db --local
+#   npm run dev                         # ws://localhost:8787
 
 name = "robomop-relay"
 main = "src/index.ts"
@@ -19,6 +18,13 @@ compatibility_date = "2025-05-01"
 [[durable_objects.bindings]]
 name = "ROBOT_ROOM"
 class_name = "RobotRoom"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "robomop-db"
+# Replace after running `npx wrangler d1 create robomop-db`.
+database_id = "6ccdca07-ad97-45b9-bc42-6ec35eaa6184"
+migrations_dir = "migrations"
 
 # SQLite-backed DO classes are required on the Workers free plan.
 [[migrations]]

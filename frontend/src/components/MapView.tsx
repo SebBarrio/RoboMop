@@ -246,10 +246,10 @@ export function MapView() {
   let empty: { title: string; sub: string } | null = null;
   if (!hasMap && !hasPose) {
     if (connection === "idle") {
-      empty = { title: "Not connected", sub: "Connect to the relay in Settings to load the live map." };
+      empty = { title: "Not connected", sub: "Select a paired robot to load the live map." };
     } else if (connection === "connecting" || connection === "reconnecting") {
       empty = connectionHint
-        ? { title: "Can't connect to the relay", sub: "Check the connection details in Settings." }
+        ? { title: "Can't connect to the relay", sub: "Check the connection status in Settings." }
         : { title: "Connecting to the relay…", sub: "The live map loads once the link is up." };
     } else if (!robotOnline) {
       empty = { title: "Robot is offline", sub: "The map resumes as soon as the robot reconnects to the relay." };

@@ -1,11 +1,19 @@
 // End-to-end smoke test against a running relay (default: local wrangler dev).
-// Usage: node scripts/smoke-test.mjs [ws://localhost:8787] [robotToken] [appToken]
+// Apply local D1 migrations and start wrangler dev before running this script.
+// Usage: node scripts/smoke-test.mjs [ws://localhost:8787]
+import { execFileSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import path from "node:path";
 import WebSocket from "ws";
 
 const base = process.argv[2] ?? "ws://localhost:8787";
-const robotToken = process.argv[3] ?? "dev-robot-token";
-const appToken = process.argv[4] ?? "dev-app-token";
-const robotId = "smoketest";
+const httpBase = base.replace(/^ws/, "http").replace(/\/$/, "");
+const relayRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const suffix = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+const robotId = `smoketest-${suffix}`;
+const unpairedRobotId = `smoketest-unpaired-${suffix}`;
+const email = `smoketest-${suffix}@example.com`;
+const password = "smoketest-password";
 
 const url = (role, token) => `${base}/ws?robot=${robotId}&role=${role}&token=${token}`;
 
@@ -32,21 +40,70 @@ const nextMessage = (ws, timeoutMs = 5000) =>
     });
   });
 
-// 1. Bad token must be rejected.
-await connect("app", "wrong-token").then(
-  () => check("rejects bad app token", false),
-  () => check("rejects bad app token", true),
+const provision = (id) => {
+  const output = execFileSync(
+    process.execPath,
+    ["scripts/provision-robot.mjs", id, "--name", "RoboMop Smoke Test", "--local", "--rotate-secret"],
+    { cwd: relayRoot, encoding: "utf8" },
+  );
+  const secret = output.match(/Robot secret: (\S+)/)?.[1];
+  const claimCode = output.match(/Claim code: (\S+)/)?.[1];
+  if (!secret || !claimCode) throw new Error(`Could not parse provisioning output:\n${output}`);
+  return { secret, claimCode };
+};
+
+const api = async (pathName, options = {}) => {
+  const response = await fetch(`${httpBase}${pathName}`, {
+    ...options,
+    headers: { "Content-Type": "application/json", ...options.headers },
+  });
+  const body = response.status === 204 ? null : await response.json();
+  return { response, body };
+};
+
+const robotCredentials = provision(robotId);
+provision(unpairedRobotId);
+
+// 1. Establish an account session and pair it to the test robot.
+const registration = await api("/api/register", {
+  method: "POST",
+  body: JSON.stringify({ email, password }),
+});
+check("registers throwaway user", registration.response.status === 201);
+
+const login = await api("/api/login", {
+  method: "POST",
+  body: JSON.stringify({ email, password }),
+});
+check("logs in throwaway user", login.response.status === 200);
+const sessionToken = login.body?.token;
+if (!sessionToken) throw new Error("Login did not return a session token");
+
+const pairing = await api("/api/robots/pair", {
+  method: "POST",
+  headers: { Authorization: `Bearer ${sessionToken}` },
+  body: JSON.stringify({ robotId, claimCode: robotCredentials.claimCode }),
+});
+check("pairs robot by claim code", pairing.response.status === 200);
+
+const probe = (id, role, token) =>
+  fetch(`${httpBase}/ws?robot=${id}&role=${role}&token=${encodeURIComponent(token)}`);
+
+check("rejects bad robot secret", (await probe(robotId, "robot", "wrong-secret")).status === 401);
+check(
+  "rejects valid session for unpaired robot",
+  (await probe(unpairedRobotId, "app", sessionToken)).status === 403,
 );
 
 // 2. Robot connects, sends hello + state + map.
-const robot = await connect("robot", robotToken);
+const robot = await connect("robot", robotCredentials.secret);
 robot.send(JSON.stringify({ type: "hello", robot: { name: "RoboMop S1", fw: "smoke" } }));
 robot.send(JSON.stringify({ type: "triangle_update", pose: { x: 1, y: 2, theta: 0.5 } }));
 robot.send(JSON.stringify({ type: "triangle_update", map: { width: 2, height: 2, data: "AA==" } }));
 await new Promise((r) => setTimeout(r, 500));
 
 // 3. App connects late and must receive status + cached state + cached map.
-const app = await connect("app", appToken);
+const app = await connect("app", sessionToken);
 const m1 = await nextMessage(app);
 check("snapshot: robot_status online", m1.type === "robot_status" && m1.online === true);
 check("snapshot: robot info cached", m1.robot?.name === "RoboMop S1");

@@ -1,24 +1,17 @@
-import type { Command, RelayMessage } from "./protocol";
+import { relayHttpBase, relayWsBase } from "./api";
 import { decodeMap } from "./decodeMap";
-import { applyStateUpdate, getState, setState, type Settings } from "./store";
+import type { Command, RelayMessage } from "./protocol";
+import { applyStateUpdate, clearAuth, getState, resetRobotTelemetry, setState } from "./store";
 
-/**
- * Coerce whatever the user typed into a WebSocket origin:
- * https:// → wss://, http:// → ws://, bare host → wss://, no trailing slash.
- */
-export function normalizeRelayUrl(input: string): string {
-  let url = input.trim().replace(/\/+$/, "");
-  if (!url) return "";
-  url = url.replace(/^https:\/\//i, "wss://").replace(/^http:\/\//i, "ws://");
-  if (!/^wss?:\/\//i.test(url)) url = `wss://${url}`;
-  return url;
+interface Credentials {
+  robotId: string;
+  sessionToken: string;
 }
 
 /**
  * Supervised WebSocket connection to the relay.
  * Reconnects with exponential backoff, keeps the connection alive with
- * app-level pings (the relay answers even while hibernated), and feeds
- * every message into the store.
+ * app-level pings, and feeds every message into the store.
  */
 class RelayConnection {
   private ws: WebSocket | null = null;
@@ -30,13 +23,15 @@ class RelayConnection {
   private failures = 0;
   private probing = false;
 
-  start(settings: Settings): void {
+  start(robotId: string, sessionToken: string): void {
     this.stop();
-    if (!settings.relayUrl) return;
+    resetRobotTelemetry();
+    if (!robotId || !sessionToken) return;
+    const credentials = { robotId, sessionToken };
     this.enabled = true;
     this.failures = 0;
     setState({ connection: "connecting", connectionHint: null });
-    this.open(settings);
+    this.open(credentials);
   }
 
   stop(): void {
@@ -65,22 +60,21 @@ class RelayConnection {
     return this.ws?.readyState === WebSocket.OPEN;
   }
 
-  private url(settings: Settings): string {
-    const base = settings.relayUrl.replace(/\/+$/, "");
+  private url(credentials: Credentials): string {
     const params = new URLSearchParams({
-      robot: settings.robotId,
+      robot: credentials.robotId,
       role: "app",
-      token: settings.token,
+      token: credentials.sessionToken,
     });
-    return `${base}/ws?${params}`;
+    return `${relayWsBase()}/ws?${params}`;
   }
 
-  private open(settings: Settings): void {
+  private open(credentials: Credentials): void {
     let ws: WebSocket;
     try {
-      ws = new WebSocket(this.url(settings));
+      ws = new WebSocket(this.url(credentials));
     } catch {
-      this.scheduleReconnect(settings);
+      this.scheduleReconnect(credentials);
       return;
     }
     this.ws = ws;
@@ -97,13 +91,11 @@ class RelayConnection {
 
     ws.onmessage = (event) => {
       if (typeof event.data !== "string") return;
-      let msg: RelayMessage;
       try {
-        msg = JSON.parse(event.data);
+        this.handle(JSON.parse(event.data) as RelayMessage);
       } catch {
-        return;
+        /* protocol is JSON text frames only */
       }
-      this.handle(msg);
     };
 
     ws.onclose = () => {
@@ -113,30 +105,33 @@ class RelayConnection {
       if (this.enabled) {
         this.failures += 1;
         setState({ connection: "reconnecting", robotOnline: false });
-        // After a couple of straight failures, find out WHY over plain HTTPS
-        // (the browser hides WebSocket handshake status codes from us).
-        if (this.failures === 2 || this.failures % 6 === 0) void this.diagnose(settings);
-        this.scheduleReconnect(settings);
+        if (this.failures === 2 || this.failures % 6 === 0) void this.diagnose(credentials);
+        this.scheduleReconnect(credentials);
       }
     };
   }
 
-  private async diagnose(settings: Settings): Promise<void> {
+  private async diagnose(credentials: Credentials): Promise<void> {
     if (this.probing) return;
     this.probing = true;
-    const base = settings.relayUrl.replace(/^wss:\/\//i, "https://").replace(/^ws:\/\//i, "http://");
+    const base = relayHttpBase();
     try {
-      const params = new URLSearchParams({ robot: settings.robotId, role: "app", token: settings.token });
-      const res = await fetch(`${base}/ws?${params}`, { signal: AbortSignal.timeout(5000) });
+      const params = new URLSearchParams({
+        robot: credentials.robotId,
+        role: "app",
+        token: credentials.sessionToken,
+      });
+      const response = await fetch(`${base}/ws?${params}`, { signal: AbortSignal.timeout(5000) });
       if (!this.enabled) return;
-      if (res.status === 401) setState({ connectionHint: "unauthorized" });
-      else if (res.status === 400) setState({ connectionHint: "bad-robot-id" });
-      else if (res.status === 426) setState({ connectionHint: null }); // credentials fine; transient drop
+      if (response.status === 401) {
+        this.stop();
+        clearAuth();
+      } else if (response.status === 403) setState({ connectionHint: "not-paired" });
+      else if (response.status === 400) setState({ connectionHint: "bad-robot-id" });
+      else if (response.status === 426) setState({ connectionHint: null });
       else setState({ connectionHint: "unreachable" });
     } catch {
       if (!this.enabled) return;
-      // The probe needs CORS headers from the relay; an older relay blocks it.
-      // An opaque no-cors ping still proves whether the host is reachable.
       try {
         await fetch(`${base}/health`, { mode: "no-cors", signal: AbortSignal.timeout(5000) });
         if (this.enabled) setState({ connectionHint: null });
@@ -148,10 +143,10 @@ class RelayConnection {
     }
   }
 
-  private scheduleReconnect(settings: Settings): void {
+  private scheduleReconnect(credentials: Credentials): void {
     if (!this.enabled) return;
     this.reconnectTimer = window.setTimeout(() => {
-      if (this.enabled) this.open(settings);
+      if (this.enabled) this.open(credentials);
     }, this.backoff);
     this.backoff = Math.min(this.backoff * 2, 15000);
   }
@@ -167,7 +162,6 @@ class RelayConnection {
     }
     if (msg.type === "triangle_update") {
       if (msg.map) {
-        // Decode off the hot path; drop frames if one is already in flight.
         if (this.decodingMap) return;
         this.decodingMap = true;
         decodeMap(msg.map)

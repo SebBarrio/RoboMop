@@ -33,6 +33,7 @@ import gzip
 import json
 import logging
 import math
+import os
 import signal
 import sys
 import threading
@@ -1883,8 +1884,8 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         "--robot-token",
         type=str,
-        default="",
-        help="Auth token for the cloud relay (ROBOT_TOKEN secret on the worker)",
+        default=os.environ.get("ROBOMOP_ROBOT_SECRET", ""),
+        help="Per-robot secret printed by relay/scripts/provision-robot.mjs",
     )
     parser.add_argument(
         "--lidar-port",

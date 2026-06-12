@@ -11,7 +11,7 @@ Usage:
     python robot/tools/fake_robot.py
     # Against the deployed relay:
     python robot/tools/fake_robot.py --relay-url wss://robomop-relay.<acct>.workers.dev \
-        --robot-token <ROBOT_TOKEN>
+        --robot-token <PER_ROBOT_SECRET_FROM_PROVISION_ROBOT>
 """
 
 from __future__ import annotations
@@ -23,6 +23,7 @@ import gzip
 import json
 import logging
 import math
+import os
 import random
 import time
 from collections import deque
@@ -246,7 +247,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="RoboMop hardware-free simulator")
     parser.add_argument("--relay-url", default="ws://localhost:8787", help="Relay origin")
     parser.add_argument("--robot-id", default="robomop-s1")
-    parser.add_argument("--robot-token", default="dev-robot-token")
+    parser.add_argument(
+        "--robot-token",
+        default=os.environ.get("ROBOMOP_ROBOT_SECRET", ""),
+        help="Per-robot secret printed by relay/scripts/provision-robot.mjs",
+    )
     parser.add_argument("--viewer", default="", help="Direct ws:// URL (bypasses relay URL building)")
     args = parser.parse_args()
 

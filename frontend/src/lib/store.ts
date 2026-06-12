@@ -10,18 +10,24 @@ import type {
 import type { DecodedMap } from "./decodeMap";
 
 export type ConnectionStatus = "idle" | "connecting" | "connected" | "reconnecting";
+export type ConnectionHint = "unauthorized" | "not-paired" | "bad-robot-id" | "unreachable";
 
-/** Diagnosis of why the relay link keeps failing, from an HTTPS probe. */
-export type ConnectionHint = "unauthorized" | "bad-robot-id" | "unreachable";
+export interface AuthState {
+  token: string | null;
+  email: string | null;
+}
 
-export interface Settings {
-  relayUrl: string;
-  robotId: string;
-  token: string;
+export interface RobotSummary {
+  id: string;
+  name: string | null;
+  nickname: string | null;
+  pairedAt: number;
 }
 
 export interface AppState {
-  settings: Settings;
+  auth: AuthState;
+  robots: RobotSummary[] | null;
+  selectedRobotId: string | null;
   connection: ConnectionStatus;
   connectionHint: ConnectionHint | null;
   robotOnline: boolean;
@@ -45,40 +51,28 @@ export interface AppState {
   map: DecodedMap | null;
 }
 
-const SETTINGS_KEY = "robomop.settings.v1";
+const AUTH_KEY = "robomop.auth.v1";
+const SELECTED_ROBOT_KEY = "robomop.selectedRobot.v1";
 
-function loadSettings(): Settings {
+function loadAuth(): AuthState {
   try {
-    const raw = localStorage.getItem(SETTINGS_KEY);
-    if (raw) return { relayUrl: "", robotId: "robomop-s1", token: "", ...JSON.parse(raw) };
+    const raw = localStorage.getItem(AUTH_KEY);
+    if (raw) return { token: null, email: null, ...JSON.parse(raw) };
   } catch {
     /* corrupted storage; fall through to defaults */
   }
-  return { relayUrl: "", robotId: "robomop-s1", token: "" };
+  return { token: null, email: null };
 }
 
+localStorage.removeItem("robomop.settings.v1");
+
 let state: AppState = {
-  settings: loadSettings(),
+  auth: loadAuth(),
+  robots: null,
+  selectedRobotId: localStorage.getItem(SELECTED_ROBOT_KEY),
   connection: "idle",
   connectionHint: null,
-  robotOnline: false,
-  robotLastSeen: null,
-  robotName: null,
-  lastStateAt: 0,
-  pose: null,
-  ekfPose: null,
-  trajectory: [],
-  plannedVertices: [],
-  lidarScan: [],
-  controlMode: "manual",
-  estopActive: false,
-  explorePath: [],
-  frontiers: [],
-  robotFootprint: null,
-  obstacleAvoidanceEnabled: true,
-  collisionThreat: null,
-  imuHeadingDeg: null,
-  map: null,
+  ...emptyRobotTelemetry(),
 };
 
 const listeners = new Set<() => void>();
@@ -89,12 +83,36 @@ export function getState(): AppState {
 
 export function setState(patch: Partial<AppState>): void {
   state = { ...state, ...patch };
-  listeners.forEach((l) => l());
+  listeners.forEach((listener) => listener());
 }
 
-export function saveSettings(settings: Settings): void {
-  localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
-  setState({ settings });
+export function setAuth(token: string, email: string): void {
+  const auth = { token, email };
+  localStorage.setItem(AUTH_KEY, JSON.stringify(auth));
+  setState({ auth });
+}
+
+export function clearAuth(): void {
+  localStorage.removeItem(AUTH_KEY);
+  localStorage.removeItem(SELECTED_ROBOT_KEY);
+  setState({
+    auth: { token: null, email: null },
+    robots: null,
+    selectedRobotId: null,
+    connection: "idle",
+    connectionHint: null,
+    ...emptyRobotTelemetry(),
+  });
+}
+
+export function selectRobot(robotId: string | null): void {
+  if (robotId) localStorage.setItem(SELECTED_ROBOT_KEY, robotId);
+  else localStorage.removeItem(SELECTED_ROBOT_KEY);
+  setState({ selectedRobotId: robotId });
+}
+
+export function resetRobotTelemetry(): void {
+  setState(emptyRobotTelemetry());
 }
 
 export function applyStateUpdate(msg: StateUpdate): void {
@@ -121,6 +139,29 @@ export function subscribe(listener: () => void): () => void {
   return () => listeners.delete(listener);
 }
 
-export function useAppStore<T>(selector: (s: AppState) => T): T {
+export function useAppStore<T>(selector: (state: AppState) => T): T {
   return useSyncExternalStore(subscribe, () => selector(state));
+}
+
+function emptyRobotTelemetry() {
+  return {
+    robotOnline: false,
+    robotLastSeen: null,
+    robotName: null,
+    lastStateAt: 0,
+    pose: null,
+    ekfPose: null,
+    trajectory: [],
+    plannedVertices: [],
+    lidarScan: [],
+    controlMode: "manual" as const,
+    estopActive: false,
+    explorePath: [],
+    frontiers: [],
+    robotFootprint: null,
+    obstacleAvoidanceEnabled: true,
+    collisionThreat: null,
+    imuHeadingDeg: null,
+    map: null,
+  };
 }
