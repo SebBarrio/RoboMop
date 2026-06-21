@@ -1,0 +1,1577 @@
+/* ==========================================================================
+   RoboMop — landing page
+   Light instrument theme. Tokens aligned with the operator console (DESIGN.md),
+   one decisive blue, one loud red, a faint blueprint grid as the brand motif.
+   ========================================================================== */
+
+/* ---------- Fonts (self-hosted) ---------- */
+@font-face {
+  font-family: "Archivo";
+  font-style: normal;
+  font-weight: 400 800;
+  font-display: swap;
+  src: url("./assets/fonts/archivo-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF,
+    U+FFFD;
+}
+@font-face {
+  font-family: "Spline Sans Mono";
+  font-style: normal;
+  font-weight: 400 600;
+  font-display: swap;
+  src: url("./assets/fonts/spline-mono-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF,
+    U+FFFD;
+}
+
+/* ---------- Tokens ---------- */
+:root {
+  /* Palette (DESIGN.md) */
+  --bg: oklch(0.977 0.004 250);
+  --surface: oklch(1 0 0);
+  --surface-2: oklch(0.962 0.005 250);
+  --border: oklch(0.91 0.008 250);
+  --border-strong: oklch(0.86 0.01 255);
+  --ink: oklch(0.27 0.02 260);
+  --ink-2: oklch(0.49 0.02 260);
+  --ink-3: oklch(0.53 0.02 260); /* AA on light surfaces for small labels */
+  --primary: oklch(0.55 0.19 259);
+  --primary-strong: oklch(0.48 0.19 259);
+  --primary-soft: oklch(0.94 0.03 255);
+  --success: oklch(0.63 0.14 155); /* dot / fill only */
+  --success-ink: oklch(0.45 0.12 155); /* green text, AA on white + soft */
+  --success-soft: oklch(0.95 0.04 155);
+  --danger: oklch(0.55 0.2 27);
+  --danger-strong: oklch(0.48 0.2 27);
+  --danger-soft: oklch(0.96 0.025 27);
+  --warning: oklch(0.72 0.15 75);
+  --ink-inverse: oklch(0.99 0 0);
+
+  /* Blueprint grid line */
+  --grid-line: oklch(0.55 0.19 259 / 0.06);
+  --grid-line-strong: oklch(0.55 0.19 259 / 0.1);
+
+  /* Type */
+  --font-sans: "Archivo", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "Spline Sans Mono", ui-monospace, "SFMono-Regular", monospace;
+
+  /* Fluid type scale (ratio ~1.25). Hero capped well under 6rem. */
+  --step-eyebrow: 0.78rem;
+  --step-body: 1.0625rem;
+  --step-lead: clamp(1.125rem, 0.9rem + 1vw, 1.4rem);
+  --step-h3: clamp(1.25rem, 1.05rem + 0.9vw, 1.6rem);
+  --step-h2: clamp(1.9rem, 1.3rem + 2.6vw, 3.1rem);
+  --step-h1: clamp(2.6rem, 1.6rem + 4.4vw, 4.6rem);
+  --step-display: clamp(3rem, 1.6rem + 6vw, 5.6rem);
+
+  /* Shape */
+  --radius-card: 14px;
+  --radius-control: 10px;
+  --radius-lg: 20px;
+
+  /* Spacing scale (4pt base) — one set of steps every block draws from */
+  --space-2xs: 0.5rem; /* 8 */
+  --space-xs: 0.75rem; /* 12 */
+  --space-sm: 1rem; /* 16 */
+  --space-md: 1.5rem; /* 24 */
+  --space-lg: 2rem; /* 32 */
+  --space-xl: 3rem; /* 48 */
+
+  /* Spacing rhythm */
+  --gutter: clamp(1.25rem, 0.6rem + 2.6vw, 2.5rem);
+  /* Section padding — generous but no longer cavernous when two stack */
+  --section-y: clamp(4rem, 2.6rem + 5.4vw, 7rem);
+  /* Title-block → content gap, shared by every section head */
+  --head-gap: clamp(2rem, 1.5rem + 1.9vw, 3rem);
+  --max-w: 1200px;
+  --nav-h: 4.25rem;
+
+  /* Elevation (overlays only) */
+  --shadow-card: 0 1px 2px oklch(0.2 0.02 260 / 0.04);
+  --shadow-float: 0 18px 50px -18px oklch(0.3 0.06 260 / 0.28);
+  --shadow-device: 0 40px 80px -32px oklch(0.3 0.08 260 / 0.35);
+
+  /* Motion */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-out-quart: cubic-bezier(0.25, 1, 0.5, 1);
+  --t-fast: 160ms;
+  --t-base: 240ms;
+  --t-slow: 520ms;
+
+  /* Z scale */
+  --z-grid: 0;
+  --z-base: 1;
+  --z-sticky: 20;
+  --z-nav: 30;
+  --z-overlay: 40;
+}
+
+/* ---------- Reset ---------- */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  scroll-behavior: smooth;
+  scroll-padding-top: 5rem;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: var(--step-body);
+  line-height: 1.6;
+  font-feature-settings: "ss01", "cv05";
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  overflow-x: hidden;
+}
+
+h1,
+h2,
+h3,
+h4,
+p {
+  margin: 0;
+}
+
+h1,
+h2,
+h3 {
+  font-weight: 700;
+  line-height: 1.04;
+  letter-spacing: -0.02em;
+  text-wrap: balance;
+  color: var(--ink);
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+img,
+svg,
+canvas {
+  display: block;
+  max-width: 100%;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  border: none;
+  background: none;
+  cursor: pointer;
+}
+
+:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+::selection {
+  background: oklch(0.55 0.19 259 / 0.18);
+}
+
+/* ---------- Utilities ---------- */
+.container {
+  width: 100%;
+  max-width: var(--max-w);
+  margin-inline: auto;
+  padding-inline: var(--gutter);
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-feature-settings: "tnum";
+  letter-spacing: 0.01em;
+}
+
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: var(--step-eyebrow);
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--primary-strong);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6em;
+}
+.eyebrow::before {
+  content: "";
+  width: 1.6rem;
+  height: 1px;
+  background: currentColor;
+  opacity: 0.5;
+}
+
+.lead {
+  font-size: var(--step-lead);
+  line-height: 1.5;
+  color: var(--ink-2);
+  max-width: 56ch;
+  text-wrap: pretty;
+}
+
+.section {
+  padding-block: var(--section-y);
+  position: relative;
+}
+
+.section__head {
+  max-width: 58ch;
+  margin-bottom: var(--head-gap);
+}
+.section__head h2 {
+  font-size: var(--step-h2);
+  margin-top: var(--space-sm);
+}
+.section__head .lead {
+  margin-top: var(--space-sm);
+  max-width: 52ch;
+}
+
+/* Visually hidden (skip link, a11y labels) */
+.vh {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.skip-link {
+  position: fixed;
+  top: 0.75rem;
+  left: 0.75rem;
+  z-index: var(--z-nav);
+  background: var(--ink);
+  color: var(--ink-inverse);
+  padding: 0.6rem 1rem;
+  border-radius: var(--radius-control);
+  transform: translateY(-180%);
+  transition: transform var(--t-fast) var(--ease-out);
+}
+.skip-link:focus {
+  transform: translateY(0);
+}
+
+/* ---------- Blueprint grid backdrop ---------- */
+.grid-bg {
+  position: absolute;
+  inset: 0;
+  z-index: var(--z-grid);
+  pointer-events: none;
+  background-image: linear-gradient(var(--grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
+  background-size: 38px 38px;
+  background-position: center top;
+  -webkit-mask-image: radial-gradient(
+    120% 90% at 50% 0%,
+    #000 35%,
+    transparent 78%
+  );
+  mask-image: radial-gradient(120% 90% at 50% 0%, #000 35%, transparent 78%);
+}
+
+/* ---------- Buttons ---------- */
+.btn {
+  --_bg: var(--primary);
+  --_fg: var(--ink-inverse);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.55em;
+  padding: 0.85rem 1.35rem;
+  border-radius: var(--radius-control);
+  font-weight: 600;
+  font-size: 1rem;
+  letter-spacing: -0.005em;
+  line-height: 1;
+  background: var(--_bg);
+  color: var(--_fg);
+  white-space: nowrap;
+  transition: transform var(--t-fast) var(--ease-out),
+    background var(--t-fast) var(--ease-out),
+    box-shadow var(--t-fast) var(--ease-out);
+  will-change: transform;
+}
+.btn:hover {
+  transform: translateY(-1px);
+}
+.btn:active {
+  transform: translateY(0);
+}
+.btn--primary {
+  box-shadow: 0 6px 16px -8px oklch(0.55 0.19 259 / 0.7);
+}
+.btn--primary:hover {
+  background: var(--primary-strong);
+}
+.btn--ghost {
+  --_bg: var(--surface);
+  --_fg: var(--ink);
+  border: 1px solid var(--border-strong);
+}
+.btn--ghost:hover {
+  --_bg: var(--surface-2);
+}
+.btn--lg {
+  padding: 1rem 1.6rem;
+  font-size: 1.0625rem;
+}
+.btn .ic {
+  width: 1.1em;
+  height: 1.1em;
+  flex: none;
+}
+
+/* ---------- Nav ---------- */
+.nav {
+  position: sticky;
+  top: 0;
+  z-index: var(--z-nav);
+  background: oklch(0.977 0.004 250 / 0.72);
+  border-bottom: 1px solid transparent;
+  backdrop-filter: saturate(140%) blur(12px);
+  -webkit-backdrop-filter: saturate(140%) blur(12px);
+  transition: border-color var(--t-base) var(--ease-out),
+    background var(--t-base) var(--ease-out);
+}
+.nav[data-scrolled="true"] {
+  background: oklch(0.99 0.003 250 / 0.85);
+  border-bottom-color: var(--border);
+}
+.nav__inner {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  height: 4.25rem;
+}
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-weight: 700;
+  font-size: 1.15rem;
+  letter-spacing: -0.01em;
+}
+.brand__mark {
+  width: 1.85rem;
+  height: 1.85rem;
+}
+.nav__links {
+  display: flex;
+  align-items: center;
+  gap: 1.75rem;
+  margin-left: auto;
+  font-size: 0.95rem;
+  font-weight: 500;
+}
+.nav__links a {
+  color: var(--ink-2);
+  transition: color var(--t-fast) var(--ease-out);
+}
+.nav__links a:hover {
+  color: var(--ink);
+}
+.nav__cta {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+}
+.nav__cta .btn {
+  padding: 0.6rem 1.05rem;
+  font-size: 0.95rem;
+}
+.nav__menu-btn {
+  display: none;
+}
+
+/* ==========================================================================
+   Hero — full-bleed live instrument
+   The robot maps a room in real time across the whole fold. The map bleeds
+   edge to edge; copy, status bar and telemetry rail align to the content
+   column. The title is anchored low-left and oversized so it commands the map.
+   ========================================================================== */
+.hero {
+  position: relative;
+  min-height: min(calc(100svh - var(--nav-h)), 58rem);
+  overflow: hidden;
+  isolation: isolate;
+  /* Fog tone shown behind the canvas before it paints (matches "unknown") */
+  background: oklch(0.895 0.008 252);
+}
+
+/* ---- Full-bleed instrument layers ---- */
+.hero__grid {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background-image: linear-gradient(var(--grid-line-strong) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-line-strong) 1px, transparent 1px);
+  background-size: 34px 34px;
+  background-position: center;
+}
+.hero__map {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  /* Mirror the world so the robot's active mapping sits away from the title */
+  transform: scaleX(-1);
+}
+/* Legibility wash: a left gradient for the low-left copy + a bottom gradient
+   for the telemetry rail. Two stops, no glass, purely to carry text. */
+.hero__scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  /* Wider left wash so the copy stays legible while the robot travels the full
+     width of the page behind it. */
+  background: linear-gradient(
+      96deg,
+      var(--bg) 0%,
+      oklch(0.977 0.004 250 / 0.92) 22%,
+      oklch(0.977 0.004 250 / 0.78) 40%,
+      oklch(0.977 0.004 250 / 0) 66%
+    ),
+    linear-gradient(to top, var(--bg) 0%, oklch(0.977 0.004 250 / 0) 42%);
+}
+/* Top fade keeps the status bar legible over live cells */
+.hero::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 7rem;
+  z-index: 2;
+  pointer-events: none;
+  background: linear-gradient(
+    to bottom,
+    oklch(0.977 0.004 250 / 0.82),
+    transparent
+  );
+}
+/* Subtle edge vignette for screen depth (not glass, just a faint falloff) */
+.hero::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  background: radial-gradient(
+    125% 115% at 50% 34%,
+    transparent 60%,
+    oklch(0.5 0.04 262 / 0.06) 100%
+  );
+}
+
+/* ---- Content column, spanning the full fold height ---- */
+.hero__layer {
+  position: relative;
+  z-index: 4;
+  min-height: min(calc(100svh - var(--nav-h)), 58rem);
+  display: flex;
+  flex-direction: column;
+  /* More breathing room at the bottom so the overlaid copy block doesn't sit
+     right on the fold edge. */
+  padding-block: clamp(1.1rem, 0.7rem + 1.4vw, 2rem)
+    clamp(2.5rem, 2rem + 3vw, 5.5rem);
+}
+
+/* ---- Top status bar ---- */
+.hero__bar {
+  display: flex;
+  align-items: center;
+  gap: 0.95rem;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  letter-spacing: 0.02em;
+}
+.hero__live {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  color: var(--ink);
+}
+.hero__live .dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: var(--success);
+  box-shadow: 0 0 0 0 oklch(0.63 0.14 155 / 0.5);
+  animation: pulse-dot 2.4s var(--ease-out) infinite;
+}
+.hero__relay {
+  color: var(--ink-3);
+}
+.hero__relay b {
+  font-weight: 600;
+  color: var(--ink-2);
+  font-feature-settings: "tnum";
+}
+.hero__src {
+  margin-left: auto;
+  color: var(--ink-3);
+}
+@keyframes pulse-dot {
+  0% {
+    box-shadow: 0 0 0 0 oklch(0.63 0.14 155 / 0.5);
+  }
+  70%,
+  100% {
+    box-shadow: 0 0 0 7px oklch(0.63 0.14 155 / 0);
+  }
+}
+
+/* ---- HUD copy — anchored low-left ---- */
+.hero__hud {
+  margin-top: auto;
+  /* Keep the overlaid copy inside the widened scrim wash at every width. */
+  max-width: 40rem;
+}
+.hero__title {
+  font-size: clamp(2.5rem, 1.05rem + 5.7vw, 5.7rem);
+  font-weight: 800;
+  letter-spacing: -0.035em;
+  line-height: 0.95;
+  text-wrap: balance;
+}
+.hero__title em {
+  font-style: normal;
+  color: var(--primary-strong);
+}
+.hero__sub {
+  margin-top: clamp(1.1rem, 0.8rem + 1vw, 1.6rem);
+  max-width: 44ch;
+  font-size: var(--step-lead);
+  line-height: 1.5;
+  color: var(--ink-2);
+  text-wrap: pretty;
+}
+.hero__actions {
+  margin-top: clamp(1.6rem, 1.1rem + 1.4vw, 2.2rem);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.85rem;
+}
+
+/* ---- Live telemetry rail — pinned to the bottom of the column ---- */
+.hero__rail {
+  /* Extra space above the rail keeps the HUD/title lifted while the telemetry
+     block itself stays anchored near the bottom of the fold. */
+  margin-top: clamp(2.6rem, 2rem + 3.2vw, 4.8rem);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.6rem 1.2rem;
+  font-family: var(--font-mono);
+}
+.hero__stats {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.35rem 1.6rem;
+}
+.hero__t {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+.hero__t .lbl {
+  font-size: 0.65rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.hero__t .val {
+  font-size: 0.84rem;
+  font-weight: 600;
+  color: var(--ink);
+  font-feature-settings: "tnum";
+}
+.hero__stream {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.42rem;
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  color: var(--success-ink);
+}
+.hero__stream .dot {
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 50%;
+  background: var(--success);
+}
+
+/* ---- Hero load choreography ----
+   Copy and chrome rise with a TRANSFORM-ONLY animation: opacity stays 1
+   throughout, so nothing can be trapped invisible by a headless renderer,
+   preview bot, or background tab. Fully visible without JS or motion. */
+.js .hero__bar {
+  animation: hero-rise 0.8s var(--ease-out-quart) backwards;
+}
+.js .hero__title {
+  animation: hero-rise 0.85s var(--ease-out-quart) backwards;
+  animation-delay: 0.12s;
+}
+.js .hero__sub {
+  animation: hero-rise 0.85s var(--ease-out-quart) backwards;
+  animation-delay: 0.22s;
+}
+.js .hero__actions {
+  animation: hero-rise 0.85s var(--ease-out-quart) backwards;
+  animation-delay: 0.32s;
+}
+.js .hero__rail {
+  animation: hero-rise 0.85s var(--ease-out-quart) backwards;
+  animation-delay: 0.42s;
+}
+@keyframes hero-rise {
+  from {
+    transform: translateY(16px);
+  }
+  to {
+    transform: none;
+  }
+}
+
+/* ---------- Logo strip ---------- */
+.stack-strip {
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+.stack-strip__inner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem 2.2rem;
+  padding-block: 1.1rem;
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  color: var(--ink-3);
+}
+.stack-strip__label {
+  color: var(--ink-2);
+  font-weight: 500;
+}
+.stack-strip__inner b {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+/* ---------- System / architecture ---------- */
+.flow {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr auto 1fr;
+  align-items: stretch;
+  gap: 0;
+  margin-bottom: var(--space-lg);
+}
+.flow__node {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: var(--radius-card);
+  padding: 1.4rem 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+.flow__node h3 {
+  font-size: 1.15rem;
+}
+.flow__node p {
+  font-size: 0.92rem;
+  color: var(--ink-2);
+  line-height: 1.45;
+}
+.flow__icon {
+  width: 2.4rem;
+  height: 2.4rem;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  background: var(--primary-soft);
+  color: var(--primary-strong);
+  margin-bottom: 0.3rem;
+}
+.flow__icon svg {
+  width: 1.4rem;
+  height: 1.4rem;
+}
+.flow__link {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  padding-inline: 0.5rem;
+  min-width: clamp(3rem, 6vw, 6rem);
+}
+.flow__wire {
+  width: 100%;
+  height: 2px;
+  position: relative;
+  background: var(--border-strong);
+  overflow: hidden;
+  border-radius: 2px;
+}
+.flow__wire::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  width: 42%;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    var(--primary),
+    transparent
+  );
+  animation: wire-flow 2.2s linear infinite;
+}
+.flow__link[data-dir="rev"] .flow__wire::after {
+  animation-direction: reverse;
+}
+@keyframes wire-flow {
+  from {
+    transform: translateX(-120%);
+  }
+  to {
+    transform: translateX(280%);
+  }
+}
+.flow__proto {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--ink-3);
+  letter-spacing: 0.02em;
+}
+.flow__note {
+  max-width: 60ch;
+  font-size: 0.95rem;
+  color: var(--ink-2);
+}
+.flow__note b {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+/* Centred section head (robot section) */
+.section__head--center {
+  margin-inline: auto;
+  text-align: center;
+}
+.section__head--center .lead {
+  margin-inline: auto;
+}
+
+/* Capability list */
+.cap-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+.cap {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.4rem 1rem;
+  padding: 1.1rem 0.25rem;
+  border-top: 1px solid var(--border);
+}
+.cap:last-child {
+  border-bottom: 1px solid var(--border);
+}
+.cap__icon {
+  grid-row: span 2;
+  width: 2.2rem;
+  height: 2.2rem;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  background: var(--primary-soft);
+  color: var(--primary-strong);
+}
+.cap__icon svg {
+  width: 1.25rem;
+  height: 1.25rem;
+}
+.cap h3 {
+  font-size: 1.05rem;
+  align-self: center;
+}
+.cap p {
+  grid-column: 2;
+  font-size: 0.92rem;
+  color: var(--ink-2);
+  line-height: 1.45;
+}
+
+/* ==========================================================================
+   The robot — exploded blueprint
+   The robot render sits at the centre of a faint drafting sheet; four blueprint
+   annotation blocks flank it and leader lines connect each block to the exact
+   part it names. All geometry is expressed in % of the sheet, so the SVG
+   (viewBox 0 0 100, preserveAspectRatio none + non-scaling stroke) keeps lines,
+   ports and pins aligned at every width.
+   ========================================================================== */
+.robot-section {
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+.robot-exploded {
+  position: relative;
+  /* Invisible coordinate sheet: aspect matches the render aspect so a part at
+     x%,y% of the image maps to (10 + x*0.80)%, (10 + y*0.80)% of the sheet.
+     The robot's own white background blends into the page, so no grid,
+     spotlight, or drop-shadow, the machine sits on the surface itself. */
+  aspect-ratio: 1672 / 941;
+  margin-top: clamp(0.5rem, 0.2rem + 1.2vw, 1.5rem);
+}
+.robot-figure {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 80%;
+  transform: translate(-50%, -50%);
+  z-index: 1;
+}
+.robot-shot {
+  width: 100%;
+  height: auto;
+  /* Feather every edge so the render's white field dissolves into the page
+     instead of ending on a hard rectangle. */
+  -webkit-mask-image: linear-gradient(
+      to right,
+      transparent 0,
+      #000 9%,
+      #000 91%,
+      transparent 100%
+    ),
+    linear-gradient(to bottom, transparent 0, #000 9%, #000 91%, transparent 100%);
+  -webkit-mask-composite: source-in;
+  mask-image: linear-gradient(
+      to right,
+      transparent 0,
+      #000 9%,
+      #000 91%,
+      transparent 100%
+    ),
+    linear-gradient(to bottom, transparent 0, #000 9%, #000 91%, transparent 100%);
+  mask-composite: intersect;
+}
+
+/* ---- Leader lines ---- */
+.rb-leaders {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 2;
+  overflow: visible;
+  pointer-events: none;
+}
+.rb-line {
+  fill: none;
+  stroke: var(--primary);
+  stroke-width: 1.25;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+  stroke-dasharray: 1;
+  transition: stroke var(--t-fast) var(--ease-out),
+    stroke-width var(--t-fast) var(--ease-out);
+}
+/* Hidden (undrawn) only when JS runs, so the diagram is complete without it */
+.js .rb-line {
+  stroke-dashoffset: 1;
+  transition: stroke-dashoffset 0.75s var(--ease-out-quart),
+    stroke var(--t-fast) var(--ease-out),
+    stroke-width var(--t-fast) var(--ease-out);
+}
+.robot-exploded[data-shown="true"] .rb-line {
+  stroke-dashoffset: 0;
+}
+.rb-line[data-n="2"] {
+  transition-delay: 0.1s;
+}
+.rb-line[data-n="3"] {
+  transition-delay: 0.2s;
+}
+.rb-line[data-n="4"] {
+  transition-delay: 0.3s;
+}
+
+/* ---- Pins (on the part) and ports (at the card) ---- */
+.rb-pin,
+.rb-port {
+  position: absolute;
+  z-index: 3;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+}
+.rb-pin {
+  width: 0.8rem;
+  height: 0.8rem;
+  background: var(--primary);
+  box-shadow: 0 0 0 3px var(--surface), 0 0 0 4px oklch(0.55 0.19 259 / 0.3);
+}
+.rb-port {
+  width: 0.5rem;
+  height: 0.5rem;
+  background: var(--surface);
+  border: 1.5px solid var(--primary);
+}
+.js .rb-pin,
+.js .rb-port {
+  opacity: 0;
+  transition: opacity 0.4s var(--ease-out);
+}
+.robot-exploded[data-shown="true"] .rb-pin,
+.robot-exploded[data-shown="true"] .rb-port {
+  opacity: 1;
+  transition-delay: 0.45s;
+}
+
+/* ---- Blueprint annotation blocks ---- */
+.bp-card {
+  position: absolute;
+  z-index: 4;
+  width: 21%;
+  margin: 0;
+  padding: 0.7rem 0.8rem 0.75rem;
+  /* Blueprint paper: tinted grid on the surface */
+  background-color: var(--surface);
+  background-image: linear-gradient(var(--grid-line-strong) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-line-strong) 1px, transparent 1px);
+  background-size: 12px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  box-shadow: var(--shadow-card);
+  transform: translateY(-50%);
+}
+/* Drafting registration ticks in the four corners */
+.bp-card::before {
+  content: "";
+  position: absolute;
+  inset: 5px;
+  pointer-events: none;
+  opacity: 0.55;
+  --tk: linear-gradient(var(--primary-strong), var(--primary-strong));
+  background-image: var(--tk), var(--tk), var(--tk), var(--tk), var(--tk),
+    var(--tk), var(--tk), var(--tk);
+  background-repeat: no-repeat;
+  background-size: 7px 1px, 1px 7px, 7px 1px, 1px 7px, 7px 1px, 1px 7px, 7px 1px,
+    1px 7px;
+  background-position: left top, left top, right top, right top, left bottom,
+    left bottom, right bottom, right bottom;
+}
+.bp-card[data-n="1"] {
+  left: 1%;
+  top: 15%;
+}
+.bp-card[data-n="2"] {
+  right: 1%;
+  top: 15%;
+}
+.bp-card[data-n="3"] {
+  right: 1%;
+  top: 85%;
+}
+.bp-card[data-n="4"] {
+  left: 1%;
+  top: 85%;
+}
+.bp-card__head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.45rem;
+  padding-bottom: 0.4rem;
+  border-bottom: 1px solid var(--border);
+}
+.bp-card__no {
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--ink-inverse);
+  background: var(--primary);
+  padding: 0.12rem 0.34rem;
+  border-radius: 3px;
+}
+.bp-card__name {
+  font-size: 0.98rem;
+}
+.bp-card__part {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--ink);
+  line-height: 1.3;
+}
+.bp-card__spec {
+  margin-top: 0.15rem;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.01em;
+  color: var(--ink-3);
+}
+
+/* ---- Entrance: cards rise as their leader line draws ---- */
+.js .bp-card {
+  opacity: 0;
+  transform: translateY(calc(-50% + 14px));
+  transition: opacity 0.5s var(--ease-out-quart),
+    transform 0.5s var(--ease-out-quart), border-color var(--t-fast) var(--ease-out),
+    box-shadow var(--t-fast) var(--ease-out);
+}
+.robot-exploded[data-shown="true"] .bp-card {
+  opacity: 1;
+  transform: translateY(-50%);
+}
+.bp-card[data-n="2"] {
+  transition-delay: 0.1s;
+}
+.bp-card[data-n="3"] {
+  transition-delay: 0.2s;
+}
+.bp-card[data-n="4"] {
+  transition-delay: 0.3s;
+}
+
+/* Being a .reveal only carries the data-shown trigger here; cancel the generic
+   block fade so the children animate, not the whole sheet. */
+.js .robot-exploded.reveal {
+  opacity: 1;
+  transform: none;
+}
+
+/* ---- Hover / focus: light up a block and its leader ---- */
+@media (hover: hover) {
+  .robot-exploded[data-shown="true"] .bp-card:hover,
+  .robot-exploded[data-shown="true"] .bp-card:focus-within {
+    transform: translateY(-50%) scale(1.025);
+    border-color: var(--primary);
+    box-shadow: var(--shadow-float);
+    transition-delay: 0s;
+  }
+}
+.robot-exploded:has(.bp-card[data-n="1"]:hover) .rb-line[data-n="1"],
+.robot-exploded:has(.bp-card[data-n="2"]:hover) .rb-line[data-n="2"],
+.robot-exploded:has(.bp-card[data-n="3"]:hover) .rb-line[data-n="3"],
+.robot-exploded:has(.bp-card[data-n="4"]:hover) .rb-line[data-n="4"] {
+  stroke: var(--primary-strong);
+  stroke-width: 2.25;
+  transition-delay: 0s;
+}
+
+/* ---------- Console / from anywhere ---------- */
+.console-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
+  gap: clamp(2rem, 1rem + 4vw, 4.5rem);
+  /* Top-align the title block to the phone's top edge for a crisp split */
+  align-items: start;
+}
+.phone {
+  position: relative;
+  width: min(310px, 78vw);
+  margin-inline: auto;
+  aspect-ratio: 320 / 660;
+  background: oklch(0.22 0.015 260);
+  border-radius: 40px;
+  padding: 11px;
+  box-shadow: var(--shadow-device);
+}
+.phone::before {
+  content: "";
+  position: absolute;
+  top: 13px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 36%;
+  height: 18px;
+  background: oklch(0.22 0.015 260);
+  border-radius: 0 0 14px 14px;
+  z-index: 4;
+}
+.phone__screen {
+  position: relative;
+  height: 100%;
+  border-radius: 30px;
+  overflow: hidden;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+}
+.scr-top {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 1.3rem 0.95rem 0.6rem;
+}
+.scr-top .scr-brand {
+  font-weight: 700;
+  font-size: 0.95rem;
+}
+.scr-top .scr-badge {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  color: var(--success-ink);
+  background: var(--success-soft);
+  padding: 0.2rem 0.5rem;
+  border-radius: 999px;
+}
+.scr-badge .dot {
+  width: 0.42rem;
+  height: 0.42rem;
+  border-radius: 50%;
+  background: currentColor;
+}
+.scr-map {
+  position: relative;
+  margin: 0 0.7rem;
+  border-radius: 12px;
+  overflow: hidden;
+  flex: 1;
+  background: oklch(0.95 0.006 250);
+  border: 1px solid var(--border);
+}
+.scr-map canvas {
+  width: 100%;
+  height: 100%;
+}
+.scr-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.4rem;
+  padding: 0.6rem 0.7rem 0.3rem;
+}
+.scr-stat {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.4rem 0.5rem;
+}
+.scr-stat .k {
+  font-size: 0.58rem;
+  color: var(--ink-2);
+  letter-spacing: 0.02em;
+}
+.scr-stat .v {
+  font-family: var(--font-mono);
+  font-feature-settings: "tnum";
+  font-weight: 600;
+  font-size: 0.92rem;
+  color: var(--ink);
+}
+.scr-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.3rem 0.7rem 0.5rem;
+}
+.scr-modes {
+  display: flex;
+  flex: 1;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 2px;
+}
+.scr-modes button {
+  flex: 1;
+  font-size: 0.66rem;
+  font-weight: 600;
+  padding: 0.34rem 0;
+  border-radius: 6px;
+  color: var(--ink-2);
+}
+.scr-modes button[aria-pressed="true"] {
+  background: var(--primary);
+  color: var(--ink-inverse);
+}
+.scr-estop {
+  padding: 0.5rem 0.7rem 0.9rem;
+}
+.scr-estop button {
+  width: 100%;
+  background: var(--danger);
+  color: var(--ink-inverse);
+  font-weight: 700;
+  font-size: 0.82rem;
+  letter-spacing: 0.04em;
+  padding: 0.7rem;
+  border-radius: 9px;
+}
+
+/* ---------- Build / steps ---------- */
+.steps {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 1rem;
+  counter-reset: step;
+}
+.step {
+  position: relative;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: var(--radius-card);
+  padding: 1.5rem 1.4rem 1.4rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+.step__n {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--primary-strong);
+}
+.step h3 {
+  font-size: 1.1rem;
+}
+.step p {
+  font-size: 0.92rem;
+  color: var(--ink-2);
+  line-height: 1.5;
+}
+.step code {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--ink);
+  padding: 0.5rem 0.65rem;
+  border-radius: 8px;
+  display: block;
+  overflow-x: auto;
+  white-space: nowrap;
+  margin-top: auto;
+}
+.step code .tok {
+  color: var(--primary-strong);
+}
+
+/* ---------- CTA band ---------- */
+.cta {
+  background: var(--ink);
+  color: var(--ink-inverse);
+  border-radius: var(--radius-lg);
+  padding: clamp(2.5rem, 1.5rem + 4vw, 4.5rem);
+  position: relative;
+  overflow: hidden;
+}
+.cta .grid-bg {
+  --grid-line: oklch(0.75 0.12 259 / 0.12);
+  -webkit-mask-image: radial-gradient(
+    120% 120% at 80% 10%,
+    #000 20%,
+    transparent 70%
+  );
+  mask-image: radial-gradient(120% 120% at 80% 10%, #000 20%, transparent 70%);
+}
+.cta__inner {
+  position: relative;
+  z-index: 1;
+  max-width: 40ch;
+}
+.cta h2 {
+  font-size: var(--step-h2);
+  color: var(--ink-inverse);
+}
+.cta p {
+  margin-top: 1rem;
+  color: oklch(0.86 0.02 255);
+  font-size: var(--step-lead);
+  line-height: 1.5;
+}
+.cta__actions {
+  margin-top: 2rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.85rem;
+}
+.cta .btn--ghost {
+  --_bg: transparent;
+  --_fg: var(--ink-inverse);
+  border-color: oklch(0.99 0 0 / 0.28);
+}
+.cta .btn--ghost:hover {
+  --_bg: oklch(0.99 0 0 / 0.08);
+}
+
+/* ---------- Footer ---------- */
+.footer {
+  border-top: 1px solid var(--border);
+  padding-block: clamp(2.5rem, 2rem + 2vw, 3.5rem);
+}
+.footer__inner {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.5rem 2.5rem;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+.footer__brand {
+  max-width: 30ch;
+}
+.footer__brand p {
+  margin-top: 0.6rem;
+  font-size: 0.9rem;
+  color: var(--ink-2);
+}
+.footer__cols {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2.5rem;
+}
+.footer__col h4 {
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+  font-weight: 500;
+  margin-bottom: 0.8rem;
+}
+.footer__col a {
+  display: block;
+  font-size: 0.92rem;
+  color: var(--ink-2);
+  padding-block: 0.3rem;
+  transition: color var(--t-fast) var(--ease-out);
+}
+.footer__col a:hover {
+  color: var(--ink);
+}
+.footer__legal {
+  width: 100%;
+  margin-top: 2rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.5rem;
+  justify-content: space-between;
+  font-size: 0.82rem;
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+}
+
+/* ---------- Reveal animation ----------
+   The hidden state only applies when JS is active (html.js), so the page
+   stays fully visible if JS fails or in a headless render. */
+.js .reveal {
+  opacity: 0;
+  transform: translateY(18px);
+  transition: opacity var(--t-slow) var(--ease-out-quart),
+    transform var(--t-slow) var(--ease-out-quart);
+}
+.js .reveal[data-shown="true"] {
+  opacity: 1;
+  transform: none;
+}
+/* QA / reduced: settle everything instantly for a clean one-shot render */
+.no-anim *,
+.no-anim *::before,
+.no-anim *::after {
+  transition: none !important;
+  animation: none !important;
+}
+.reveal[data-delay="1"] {
+  transition-delay: 80ms;
+}
+.reveal[data-delay="2"] {
+  transition-delay: 160ms;
+}
+.reveal[data-delay="3"] {
+  transition-delay: 240ms;
+}
+
+/* ==========================================================================
+   Responsive
+   ========================================================================== */
+/* Hero (portrait): copy clusters at the top over a top-down wash, the live map
+   fills the space below, the telemetry rail pins to the bottom. */
+@media (max-width: 880px) {
+  .hero__scrim {
+    background: linear-gradient(
+      to bottom,
+      var(--bg) 0%,
+      oklch(0.977 0.004 250 / 0.96) 36%,
+      oklch(0.977 0.004 250 / 0.6) 58%,
+      oklch(0.977 0.004 250 / 0) 82%
+    );
+  }
+  .hero__hud {
+    margin-top: clamp(1.4rem, 0.6rem + 3vw, 2.6rem);
+    margin-bottom: auto;
+  }
+}
+
+@media (max-width: 1000px) {
+  .console-layout {
+    grid-template-columns: 1fr;
+  }
+  .console-layout .phone {
+    order: -1;
+  }
+  /* Robot: drop the exploded geometry, stack the render over the blocks */
+  .robot-exploded {
+    aspect-ratio: auto;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.9rem;
+    background-image: none;
+  }
+  .robot-exploded::before {
+    display: none;
+  }
+  .robot-figure {
+    position: static;
+    transform: none;
+    width: min(420px, 100%);
+  }
+  .rb-leaders,
+  .rb-pin,
+  .rb-port {
+    display: none;
+  }
+  .bp-card {
+    position: static;
+    transform: none;
+    width: 100%;
+    max-width: 480px;
+  }
+  .bp-card[data-n="1"],
+  .bp-card[data-n="2"],
+  .bp-card[data-n="3"],
+  .bp-card[data-n="4"] {
+    inset: auto;
+  }
+  .js .bp-card {
+    transform: translateY(14px);
+  }
+  .robot-exploded[data-shown="true"] .bp-card {
+    transform: none;
+  }
+  .robot-exploded[data-shown="true"] .bp-card:hover,
+  .robot-exploded[data-shown="true"] .bp-card:focus-within {
+    transform: none;
+  }
+  .flow {
+    grid-template-columns: 1fr;
+    gap: 0;
+  }
+  .flow__link {
+    flex-direction: row;
+    min-width: 0;
+    padding: 0.9rem 0;
+    gap: 0.75rem;
+  }
+  .flow__link[data-dir="rev"] {
+    flex-direction: row-reverse;
+  }
+  .flow__wire {
+    width: 2px;
+    min-height: 1.6rem;
+    height: auto;
+    align-self: stretch;
+  }
+  .flow__wire::after {
+    width: 100%;
+    height: 42%;
+    background: linear-gradient(
+      180deg,
+      transparent,
+      var(--primary),
+      transparent
+    );
+    animation-name: wire-flow-v;
+  }
+  @keyframes wire-flow-v {
+    from {
+      transform: translateY(-120%);
+    }
+    to {
+      transform: translateY(280%);
+    }
+  }
+}
+
+@media (max-width: 720px) {
+  .nav__links {
+    display: none;
+  }
+  .nav__cta .btn--github {
+    display: none;
+  }
+  .hero__rail {
+    gap: 0.3rem 1.1rem;
+  }
+  .footer__inner {
+    flex-direction: column;
+  }
+}
+
+/* Very narrow: drop the lowest-priority telemetry chip so the rail stays on
+   one or two tidy lines instead of wrapping awkwardly. */
+@media (max-width: 380px) {
+  .hero__stream {
+    display: none;
+  }
+}
+
+/* ---------- Reduced motion ---------- */
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+  .reveal {
+    opacity: 1;
+    transform: none;
+  }
+  /* Hero copy is visible by default; cancel the load choreography entirely so
+     the animation-delay can't hold it invisible for a frame. */
+  .hero__bar,
+  .hero__title,
+  .hero__sub,
+  .hero__actions,
+  .hero__rail {
+    animation: none !important;
+  }
+}

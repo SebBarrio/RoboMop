@@ -1,0 +1,5 @@
+# Local QA artifacts (browser screenshots, ad-hoc static server, chrome logs)
+.qa-server.mjs
+qa-*.png
+_shot-*.png
+chrome-*.log

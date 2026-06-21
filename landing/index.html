@@ -1,0 +1,430 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <script>
+      // Set before paint so reveal animations only gate visibility when JS runs.
+      document.documentElement.classList.add("js");
+    </script>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>RoboMop — live operator console for a SLAM mopping robot</title>
+    <meta
+      name="description"
+      content="RoboMop is a SLAM mopping robot with a live operator console. Stream its occupancy map, lidar and pose, switch between manual, clean and explore, and trigger an instant emergency stop over a cloud relay, from anywhere."
+    />
+    <meta name="theme-color" content="#f5f7fa" />
+    <link rel="icon" type="image/svg+xml" href="./assets/img/mark.svg" />
+    <link rel="apple-touch-icon" href="./assets/img/icon-512.png" />
+    <link rel="stylesheet" href="./styles.css" />
+
+    <meta
+      property="og:title"
+      content="RoboMop — operate your robot in real time, from anywhere"
+    />
+    <meta
+      property="og:description"
+      content="A SLAM mopping robot with a live operator console over a cloud relay. Stream the map and lidar, switch modes, and trigger an instant emergency stop from anywhere."
+    />
+    <meta property="og:type" content="website" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <!-- =================== NAV =================== -->
+    <header class="nav" id="nav">
+      <div class="container nav__inner">
+        <a class="brand" href="#top" aria-label="RoboMop home">
+          <img class="brand__mark" src="./assets/img/mark.svg" alt="" />
+          RoboMop
+        </a>
+        <nav class="nav__links" aria-label="Primary">
+          <a href="#system">System</a>
+          <a href="#robot">The robot</a>
+          <a href="#console">Console</a>
+          <a href="#build">Build it</a>
+        </nav>
+        <div class="nav__cta">
+          <a
+            class="btn btn--ghost btn--github"
+            href="https://github.com/papalino456/RoboMop"
+            rel="noopener"
+          >
+            <svg class="ic" viewBox="0 0 24 24" aria-hidden="true" fill="currentColor"><path d="M12 1.5A10.5 10.5 0 0 0 8.68 22c.53.1.72-.23.72-.5l-.01-1.95c-2.93.64-3.55-1.26-3.55-1.26-.48-1.22-1.17-1.54-1.17-1.54-.96-.66.07-.64.07-.64 1.06.07 1.62 1.09 1.62 1.09.94 1.62 2.47 1.15 3.08.88.09-.69.37-1.15.67-1.42-2.34-.27-4.8-1.17-4.8-5.2 0-1.15.41-2.09 1.08-2.83-.11-.27-.47-1.34.1-2.8 0 0 .88-.28 2.88 1.08a10 10 0 0 1 5.24 0c2-1.36 2.88-1.08 2.88-1.08.57 1.46.21 2.53.1 2.8.67.74 1.08 1.68 1.08 2.83 0 4.04-2.47 4.93-4.82 5.19.38.33.72.97.72 1.96l-.01 2.9c0 .28.19.61.73.5A10.5 10.5 0 0 0 12 1.5Z"/></svg>
+            GitHub
+          </a>
+          <a class="btn btn--primary" href="./app/">Open console</a>
+        </div>
+      </div>
+    </header>
+
+    <main id="main">
+      <!-- =================== HERO =================== -->
+      <section class="hero" id="top">
+        <!-- Full-bleed live instrument: the robot maps a room in real time -->
+        <div class="hero__grid" aria-hidden="true"></div>
+        <canvas
+          id="hero-map"
+          class="hero__map"
+          role="img"
+          aria-label="Live occupancy-grid map: the RoboMop robot drives a coverage pattern through a room while its 360-degree lidar reveals walls and free space, leaving a cleaned trail behind it."
+        ></canvas>
+        <div class="hero__scrim" aria-hidden="true"></div>
+
+        <!-- Copy + instrument chrome, aligned to the content column -->
+        <div class="container hero__layer">
+          <div class="hero__bar">
+            <span class="hero__live"><span class="dot" aria-hidden="true"></span>LIVE</span>
+            <span class="hero__relay">relay <b id="hero-relay">22</b> ms</span>
+            <span class="hero__src" aria-hidden="true">occupancy_grid · 5 cm/cell</span>
+          </div>
+
+          <div class="hero__hud">
+            <h1 class="hero__title">The one robot for <em>industrial cleaning</em></h1>
+            <p class="hero__sub">
+              Telemetry and pose information, streamed from the
+              robot to your phone. Drive it, clean a room, or
+              let it explore, with always-on emergency stop.
+            </p>
+            <div class="hero__actions">
+              <a class="btn btn--primary btn--lg" href="./app/">
+                Open the console
+                <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+              </a>
+              <a class="btn btn--ghost btn--lg" href="#build">See the build</a>
+            </div>
+          </div>
+
+          <div class="hero__rail" aria-label="Live telemetry">
+            <div class="hero__stats">
+              <div class="hero__t"><span class="lbl">Pose</span><span class="val" id="hero-pose">2.4, 1.1 m</span></div>
+              <div class="hero__t"><span class="lbl">Heading</span><span class="val" id="hero-head">041°</span></div>
+              <div class="hero__t"><span class="lbl">Coverage</span><span class="val" id="hero-cov">38%</span></div>
+              <div class="hero__t"><span class="lbl">Scan</span><span class="val">360° · 10 Hz</span></div>
+            </div>
+            <span class="hero__stream"><span class="dot" aria-hidden="true"></span>streaming</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- =================== STACK STRIP =================== -->
+      <div class="stack-strip">
+        <div class="container stack-strip__inner">
+          <span class="stack-strip__label">Runs on</span>
+          <span><b>Raspberry Pi</b></span>
+          <span><b>Python</b></span>
+          <span><b>Cloudflare Workers</b></span>
+          <span><b>React</b> PWA</span>
+          <span><b>WebSocket</b> protocol</span>
+        </div>
+      </div>
+
+      <!-- =================== SYSTEM / ARCHITECTURE =================== -->
+      <section class="section" id="system">
+        <div class="container">
+          <div class="section__head reveal">
+            <span class="eyebrow">Architecture</span>
+            <h2>Three parts. Each one dials out.</h2>
+            <p class="lead">
+              Nothing on your network listens for connections. The robot and the
+              console both open a WebSocket to a small Cloudflare Worker, so there
+              is no port forwarding, no static IP, and nothing to expose on your
+              router.
+            </p>
+          </div>
+
+          <div class="flow reveal" data-delay="1">
+            <article class="flow__node">
+              <span class="flow__icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="7" width="14" height="11" rx="2"/><path d="M9 7V4h6v3M9 22v-1M15 22v-1M2 11h3M2 14h3M19 11h3M19 14h3"/><circle cx="12" cy="12.5" r="2.3"/></svg>
+              </span>
+              <h3>Robot</h3>
+              <p>
+                A Raspberry Pi runs the Python control stack: lidar, IMU and wheel
+                encoders feed particle-filter SLAM and an EKF pose estimate.
+              </p>
+            </article>
+
+            <div class="flow__link" data-dir="fwd">
+              <span class="flow__proto">wss</span>
+              <span class="flow__wire" aria-hidden="true"></span>
+              <span class="flow__proto" aria-hidden="true">↔</span>
+            </div>
+
+            <article class="flow__node">
+              <span class="flow__icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M7 18a4 4 0 0 1-.5-7.97A5.5 5.5 0 0 1 17 9.5a3.5 3.5 0 0 1 .5 6.95"/><path d="M12 13v6M9.5 16.5 12 19l2.5-2.5"/></svg>
+              </span>
+              <h3>Relay</h3>
+              <p>
+                A Cloudflare Worker and one Durable Object broker frames between the
+                robot and every app client. The free tier covers it.
+              </p>
+            </article>
+
+            <div class="flow__link" data-dir="rev">
+              <span class="flow__proto">wss</span>
+              <span class="flow__wire" aria-hidden="true"></span>
+              <span class="flow__proto" aria-hidden="true">↔</span>
+            </div>
+
+            <article class="flow__node">
+              <span class="flow__icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M10.5 5.5h3"/><path d="M11 18.5h2"/></svg>
+              </span>
+              <h3>Console</h3>
+              <p>
+                A React PWA you install on your phone. It speaks the same protocol
+                the robot already uses on the LAN.
+              </p>
+            </article>
+          </div>
+
+          <p class="flow__note reveal" data-delay="2">
+            <b>Lose internet and the robot keeps cleaning.</b> The connection is
+            supervised: it reconnects with backoff the moment the relay is
+            reachable again, and the old LAN viewer still works unchanged.
+          </p>
+        </div>
+      </section>
+
+      <!-- =================== THE ROBOT =================== -->
+      <section class="section robot-section" id="robot">
+        <div class="container">
+          <div class="section__head section__head--center reveal">
+            <h2>The robot, part by part.</h2>
+            <p class="lead">
+              One off-the-shelf base that sees, thinks, moves and cleans. Every
+              part below is in the open build, nothing custom-fabricated.
+            </p>
+          </div>
+
+          <!-- Exploded blueprint: the robot sits at the centre, four annotation
+               blocks flank it, and leader lines connect each block to its part.
+               The geometry is deterministic (% of the sheet), so lines, pins and
+               ports stay aligned at any width. -->
+          <div class="robot-exploded reveal">
+            <div class="robot-figure">
+              <img
+                class="robot-shot"
+                src="./assets/img/robot-hero.png"
+                width="1672"
+                height="941"
+                loading="lazy"
+                decoding="async"
+                alt="A translucent-blue RoboMop chassis with the lid off, showing the black 360-degree lidar puck, a Raspberry Pi board, two geared drive motors with wheels, and a clear refillable water tank for the mop."
+              />
+            </div>
+
+            <!-- Leader lines (card port -> robot part). viewBox is % of the sheet. -->
+            <svg class="rb-leaders" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+              <line class="rb-line" data-n="1" x1="22" y1="15" x2="52.4" y2="35.6" pathLength="1" />
+              <line class="rb-line" data-n="2" x1="78" y1="15" x2="46.0" y2="46.0" pathLength="1" />
+              <line class="rb-line" data-n="3" x1="78" y1="85" x2="60.4" y2="52.4" pathLength="1" />
+              <line class="rb-line" data-n="4" x1="22" y1="85" x2="35.6" y2="59.6" pathLength="1" />
+            </svg>
+
+            <!-- Port nodes (card side) and pins (robot side) -->
+            <span class="rb-port" aria-hidden="true" style="left: 22%; top: 15%"></span>
+            <span class="rb-port" aria-hidden="true" style="left: 78%; top: 15%"></span>
+            <span class="rb-port" aria-hidden="true" style="left: 78%; top: 85%"></span>
+            <span class="rb-port" aria-hidden="true" style="left: 22%; top: 85%"></span>
+            <span class="rb-pin" aria-hidden="true" style="left: 52.4%; top: 35.6%"></span>
+            <span class="rb-pin" aria-hidden="true" style="left: 46.0%; top: 46.0%"></span>
+            <span class="rb-pin" aria-hidden="true" style="left: 60.4%; top: 52.4%"></span>
+            <span class="rb-pin" aria-hidden="true" style="left: 35.6%; top: 59.6%"></span>
+
+            <figure class="bp-card" data-n="1">
+              <header class="bp-card__head">
+                <span class="bp-card__no">01</span>
+                <h3 class="bp-card__name">Sensing</h3>
+              </header>
+              <p class="bp-card__part">RPLIDAR S2L lidar</p>
+              <p class="bp-card__spec">360° · 10 Hz · 9-axis IMU</p>
+            </figure>
+            <figure class="bp-card" data-n="2">
+              <header class="bp-card__head">
+                <span class="bp-card__no">02</span>
+                <h3 class="bp-card__name">Compute</h3>
+              </header>
+              <p class="bp-card__part">Raspberry Pi</p>
+              <p class="bp-card__spec">Python control stack</p>
+            </figure>
+            <figure class="bp-card" data-n="3">
+              <header class="bp-card__head">
+                <span class="bp-card__no">03</span>
+                <h3 class="bp-card__name">Motion</h3>
+              </header>
+              <p class="bp-card__part">Differential drive</p>
+              <p class="bp-card__spec">encoders · 100 Hz loop</p>
+            </figure>
+            <figure class="bp-card" data-n="4">
+              <header class="bp-card__head">
+                <span class="bp-card__no">04</span>
+                <h3 class="bp-card__name">Cleaning</h3>
+              </header>
+              <p class="bp-card__part">Refillable tank</p>
+              <p class="bp-card__spec">gravity-fed mop pad</p>
+            </figure>
+          </div>
+        </div>
+      </section>
+
+      <!-- =================== CONSOLE / FROM ANYWHERE =================== -->
+      <section class="section" id="console">
+        <div class="container console-layout">
+          <div class="console-copy">
+            <div class="section__head reveal">
+              <span class="eyebrow">Operator console</span>
+              <h2>Built for one thumb.</h2>
+              <p class="lead">
+                Open it on a phone and the layout collapses to a bottom tab bar.
+                Drive with a virtual joystick, switch modes, and keep the emergency
+                stop within reach the entire time.
+              </p>
+            </div>
+            <ul class="cap-list reveal" data-delay="1" style="list-style: none; padding: 0; margin: 0">
+              <li class="cap">
+                <span class="cap__icon">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16v5M8 21h8"/><rect x="3" y="3" width="18" height="13" rx="2"/><path d="M7 9.5 12 12l5-2.5"/></svg>
+                </span>
+                <h3>Installable PWA</h3>
+                <p>Add it to a home screen and it runs full-screen, offline shell and all.</p>
+              </li>
+              <li class="cap">
+                <span class="cap__icon">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18A14 14 0 0 1 12 3Z"/></svg>
+                </span>
+                <h3>Works from anywhere</h3>
+                <p>Same console on the couch or on the road. The relay does not care where you are.</p>
+              </li>
+              <li class="cap">
+                <span class="cap__icon" style="background: var(--danger-soft); color: var(--danger-strong)">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><rect x="8.5" y="8.5" width="7" height="7" rx="1.2"/></svg>
+                </span>
+                <h3>One loud red button</h3>
+                <p>The emergency stop is oversized and always on screen. One tap halts the robot, one more resumes.</p>
+              </li>
+            </ul>
+          </div>
+
+          <!-- Faithful phone mock of the console -->
+          <div class="phone reveal" data-delay="1" aria-hidden="false">
+            <div class="phone__screen">
+              <div class="scr-top">
+                <span class="scr-brand">RoboMop</span>
+                <span class="scr-badge"><span class="dot"></span> Online</span>
+              </div>
+              <div class="scr-map">
+                <canvas id="map-phone" role="img" aria-label="The same live map shown inside a phone-sized operator console."></canvas>
+              </div>
+              <div class="scr-stats">
+                <div class="scr-stat"><div class="k">Pose</div><div class="v" id="st-pose">2.4, 1.1</div></div>
+                <div class="scr-stat"><div class="k">Heading</div><div class="v" id="st-head">041°</div></div>
+                <div class="scr-stat"><div class="k">Coverage</div><div class="v" id="st-cov">38%</div></div>
+              </div>
+              <div class="scr-controls">
+                <div class="scr-modes" role="group" aria-label="Mode (preview)">
+                  <button type="button" tabindex="-1">Manual</button>
+                  <button type="button" aria-pressed="true" tabindex="-1">Clean</button>
+                  <button type="button" tabindex="-1">Explore</button>
+                </div>
+              </div>
+              <div class="scr-estop">
+                <button type="button" tabindex="-1">EMERGENCY STOP</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- =================== BUILD IT =================== -->
+      <section class="section" id="build">
+        <div class="container">
+          <div class="section__head reveal">
+            <h2>Build your own.</h2>
+            <p class="lead">
+              The whole stack is in the open. Deploy the relay once, point a robot
+              at it, and ship the console to any static host.
+            </p>
+          </div>
+          <div class="steps reveal" data-delay="1">
+            <article class="step">
+              <span class="step__n">01 / Relay</span>
+              <h3>Deploy the relay once</h3>
+              <p>Create the Worker and its database on Cloudflare, then provision a robot to get its claim code.</p>
+              <code><span class="tok">npm</span> run deploy</code>
+            </article>
+            <article class="step">
+              <span class="step__n">02 / Robot</span>
+              <h3>Point the robot at it</h3>
+              <p>Run the control stack on the Pi with your relay URL and per-robot secret. It tolerates no internet and reconnects on its own.</p>
+              <code><span class="tok">python</span> robot/src/main.py --relay-url …</code>
+            </article>
+            <article class="step">
+              <span class="step__n">03 / Console</span>
+              <h3>Ship the console</h3>
+              <p>Push to enable GitHub Pages, or drop the build on Vercel or any CDN. Then create an account and pair.</p>
+              <code><span class="tok">git</span> push <span class="tok">&&</span> open ./app</code>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <!-- =================== CTA BAND =================== -->
+      <section class="section" style="padding-top: 0">
+        <div class="container">
+          <div class="cta reveal">
+            <div class="grid-bg" aria-hidden="true"></div>
+            <div class="cta__inner">
+              <h2>Your robot, live in under a minute.</h2>
+              <p>
+                Create an operator account, pair a robot, and the live map opens
+                in your browser.
+              </p>
+              <div class="cta__actions">
+                <a class="btn btn--primary btn--lg" href="./app/">
+                  Open the console
+                  <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+                </a>
+                <a class="btn btn--ghost btn--lg" href="https://github.com/papalino456/RoboMop" rel="noopener">Read the docs</a>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- =================== FOOTER =================== -->
+    <footer class="footer">
+      <div class="container footer__inner">
+        <div class="footer__brand">
+          <a class="brand" href="#top">
+            <img class="brand__mark" src="./assets/img/mark.svg" alt="" />
+            RoboMop
+          </a>
+          <p>A DIY SLAM mopping robot and its live operator console, built in the open.</p>
+        </div>
+        <div class="footer__cols">
+          <div class="footer__col">
+            <h4>Console</h4>
+            <a href="./app/">Open console</a>
+            <a href="#console">On your phone</a>
+          </div>
+          <div class="footer__col">
+            <h4>System</h4>
+            <a href="#system">Architecture</a>
+            <a href="#robot">The robot</a>
+            <a href="#build">Build it yourself</a>
+            <a href="https://github.com/papalino456/RoboMop" rel="noopener">Source &amp; docs</a>
+          </div>
+        </div>
+        <div class="footer__legal">
+          <span>An open build by Sebastian.</span>
+          <span>© 2026 RoboMop</span>
+        </div>
+      </div>
+    </footer>
+
+    <script src="./main.js" type="module"></script>
+  </body>
+</html>
