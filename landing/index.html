@@ -5,6 +5,18 @@
     <script>
       // Set before paint so reveal animations only gate visibility when JS runs.
       document.documentElement.classList.add("js");
+
+      // The console used to live at the site root and left a service worker
+      // registered here (scope /RoboMop/) that would otherwise keep serving the
+      // cached app shell over this landing page. Drop any such root-scoped
+      // worker; never touch the console's own worker under /app/.
+      if ("serviceWorker" in navigator) {
+        navigator.serviceWorker.getRegistrations().then(function (regs) {
+          regs.forEach(function (reg) {
+            if (reg.scope.indexOf("/app/") === -1) reg.unregister();
+          });
+        });
+      }
     </script>
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>RoboMop — live operator console for a SLAM mopping robot</title>
