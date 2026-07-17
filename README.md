@@ -1,4 +1,4 @@
-# RoboMop
+# RoboMop 2.0
 
 A DIY SLAM floor-mopping robot with a cloud-connected operator console. Three
 pieces:
