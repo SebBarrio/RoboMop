@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RoboMop New Era · Propuesta de proyecto</title>
+<meta name="description" content="Un robot autónomo de limpieza de pisos diseñado para un turno completo — y el plan de 16 semanas para entregarlo, verificado.">
+<link rel="stylesheet" href="css/fonts.css">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<div class="lang-switch"><a href="../index.html">EN</a><span class="on">ES</span></div>
+
+<!-- ═══ Portada ═══ -->
+<header id="cover">
+  <canvas id="cover-canvas"></canvas>
+  <canvas id="cover-canvas-x" style="display:none"></canvas>
+  <canvas id="cover-canvas-w" style="display:none"></canvas>
+  <div class="cover-inner">
+    <p class="cover-kicker">PROPUESTA DE PROYECTO · ROBOMOP NEW ERA · JULIO 2026</p>
+    <h1 class="cover-title">RoboMop New Era:<br><span class="cover-num">un robot trapeador autónomo</span><br>y el plan para entregarlo</h1>
+    <p class="cover-sub">Un robot autónomo de limpieza de pisos diseñado a partir de todo lo que su predecesor nos enseñó — y el plan de 16 semanas para entregarlo</p>
+    <p class="cover-lede">RoboMop New Era mapea y limpia pisos grandes por sí solo durante unas 4.8 horas estimadas en su carga de trabajo más exigente, cambia su batería en menos de cinco minutos sin reiniciarse, y protege a las personas y a sí mismo con seguridad que vive en el hardware, no en el software. Irriga mientras limpia, ve con LiDAR y dos cámaras, y reporta a una app de flota. Lo entregamos en 16 semanas: un robot completamente verificado, un acumulador LFP y la documentación para construir diez más.</p>
+    <div class="cover-chips">
+      <button class="chip" data-goto="#sec-ask">La propuesta</button>
+      <button class="chip" data-goto="#sec-case">Por qué es mejor</button>
+      <button class="chip" data-goto="#sec-decisions">Lista de materiales</button>
+      <button class="chip" data-goto="#sec-energy">Batería</button>
+      <button class="chip" data-goto="#sec-plan">El plan de 16 semanas</button>
+      <button class="chip" data-goto="#sec-accept">Cómo sabrá que funciona</button>
+    </div>
+    <p class="cover-anchor">UN ROBOT + UN ACUMULADOR LFP · 16 SEMANAS · MXN $54,162.53 TODO INCLUIDO · ACEPTACIÓN PRESENCIADA CONTRA UNA MATRIZ DE PRUEBAS CONGELADA</p>
+    <div class="cover-mode" id="cover-mode" aria-label="Variante de portada">
+      <button data-mode="rec" class="on">A · Un robot, una flota de diez</button>
+      <button data-mode="x">B · El robot, despiezado</button>
+      <button data-mode="w">C · El plano</button>
+    </div>
+    <div class="scroll-hint"><span></span>DESLIZA</div>
+  </div>
+</header>
+
+<main>
+
+<!-- ═══ §0 La propuesta ═══ -->
+<section id="sec-ask" class="band" data-win="ask">
+  <div class="prose">
+    <p class="sec-no">§0 · La propuesta en breve</p>
+    <h2>Lo que entregaremos</h2>
+    <p class="dek">Un producto de limpieza completo — no un prototipo — entregado con la evidencia de pruebas que respalda cada afirmación de este documento.</p>
+    <p>Proponemos entregar, en 16 semanas, una unidad RoboMop New Era completamente integrada: el robot, un acumulador LFP con cargador compatible, irrigación integrada, software de autonomía y misión, la app de flota y un gemelo digital con escenarios de prueba reproducibles. Junto con el hardware, usted recibe el paquete técnico completo — CAD, lista de materiales, código fuente, firmware, registros de calibración, manuales de operación y un informe final con recomendaciones concretas para una fase posterior de hasta diez unidades.</p>
+    <p>El precio total es <b>MXN $54,162.53</b>: una estimación base de MXN $47,097.85 más una contingencia del 15% que permanece bajo su control y solo se gasta en riesgos que realmente se materialicen. Un techo firme de <b>MXN $55,000</b> nunca se cruza sin su aprobación explícita, y cada peso se rastrea semanalmente contra él.</p>
+    <div class="metric-strip" id="ask-metrics"></div>
+    <p>La entrega se guía por hitos: usted aprueba los requisitos en la Semana 1, el diseño en la Semana 2, y ve al robot pasar su prueba final de aceptación — presenciada, contra una matriz de pruebas que congelamos juntos al inicio — en la Semana 16.</p>
+  </div>
+</section>
+
+<!-- ═══ §1 Por qué es mejor ═══ -->
+<section id="sec-case" class="band" data-win="case">
+  <div class="prose">
+    <p class="sec-no">§1 · Por qué este robot es mejor</p>
+    <h2>Qué cambió respecto al prototipo de 2025</h2>
+    <p class="dek">No parchamos el robot anterior. Lo reconstruimos para que lo que solía fallar ahora sea físicamente imposible — y cada mejora es algo que usted puede probar.</p>
+    <p>El prototipo de 2025 demostró el concepto: el trapeado autónomo funciona. También nos enseñó exactamente dónde se rompe un robot de limpieza cuando enfrenta pisos reales, horarios reales y cargas eléctricas reales. RoboMop New Era conserva todo lo que funcionó y rediseña todo lo que no. El resultado, característica por característica:</p>
+  </div>
+  <div class="wide xl"><div id="failfix-chart" class="chart-frame"></div></div>
+</section>
+
+<!-- ═══ §2 Lista de materiales ═══ -->
+<section id="sec-decisions" class="band" data-win="decisions">
+  <div class="prose">
+    <p class="sec-no">§2 · Lista de materiales</p>
+    <h2>De qué está hecho el robot — y cuánto cuesta</h2>
+    <p class="dek">Seis partes exactas ya están fijadas con precios; todo lo demás es un grupo presupuestal honestamente etiquetado, congelado a números de parte en la revisión de diseño de la Semana 2.</p>
+    <p>La lista de materiales a continuación es la lista de compras completa detrás del precio — cada línea en pesos mexicanos. Las <b>partes definidas</b> son números de parte exactos que hemos seleccionado y cotizado: la computadora Jetson, el controlador ESP32, los dos motorreductores de 100 watts, las dieciséis celdas LFP y los dos escáneres RPLIDAR S2. Los <b>grupos presupuestados</b> llevan un presupuesto firme en MXN — tarjetas, cámaras, irrigación, chasis, seguridad — congelados a números de parte exactos cuando usted apruebe el diseño en la Semana 2. Alrededor de las partes, la arquitectura las une: un enlace serial verificado con CRC y con sello de tiempo entre las dos computadoras, para que un comando corrupto nunca pueda llegar a los motores, y un bus CAN estilo automotriz ya instalado para accesorios que agreguemos después.</p>
+  </div>
+  <div class="wide xl"><div id="bom-chart" class="chart-frame"></div></div>
+  <div class="prose">
+    <p>Tres inversiones cargan el presupuesto — el acumulador, la plataforma de cómputo y la nueva suite de sensores — porque esas son las tres cosas que hacen a este robot diferente del anterior. Nada crítico se ordena sin número de parte, tiempo de entrega y costo puesto en destino confirmados, y aproximadamente el 84% de la base se compromete en las primeras dos semanas para que los artículos de entrega larga nunca amenacen el calendario.</p>
+  </div>
+  <div class="wide xl"><div id="cost-chart" class="chart-frame"></div></div>
+</section>
+
+<!-- ═══ §3 Cómo funciona ═══ -->
+<section id="sec-arch" class="band" data-win="arch">
+  <div class="prose">
+    <p class="sec-no">§3 · Cómo funciona</p>
+    <h2>Cómo está organizado el robot</h2>
+    <p class="dek">Un cerebro piensa, un cerebro conduce — y el que conduce responde al hardware, no al humor de la otra computadora.</p>
+    <p>El cerebro pensante maneja mapas, rutas, cámaras y la app. El cerebro conductor opera los motores mil veces por segundo y marca temporalmente cada sensor contra un solo reloj, para que el mapa que construye el robot nunca se desvíe. Si el cerebro pensante llegara a colgarse, el cerebro conductor detiene los motores por sí mismo — el paro está cableado en silicio, y ningún error de software puede anularlo. La entrega de agua, el cambio de batería y la cadena de paro de emergencia responden al mismo controlador supervisado, y un bus CAN estilo automotriz ya está instalado para accesorios que agreguemos después.</p>
+  </div>
+  <div class="wide xl"><div id="arch-chart" class="chart-frame"></div></div>
+</section>
+
+<!-- ═══ §4 Energía ═══ -->
+<section id="sec-energy" class="band" data-win="energy">
+  <div class="prose">
+    <p class="sec-no">§4 · Batería y autonomía</p>
+    <h2>Batería y autonomía</h2>
+    <p class="dek">La batería se dimensiona con un modelo energético construido a partir de consumos medidos — no con optimismo. La estimación supera la barra de aceptación con margen de sobra.</p>
+    <p>El paquete LFP de 960 Wh del robot está dimensionado contra todo lo que realmente consume: las computadoras, la tracción y el cabezal de limpieza. Con un <b>consumo promedio sostenido de 200 watts — la carga de trabajo del peor caso contra la que probamos — el paquete entrega unas 4.8 horas estimadas de limpieza, superando la barra de aceptación de ≥4.0 horas con un margen del 20%</b>. Cuando el paquete se agota, uno cargado se desliza en su lugar <b>en menos de cinco minutos mientras los controles permanecen despiertos</b> — y con un repuesto cargado en el estante, la estimación llega a <b>9.6 horas, más allá de un turno completo de ocho horas</b>, sin reiniciar ni remapear. La química del paquete es LFP — la opción segura y de larga vida útil — en un ensamble de 24 V · 40 Ah con su propio sistema de gestión de batería.</p>
+  </div>
+  <div class="wide xl"><div id="energy-chart" class="chart-frame"></div></div>
+</section>
+
+<!-- ═══ §5 Plan ═══ -->
+<section id="sec-plan" class="band" data-win="plan">
+  <div class="prose">
+    <p class="sec-no">§5 · El plan de 16 semanas</p>
+    <h2>El calendario de 16 semanas</h2>
+    <p class="dek">Los requisitos se congelan en la Semana 1, el diseño en la Semana 2, las funciones en la Semana 12 — y cada viernes usted ve una demostración, no una diapositiva.</p>
+    <p>El plan corre requisitos → diseño → ingeniería concurrente → construcción de subsistemas → integración → verificación → aceptación. Cada una de las siete compuertas tiene un criterio escrito y su firma: nada avanza a base de promesas. Si algo en la ruta crítica se retrasa más de tres días hábiles, usted recibe un plan de recuperación de inmediato — y dos semanas consecutivas perdidas disparan una revisión de alcance o recursos con usted, no un desliz silencioso.</p>
+  </div>
+  <div class="wide xl"><div id="timeline-chart" class="chart-frame"></div></div>
+</section>
+
+<!-- ═══ §6 Riesgos ═══ -->
+<section id="sec-risk" class="band" data-win="risk">
+  <div class="prose">
+    <p class="sec-no">§6 · Qué podría salir mal — y cómo está cubierto</p>
+    <h2>Principales riesgos y respuestas</h2>
+    <p class="dek">Preferimos mostrarle el registro de riesgos que fingir que no existe. Cada riesgo tiene un disparador objetivo que obliga a actuar — revisado con usted semanalmente.</p>
+    <p>Las dos mayores amenazas son las que enfrenta todo proyecto de hardware ambicioso: el tiempo y el tamaño del equipo. Se enfrentan con puntos de decisión congelados, líneas de trabajo en paralelo y una reserva de retrabajo del 20%. Debajo de ellas, cada riesgo técnico — tarjetas tardías, datos de batería, agua cerca de la electrónica — tiene una respuesta de ingeniería nombrada. Una regla está por encima de todas: <b>un solo evento de movimiento no controlado detiene todo el trabajo hasta entenderse.</b></p>
+  </div>
+  <div class="wide xl"><div id="risk-chart" class="chart-frame"></div></div>
+</section>
+
+<!-- ═══ §7 Aceptación ═══ -->
+<section id="sec-accept" class="band" data-win="accept">
+  <div class="prose">
+    <p class="sec-no">§7 · Cómo sabrá que funciona</p>
+    <h2>Pruebas y aceptación</h2>
+    <p class="dek">La matriz de pruebas se congela con usted en la Semana 1 — antes de que exista cualquier resultado — para que la Semana 16 sea una demostración, no una negociación.</p>
+    <p>Cada capacidad de esta propuesta corresponde a un compromiso numerado con un criterio de éxito escrito. Las pruebas escalan cinco niveles — simulación de software, bancos de prueba, subsistemas individuales, el robot integrado y finalmente una corrida de aceptación presenciada de la matriz congelada. La simulación apoya el desarrollo; nunca sustituye la prueba física de autonomía, temperatura, conectores, cambio de batería, frenado, fugas o seguridad eléctrica.</p>
+  </div>
+  <div class="wide xl"><div id="objectives-chart" class="chart-frame"></div></div>
+  <div class="prose">
+    <h3 class="sub-h">Qué significa «aceptado» el día de la entrega</h3>
+    <ul class="laws">
+      <li>Al menos 4 horas de limpieza continua desde carga completa bajo la carga de trabajo acordada de 200 watts — sin disparos de batería, sin sobrecalentamiento, sin reinicios.</li>
+      <li>Cambio de batería en cinco minutos o menos, con los controles del robot despiertos todo el tiempo; conectores fríos y firmes.</li>
+      <li>Cero defectos críticos abiertos, y cero defectos mayores abiertos sin su aprobación por escrito.</li>
+      <li>La matriz completa de autonomía, percepción, irrigación y conectividad ejecutada y firmada — más el robot, el acumulador, el cargador, el software y el paquete técnico completo en sus manos.</li>
+    </ul>
+    <p>Y porque quizá quiera más de uno: cada ensamble crítico lleva número de parte, revisión, identificación serial, calibración y registro de pasa/falla, de modo que las pruebas que corremos en este robot se convierten en los controles de producción de los siguientes diez.</p>
+  </div>
+</section>
+
+<!-- ═══ §8 Gobernanza ═══ -->
+<section id="sec-gov" class="band" data-win="gov">
+  <div class="prose">
+    <p class="sec-no">§8 · Quién hace qué, y cómo nos mantenemos en ruta</p>
+    <h2>Equipo y control del proyecto</h2>
+    <p class="dek">Planeación de sprint cada lunes, una sincronización breve cada día, una revisión técnica a mitad de semana, y una demo más paquete de estado escrito cada viernes.</p>
+  </div>
+  <div class="wide xl"><div id="team-chart" class="chart-frame"></div></div>
+  <div class="prose">
+    <h3 class="sub-h">Lo que congelamos juntos en las primeras dos semanas</h3>
+    <ul class="laws" id="freeze-list"></ul>
+    <h3 class="sub-h">Lo que esta propuesta no incluye</h3>
+    <ul class="laws" id="scopeout-list"></ul>
+    <div class="note-box">
+      <p><b>La seguridad primero, siempre.</b> Ambos ingenieros del equipo pueden detener cualquier prueba de inmediato — por movimiento no controlado, una anomalía de batería, un conector caliente, riesgo eléctrico, una fuga de agua o cualquier cosa que parezca insegura.</p>
+      <p><b>Sin cambios silenciosos.</b> Cualquier cambio de diseño después de la Semana 2 y cualquier función nueva después de la Semana 12 requiere automáticamente su aprobación.</p>
+    </div>
+    <h3 class="sub-h">Los números que reportamos cada semana</h3>
+  </div>
+  <div class="wide"><div id="kpi-chart" class="chart-frame"></div></div>
+  <div class="prose">
+    <h3 class="sub-h">Aprobación</h3>
+    <p>Firmar aprueba el plan de 16 semanas, el presupuesto base de MXN $47,097.85, el precio total de MXN $54,162.53 y el techo de MXN $55,000, bajo las reglas de compras, control de cambios y compuertas descritas arriba.</p>
+    <table class="dt" id="sign-table">
+      <thead><tr><th>Rol</th><th>Nombre</th><th>Decisión</th><th>Fecha / firma</th></tr></thead>
+      <tbody>
+        <tr><td>Patrocinador</td><td>Luis Vazquez</td><td>Aprobar / Rechazar</td><td></td></tr>
+        <tr><td>Gerente de Proyecto</td><td>Germán Velázquez</td><td>Aceptar la responsabilidad</td><td></td></tr>
+        <tr><td>Ingeniero Senior</td><td>Sebastian Barrio</td><td>Refrendar la base técnica y de pruebas</td><td></td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ═══ Control del documento ═══ -->
+<footer id="sec-sources">
+  <div class="prose">
+    <p class="sec-no">Control del documento</p>
+    <h2>Sobre esta propuesta</h2>
+    <div class="note-box">
+      <p><b>Documento independiente.</b> Esta propuesta es autocontenida: cada cifra en ella es una base de planeación del modelo de ingeniería y presupuesto de RoboMop New Era, vigente a julio de 2026, y cada afirmación de capacidad corresponde a un compromiso de aceptación numerado en §7.</p>
+      <p><b>Estimaciones, honestamente etiquetadas.</b> Las cifras de autonomía son estimaciones de modelo que se vuelven contractuales solo mediante la prueba de aceptación presenciada; los precios unitarios a 10 y 100 robots son una estimación de planeación para la fase posterior, no una cotización.</p>
+      <p><b>Preparado por.</b> El equipo RoboMop New Era — Luis Vazquez (Patrocinador), Germán Velázquez (Gerente de Proyecto), Sebastian Barrio (Ingeniero Senior).</p>
+    </div>
+    <p class="colophon">RoboMop New Era · Propuesta de proyecto · Versión 1.0 · Julio 2026</p>
+  </div>
+</footer>
+
+</main>
+
+<aside id="dash-rail" aria-label="Panel del programa"><canvas id="dash-canvas"></canvas></aside>
+<div id="drill-card" hidden></div>
+
+<script src="vendor/d3.min.js"></script>
+<script src="js/data.js"></script>
+<script src="js/utils.js"></script>
+<script src="js/cover.js"></script>
+<script src="js/cover-exploded.js"></script>
+<script src="js/cover-wire.js"></script>
+<script src="js/dashboard.js"></script>
+<script src="js/chart-failfix.js"></script>
+<script src="js/chart-decisions.js"></script>
+<script src="js/chart-arch.js"></script>
+<script src="js/chart-energy.js"></script>
+<script src="js/chart-timeline.js"></script>
+<script src="js/chart-risk.js"></script>
+<script src="js/chart-gov.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>

@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RoboMop New Era · Project Proposal</title>
+<meta name="description" content="An autonomous floor-cleaning robot engineered for a full shift — and the 16-week plan to deliver it, verified.">
+<link rel="stylesheet" href="css/fonts.css">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<div class="lang-switch"><span class="on">EN</span><a href="es/index.html">ES</a></div>
+
+<!-- ═══ Cover ═══ -->
+<header id="cover">
+  <canvas id="cover-canvas"></canvas>
+  <canvas id="cover-canvas-x" style="display:none"></canvas>
+  <canvas id="cover-canvas-w" style="display:none"></canvas>
+  <div class="cover-inner">
+    <p class="cover-kicker">PROJECT PROPOSAL · ROBOMOP NEW ERA · JULY 2026</p>
+    <h1 class="cover-title">RoboMop New Era:<br><span class="cover-num">an autonomous mop robot</span><br>and the plan to deliver it</h1>
+    <p class="cover-sub">An autonomous floor-cleaning robot engineered around everything its predecessor taught us — and the 16-week plan to deliver it</p>
+    <p class="cover-lede">RoboMop New Era maps and cleans large floors on its own for an estimated 4.8 hours at its hardest workload, swaps its battery in under five minutes without rebooting, and protects people and itself with safety that lives in hardware, not software. It irrigates as it cleans, sees with LiDAR and two cameras, and reports to a fleet app. We deliver it in 16 weeks: one fully verified robot, one LFP accumulator, and the documentation to build ten more.</p>
+    <div class="cover-chips">
+      <button class="chip" data-goto="#sec-ask">The proposal</button>
+      <button class="chip" data-goto="#sec-case">Why it's better</button>
+      <button class="chip" data-goto="#sec-decisions">Bill of materials</button>
+      <button class="chip" data-goto="#sec-energy">Battery</button>
+      <button class="chip" data-goto="#sec-plan">The 16-week plan</button>
+      <button class="chip" data-goto="#sec-accept">How you'll know it works</button>
+    </div>
+    <p class="cover-anchor">ONE ROBOT + ONE LFP ACCUMULATOR · 16 WEEKS · MXN $54,162.53 ALL-IN · ACCEPTANCE WITNESSED AGAINST A FROZEN TEST MATRIX</p>
+    <div class="cover-mode" id="cover-mode" aria-label="Cover artwork variant">
+      <button data-mode="rec" class="on">A · One robot, a fleet of ten</button>
+      <button data-mode="x">B · The robot, exploded</button>
+      <button data-mode="w">C · The blueprint</button>
+    </div>
+    <div class="scroll-hint"><span></span>SCROLL</div>
+  </div>
+</header>
+
+<main>
+
+<!-- ═══ §0 The proposal ═══ -->
+<section id="sec-ask" class="band" data-win="ask">
+  <div class="prose">
+    <p class="sec-no">§0 · The proposal at a glance</p>
+    <h2>What we will deliver</h2>
+    <p class="dek">A complete cleaning product — not a prototype — delivered with the test evidence to prove every claim in this document.</p>
+    <p>We propose to deliver, in 16 weeks, a fully integrated RoboMop New Era unit: the robot, one LFP accumulator with a compatible charger, integrated irrigation, autonomy and mission software, the fleet app, and a digital twin with reproducible test scenarios. Alongside the hardware you receive the complete technical data package — CAD, bill of materials, source code, firmware, calibration records, operating manuals, and a final report with concrete recommendations for a follow-on phase of up to ten units.</p>
+    <p>The all-in price is <b>MXN $54,162.53</b>: a base estimate of MXN $47,097.85 plus a 15% contingency that stays under your control and is only spent on risks that actually materialize. A hard ceiling of <b>MXN $55,000</b> is never crossed without your explicit approval, and every peso is tracked weekly against it.</p>
+    <div class="metric-strip" id="ask-metrics"></div>
+    <p>Delivery is milestone-driven: you approve the requirements in Week 1, the design in Week 2, and watch the robot pass its final acceptance test — witnessed, against a test matrix we freeze together at the start — in Week 16.</p>
+  </div>
+</section>
+
+<!-- ═══ §1 Why it's better ═══ -->
+<section id="sec-case" class="band" data-win="case">
+  <div class="prose">
+    <p class="sec-no">§1 · Why this robot is better</p>
+    <h2>What changed from the 2025 prototype</h2>
+    <p class="dek">We didn't patch the old robot. We rebuilt it so that what used to go wrong is now physically impossible — and each improvement is something you can test.</p>
+    <p>The 2025 prototype proved the concept: autonomous mopping works. It also taught us exactly where a cleaning robot breaks when it meets real floors, real schedules and real electrical loads. RoboMop New Era keeps everything that worked and re-engineers everything that didn't. The result, feature by feature:</p>
+  </div>
+  <div class="wide xl"><div id="failfix-chart" class="chart-frame"></div></div>
+</section>
+
+<!-- ═══ §2 Bill of materials ═══ -->
+<section id="sec-decisions" class="band" data-win="decisions">
+  <div class="prose">
+    <p class="sec-no">§2 · Bill of materials</p>
+    <h2>What the robot is made of — and what it costs</h2>
+    <p class="dek">Six exact parts are already pinned with prices; everything else is an honestly labeled budget group, frozen to part numbers at the Week-2 design review.</p>
+    <p>The bill of materials below is the complete shopping list behind the price — every line in Mexican pesos. <b>Defined parts</b> are exact part numbers we have selected and priced: the Jetson computer, the ESP32 controller, the two 100-watt gearmotors, the sixteen LFP cells and the two RPLIDAR S2 scanners. <b>Budgeted groups</b> carry a firm MXN budget — boards, cameras, irrigation, chassis, safety — frozen to exact part numbers when you approve the design in Week 2. Around the parts, the architecture ties them together: a CRC-checked, timestamped serial link between the two computers, so a corrupted command can never reach the motors, and an automotive-style CAN bus already in place for accessories we add later.</p>
+  </div>
+  <div class="wide xl"><div id="bom-chart" class="chart-frame"></div></div>
+  <div class="prose">
+    <p>Three investments carry the budget — the accumulator, the compute platform, and the new sensor suite — because those are the three things that make this robot different from the last one. Nothing critical is ordered without a confirmed part number, lead time and landed cost, and roughly 84% of the base is committed in the first two weeks so that long-lead items can never threaten the schedule.</p>
+  </div>
+  <div class="wide xl"><div id="cost-chart" class="chart-frame"></div></div>
+</section>
+
+<!-- ═══ §3 How it works ═══ -->
+<section id="sec-arch" class="band" data-win="arch">
+  <div class="prose">
+    <p class="sec-no">§3 · How it works</p>
+    <h2>How the robot is organized</h2>
+    <p class="dek">One brain thinks, one brain drives — and the driving one answers to hardware, not to the other computer's mood.</p>
+    <p>The thinking brain handles maps, routes, cameras and the app. The driving brain runs the motors a thousand times a second and timestamps every sensor against a single clock, so the map the robot builds never drifts. If the thinking brain ever hangs, the driving brain stops the motors by itself — the stop is wired in silicon, and no software bug can override it. Water delivery, battery swap and the emergency-stop chain all answer to the same supervised controller, and an automotive-style CAN bus is already in place for accessories we add later.</p>
+  </div>
+  <div class="wide xl"><div id="arch-chart" class="chart-frame"></div></div>
+</section>
+
+<!-- ═══ §4 Energy ═══ -->
+<section id="sec-energy" class="band" data-win="energy">
+  <div class="prose">
+    <p class="sec-no">§4 · Battery and runtime</p>
+    <h2>Battery and runtime</h2>
+    <p class="dek">The battery is sized by an energy model built from measured draws — not by optimism. The estimate clears the acceptance bar with room to spare.</p>
+    <p>The robot's 960 Wh LFP pack is sized against everything it actually draws: the computers, the traction and the cleaning head. At a sustained <b>200-watt average draw — the worst-case workload we test against — the pack delivers an estimated 4.8 hours of cleaning, clearing the ≥4.0-hour acceptance bar with a 20% margin</b>. When the pack does run down, a fresh one slides in <b>in under five minutes while the controls stay awake</b> — and with one charged spare on the shelf the estimate stretches to <b>9.6 hours, past a full eight-hour shift</b>, without rebooting or re-mapping. The pack chemistry is LFP — the safe, long-cycle-life choice — in a 24 V · 40 Ah assembly with its own battery-management system.</p>
+  </div>
+  <div class="wide xl"><div id="energy-chart" class="chart-frame"></div></div>
+</section>
+
+<!-- ═══ §5 Plan ═══ -->
+<section id="sec-plan" class="band" data-win="plan">
+  <div class="prose">
+    <p class="sec-no">§5 · The 16-week plan</p>
+    <h2>The 16-week schedule</h2>
+    <p class="dek">Requirements freeze in Week 1, the design in Week 2, features in Week 12 — and every Friday you see a demo, not a slide.</p>
+    <p>The plan runs requirements → design → concurrent engineering → subsystem builds → integration → verification → acceptance. Each of the seven gates has a written criterion and your sign-off: nothing proceeds on promises. If anything on the critical path slips more than three working days, you get a recovery plan immediately — and two consecutive missed weeks trigger a scope or resource review with you, not a quiet slip.</p>
+  </div>
+  <div class="wide xl"><div id="timeline-chart" class="chart-frame"></div></div>
+</section>
+
+<!-- ═══ §7 Risks ═══ -->
+<section id="sec-risk" class="band" data-win="risk">
+  <div class="prose">
+    <p class="sec-no">§6 · What could go wrong — and how it's covered</p>
+    <h2>Main risks and responses</h2>
+    <p class="dek">We'd rather show you the risk register than pretend there isn't one. Every risk has an objective trigger that forces action — reviewed with you weekly.</p>
+    <p>The two biggest threats are the ones every ambitious hardware project faces: time and team size. They're met with frozen decision points, parallel workstreams and a 20% rework reserve. Below them, every technical risk — late boards, battery data, water near electronics — has a named engineering response. One rule sits above all others: <b>a single uncontrolled-motion event stops all work until it's understood.</b></p>
+  </div>
+  <div class="wide xl"><div id="risk-chart" class="chart-frame"></div></div>
+</section>
+
+<!-- ═══ §8 Acceptance ═══ -->
+<section id="sec-accept" class="band" data-win="accept">
+  <div class="prose">
+    <p class="sec-no">§7 · How you'll know it works</p>
+    <h2>Testing and acceptance</h2>
+    <p class="dek">The test matrix is frozen with you in Week 1 — before any results exist — so Week 16 is a demonstration, not a negotiation.</p>
+    <p>Every capability in this proposal maps to a numbered commitment with a written success criterion. Testing climbs five levels — software simulation, bench rigs, individual subsystems, the integrated robot, and finally a witnessed acceptance run of the frozen matrix. Simulation supports development; it never substitutes for physical proof of runtime, temperature, connectors, battery swap, braking, leaks or electrical safety.</p>
+  </div>
+  <div class="wide xl"><div id="objectives-chart" class="chart-frame"></div></div>
+  <div class="prose">
+    <h3 class="sub-h">What "accepted" means on delivery day</h3>
+    <ul class="laws">
+      <li>At least 4 hours of continuous cleaning from a full charge under the agreed 200-watt workload — no battery trips, no overheating, no reboots.</li>
+      <li>Battery swap in five minutes or less, with the robot's controls awake throughout; connectors cool and solid.</li>
+      <li>Zero open critical defects, and zero open major defects without your written sign-off.</li>
+      <li>The full autonomy, perception, irrigation and connectivity matrix executed and signed — plus the robot, accumulator, charger, software and complete technical data package in your hands.</li>
+    </ul>
+    <p>And because you may want more than one: every critical assembly carries a part number, revision, serial identification, calibration and pass/fail record, so the tests we run on this robot become the production checks for the next ten.</p>
+  </div>
+</section>
+
+<!-- ═══ §9 Governance ═══ -->
+<section id="sec-gov" class="band" data-win="gov">
+  <div class="prose">
+    <p class="sec-no">§8 · Who does what, and how we stay on track</p>
+    <h2>Team and project control</h2>
+    <p class="dek">Sprint planning each Monday, a short sync every day, a technical review mid-week, and a demo plus written status package every Friday.</p>
+  </div>
+  <div class="wide xl"><div id="team-chart" class="chart-frame"></div></div>
+  <div class="prose">
+    <h3 class="sub-h">What we lock together in the first two weeks</h3>
+    <ul class="laws" id="freeze-list"></ul>
+    <h3 class="sub-h">What this proposal does not include</h3>
+    <ul class="laws" id="scopeout-list"></ul>
+    <div class="note-box">
+      <p><b>Safety first, always.</b> Both engineers on the team can stop any test immediately — for uncontrolled motion, a battery anomaly, a hot connector, electrical risk, a water leak, or anything that looks unsafe.</p>
+      <p><b>No silent changes.</b> Any design change after Week 2 and any new feature after Week 12 automatically requires your approval.</p>
+    </div>
+    <h3 class="sub-h">The numbers we report every week</h3>
+  </div>
+  <div class="wide"><div id="kpi-chart" class="chart-frame"></div></div>
+  <div class="prose">
+    <h3 class="sub-h">Approval</h3>
+    <p>Signing approves the 16-week plan, the MXN $47,097.85 base budget, the MXN $54,162.53 all-in price and the MXN $55,000 ceiling, under the purchasing, change-control and gate rules described above.</p>
+    <table class="dt" id="sign-table">
+      <thead><tr><th>Role</th><th>Name</th><th>Decision</th><th>Date / signature</th></tr></thead>
+      <tbody>
+        <tr><td>Sponsor</td><td>Luis Vazquez</td><td>Approve / Reject</td><td></td></tr>
+        <tr><td>Project Manager</td><td>Germán Velázquez</td><td>Accept responsibility</td><td></td></tr>
+        <tr><td>Senior Engineer</td><td>Sebastian Barrio</td><td>Endorse the technical and test baseline</td><td></td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ═══ Document control ═══ -->
+<footer id="sec-sources">
+  <div class="prose">
+    <p class="sec-no">Document control</p>
+    <h2>About this proposal</h2>
+    <div class="note-box">
+      <p><b>Standalone document.</b> This proposal is self-contained: every figure in it is a planning baseline from the RoboMop New Era engineering model and budget, current as of July 2026, and every capability claim maps to a numbered acceptance commitment in §7.</p>
+      <p><b>Estimates, honestly labeled.</b> Runtime figures are model estimates that become contractual only through the witnessed acceptance test; unit pricing at 10 and 100 robots is a planning estimate for the follow-on phase, not a quote.</p>
+      <p><b>Prepared by.</b> The RoboMop New Era team — Luis Vazquez (Sponsor), Germán Velázquez (Project Manager), Sebastian Barrio (Senior Engineer).</p>
+    </div>
+    <p class="colophon">RoboMop New Era · Project proposal · Version 1.0 · July 2026</p>
+  </div>
+</footer>
+
+</main>
+
+<aside id="dash-rail" aria-label="Program dashboard"><canvas id="dash-canvas"></canvas></aside>
+<div id="drill-card" hidden></div>
+
+<script src="vendor/d3.min.js"></script>
+<script src="js/data.js"></script>
+<script src="js/utils.js"></script>
+<script src="js/cover.js"></script>
+<script src="js/cover-exploded.js"></script>
+<script src="js/cover-wire.js"></script>
+<script src="js/dashboard.js"></script>
+<script src="js/chart-failfix.js"></script>
+<script src="js/chart-decisions.js"></script>
+<script src="js/chart-arch.js"></script>
+<script src="js/chart-energy.js"></script>
+<script src="js/chart-timeline.js"></script>
+<script src="js/chart-risk.js"></script>
+<script src="js/chart-gov.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>
