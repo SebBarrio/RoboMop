@@ -10,6 +10,7 @@ on:
     paths:
       - frontend/**
       - landing/**
+      - docs/proposal/**
       - .github/workflows/deploy-frontend.yml
   workflow_dispatch:
 
@@ -39,12 +40,13 @@ jobs:
         working-directory: frontend
       - run: npm run build
         working-directory: frontend
-      - name: Assemble site (landing at root, console at /app)
+      - name: Assemble site (landing at root, console at /app, proposal at /proposal)
         shell: bash
         run: |
-          mkdir -p _site/app
+          mkdir -p _site/app _site/proposal
           cp -r landing/. _site/
           cp -r frontend/dist/. _site/app/
+          cp -r docs/proposal/. _site/proposal/
       - uses: actions/upload-pages-artifact@v3
         with:
           path: _site
