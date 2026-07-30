@@ -240,6 +240,27 @@ h3 { font-family: var(--sans); font-size: 21px; font-weight: 700; line-height: 1
   .sidecar figure { max-width: 400px; margin: 0 auto; }
 }
 @media (max-width: 640px) {
+  /* Phone: type is the reading path; the blueprint remains a quieter field behind it. */
+  #cover { min-height: auto; }
+  #cover::after {
+    content: ""; position: absolute; inset: 0; z-index: 1; pointer-events: none;
+    background: linear-gradient(180deg, rgba(255,255,255,.94) 0%, rgba(255,255,255,.86) 61%, rgba(255,255,255,.46) 100%);
+  }
+  .cover-inner { padding: 64px 24px 44px; }
+  .cover-kicker { max-width: 31ch; margin-bottom: 20px; font-size: 10px; letter-spacing: .2em; line-height: 1.65; }
+  .cover-title { max-width: 100%; font-size: clamp(36px, 10vw, 42px); line-height: 1.1; overflow-wrap: anywhere; }
+  .cover-sub { margin: 16px 0 20px; font-size: 17px; line-height: 1.55; overflow-wrap: anywhere; }
+  .cover-lede { font-size: 16px; line-height: 1.7; overflow-wrap: anywhere; }
+  .cover-chips { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; margin: 26px 0 20px; }
+  .chip { width: 100%; min-height: 48px; padding: 8px 10px; line-height: 1.28; }
+  .cover-anchor { line-height: 1.65; }
+  .scroll-hint { margin-top: 30px; }
+  .prose, .wide, .sidecar { padding-left: 24px; padding-right: 24px; }
+  .band { padding: 56px 0 52px; }
+  .sidecar { gap: 18px; margin: 32px auto; }
+}
+@media (max-width: 900px) {
+  /* Keep engineering labels at their authored size through tablet widths. */
   .chart-viewport {
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
@@ -572,9 +593,21 @@ table.failfix td { cursor: pointer; }
 .sc-num { font-family: var(--mono); font-size: 11px; color: var(--ink); }
 .risk-row .rtrig { font-family: var(--mono); font-size: 10px; color: var(--ink-md); line-height: 1.5; }
 @media (max-width: 820px) {
-  .risk-row { grid-template-columns: 26px 1fr; grid-template-rows: auto auto auto; }
+  .risk-row {
+    grid-template-columns: 26px minmax(0, 1fr);
+    grid-template-areas:
+      "rank main"
+      "rank id"
+      "rank score"
+      "rank trigger";
+    align-items: start;
+  }
   .risk-row.risk-head { display: none; }
-  .risk-row .rid, .risk-row .rscore, .risk-row .rtrig { grid-column: 2; }
+  .risk-row .rk { grid-area: rank; }
+  .risk-row .rmain { grid-area: main; min-width: 0; }
+  .risk-row .rid { grid-area: id; }
+  .risk-row .rscore { grid-area: score; }
+  .risk-row .rtrig { grid-area: trigger; }
   .term-mag { grid-template-columns: 1fr; }
 }
 @media (max-width: 640px) {
