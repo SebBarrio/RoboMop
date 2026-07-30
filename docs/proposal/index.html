@@ -12,7 +12,14 @@
 
 <!-- ═══ Portada ═══ -->
 <header id="cover">
-  <canvas id="cover-canvas-w"></canvas>
+  <figure class="cover-sheet" aria-hidden="true">
+    <span class="cs-view cs-top"><img src="assets/hero/robomop_view_top-1254.webp" srcset="assets/hero/robomop_view_top-720.webp 720w, assets/hero/robomop_view_top-1254.webp 1247w" sizes="(max-width: 900px) 54vw, 380px" width="1247" height="1238" alt="" decoding="async" fetchpriority="high"></span>
+    <span class="cs-view cs-front"><img src="assets/hero/robomop_view_front-1254.webp" srcset="assets/hero/robomop_view_front-720.webp 720w, assets/hero/robomop_view_front-1254.webp 1254w" sizes="(max-width: 900px) 54vw, 380px" width="1254" height="836" alt="" decoding="async" fetchpriority="high"></span>
+    <span class="cs-view cs-side"><img src="assets/hero/robomop_view_side-1254.webp" srcset="assets/hero/robomop_view_side-720.webp 720w, assets/hero/robomop_view_side-1254.webp 1254w" sizes="(max-width: 900px) 36vw, 250px" width="1254" height="706" alt="" decoding="async"></span>
+    <span class="cs-proj cs-proj-h"></span>
+    <span class="cs-proj cs-proj-v"></span>
+    <span class="cs-tag">PROYECCIÓN ORTOGRÁFICA · TERCER ÁNGULO</span>
+  </figure>
   <div class="cover-inner">
     <p class="cover-kicker">PROPUESTA DE PROYECTO · ROBOMOP NEW ERA · JULIO 2026</p>
     <h1 class="cover-title">RoboMop New Era:<br><span class="cover-num">un robot trapeador autónomo</span><br>y el plan para entregarlo</h1>
@@ -221,8 +228,7 @@
 <script src="vendor/d3.min.js"></script>
 <script src="js/data.js"></script>
 <script src="js/utils.js"></script>
-<script src="js/cover-exploded.js"></script>
-<script src="js/cover-wire.js"></script>
+<script src="js/cover-sheet.js"></script>
 <script src="js/dashboard.js"></script>
 <script src="js/chart-failfix.js"></script>
 <script src="js/chart-decisions.js"></script>
