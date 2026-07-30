@@ -16,15 +16,16 @@ window.U = (() => {
     };
   }
 
-  // Professional palette — white surface, deep-navy ink, electric-blue accent.
-  // NOTE key semantics: `red` is the LEGACY ACCENT SLOT (now electric blue) so existing
+  // Studio Document palette — white paper, cool-charcoal ink, Kobalt cobalt accent.
+  // Locked 2026-07-29 (ref: cad/renders/robomop_iso_closed_v1.png).
+  // NOTE key semantics: `red` is the LEGACY ACCENT SLOT (now cobalt) so existing
   // accent usages recolor automatically; true negatives (declines/crashes/missing)
   // must use PAL.neg — audited per chart.
   const PAL = {
-    paper: "#ffffff", hi: "#f7f9fc", ink: "#051c2c", inkMd: "#42566a", inkLo: "#8595a6",
-    line: "#dbe2ea", lineLo: "#eef1f6", red: "#2251ff", redHi: "#1233b8",
+    paper: "#ffffff", hi: "#f4f4f5", ink: "#141a21", inkMd: "#46505a", inkLo: "#8a929b",
+    line: "#d9dade", lineLo: "#ededf0", red: "#0057b8", redHi: "#003e8c",
     blue: "#7a45c9", copper: "#b07a10", green: "#008a6d", gold: "#b07a10",
-    neg: "#c22f4e", accent: "#2251ff", navy: "#051c2c",
+    neg: "#c22f4e", accent: "#0057b8", navy: "#141a21",
   };
   const SERIES = [PAL.red, PAL.blue, PAL.copper, PAL.green];
 

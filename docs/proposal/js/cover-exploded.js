@@ -1,20 +1,19 @@
-// ═══ Cover B · The robot, exploded (solid materials) ═══
-// Shared geometry engine (ROBO_ENGINE) also renders Cover C's blueprint.
+// ═══ Robot geometry engine (ROBO_ENGINE) — renders the blueprint cover ═══
 (function () {
   const P = U.PAL;
 
   // ── layer model (bottom → top): the five thesis layers of the rebuild ──
   const LAYERS = [
     { key: "chassis", w: 30, d: 21, h: 4.2, col: "#0d2c44", side: "#071e30", hi: "#16405f",
-      head: "CHASSIS · TWO HUB MOTORS", sub: "3D-printed functional · mop deck aft", col2: P.ink },
+      head: "CHASIS · DOS MOTORES EN RUEDA", sub: "impreso en 3D funcional · plataforma de trapeador atrás", col2: P.ink },
     { key: "pack", w: 24, d: 16, h: 5.2, col: "#3e5c76", side: "#2c4457", hi: "#527b9d",
-      head: "LFP PACK · 960 WH", sub: "24 V · 40 Ah · 4.8 h est. · swap ≤5 min", col2: P.redHi },
+      head: "PAQUETE LFP · 960 WH", sub: "24 V · 40 Ah · 4.8 h est. · cambio ≤5 min", col2: P.redHi },
     { key: "pcb1", w: 26, d: 18, h: 1.7, col: "#155233", side: "#0d3a23", hi: "#1d7048",
-      head: "PCB 1 · POWER / DRIVETRAIN", sub: "ESP32-S3 real-time · watchdog · PWM kill", col2: P.red },
+      head: "PCB 1 · POTENCIA / TREN MOTRIZ", sub: "ESP32-S3 tiempo real · watchdog · corte PWM", col2: P.red },
     { key: "pcb2", w: 24, d: 16, h: 1.7, col: "#1d7048", side: "#155233", hi: "#2a8f5f",
-      head: "PCB 2 · JETSON CARRIER", sub: "Orin Nano 8GB + NVMe · $249 dev", col2: P.red },
+      head: "PCB 2 · PORTADORA JETSON", sub: "Orin Nano 8GB + NVMe · kit dev $249", col2: P.red },
     { key: "deck", w: 28, d: 19, h: 2.6, col: "#c9d2da", side: "#9fabbb", hi: "#e8edf2",
-      head: "SENSOR DECK · PERCEPTION", sub: "2D LiDAR + two cameras, timestamped", col2: P.ink },
+      head: "CUBIERTA DE SENSORES · PERCEPCIÓN", sub: "LiDAR 2D + dos cámaras, con sello de tiempo", col2: P.ink },
   ];
   const SEP = 10.5; // exploded lift between layers
 
@@ -254,52 +253,10 @@
         ctx.beginPath(); ctx.moveTo(mx - 8, my); ctx.lineTo(mx + 8, my); ctx.moveTo(mx, my - 8); ctx.lineTo(mx, my + 8); ctx.stroke();
       });
       ctx.font = "10px Menlo, Consolas, monospace"; ctx.fillStyle = P.inkLo; ctx.textAlign = "left";
-      ctx.fillText("FIG. 1 · ROBOMOP NEW ERA · FIVE LAYERS · SCALE NTS · " + (k > 0.5 ? "CLICK TO ASSEMBLE" : "CLICK TO EXPLODE"), 28, H - 14);
+      ctx.fillText("FIG. 1 · ROBOMOP NEW ERA · CINCO CAPAS · ESCALA NTS · " + (k > 0.5 ? "CLIC PARA ARMAR" : "CLIC PARA EXPLOTAR"), 28, H - 14);
     }
     return { u, cx, cy };
   }
 
   window.ROBO_ENGINE = { LAYERS, drawFrame, projectFactory, hexA };
-
-  // ── Cover B runtime ──
-  const canvas = document.getElementById("cover-canvas-x");
-  if (!canvas) return;
-  let bc = U.bindCanvas(canvas), view = null, raf = 0, active = false;
-  let k = 1, kT = 1, t0 = null, mouseX = 0, tLast = 0;
-
-  function draw(ts) {
-    if (!active) return;
-    if (t0 == null) { t0 = ts; tLast = ts; }
-    const t = (ts - t0) / 1000, dt = Math.min((ts - tLast) / 1000, 0.05);
-    tLast = ts;
-    k = U.ease(k, kT, dt, 0.28);
-    const yaw = Math.PI / 4 + 0.3 * Math.sin(t * 0.11) + mouseX * 0.11;
-    const ctx = bc.ctx;
-    ctx.clearRect(0, 0, view.w, view.h);
-    window.ROBO_ENGINE.drawFrame(ctx, view, { t, k: window.REDUCE ? 1 : k, yaw: window.REDUCE ? Math.PI / 4 : yaw, mode: "solid" });
-    // left wash
-    const grad = ctx.createLinearGradient(0, 0, view.w * 0.6, 0);
-    grad.addColorStop(0, "rgba(255,255,255,.93)"); grad.addColorStop(0.8, "rgba(255,255,255,.4)"); grad.addColorStop(1, "rgba(255,255,255,0)");
-    ctx.fillStyle = grad; ctx.fillRect(0, 0, view.w * 0.6, view.h);
-    ctx.font = "10.5px Menlo, Consolas, monospace"; ctx.fillStyle = U.PAL.inkLo; ctx.textAlign = "right";
-    ctx.fillText(k > 0.5 ? "FIVE LAYERS, EVERY DECISION LOCKED — CLICK TO ASSEMBLE" : "ASSEMBLED — CLICK TO EXPLODE", view.w - 28, view.h - 26);
-    if (!window.REDUCE) raf = requestAnimationFrame(draw);
-  }
-
-  canvas.addEventListener("click", e => {
-    if (e.target !== canvas) return;
-    kT = kT > 0.5 ? 0 : 1;
-  });
-  window.addEventListener("mousemove", e => { mouseX = (e.clientX / window.innerWidth - 0.5) * 2; });
-
-  window.COVER_X = {
-    setActive(on) {
-      active = on; cancelAnimationFrame(raf);
-      if (on) {
-        t0 = null;
-        if (window.REDUCE) requestAnimationFrame(() => { view = bc.fit(); draw(performance.now()); });
-        else { view = bc.fit(); raf = requestAnimationFrame(draw); }
-      }
-    }
-  };
 })();

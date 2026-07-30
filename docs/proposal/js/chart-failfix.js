@@ -1,59 +1,59 @@
-// ═══ §1 · 2025 weakness → RoboMop New Era feature ═══
+// ═══ §1 · Prototipo 2025 vs. RoboMop New Era ═══
 (function () {
   const host = document.getElementById("failfix-chart");
   if (!host) return;
   const body = U.frame(host, {
-    title: "2025 prototype vs. RoboMop New Era",
-    sub: "CLICK A ROW FOR THE ENGINEERING BEHIND EACH IMPROVEMENT",
-    src: "RoboMop New Era engineering baseline, July 2026",
+    title: "Prototipo 2025 vs. RoboMop New Era",
+    sub: "CLIC EN UNA FILA PARA VER LA INGENIERÍA DETRÁS DE CADA MEJORA",
+    src: "RoboMop New Era · base de ingeniería, julio 2026",
   });
 
   const rows = [
     {
-      was: "Motors could run away and overheat the drive electronics",
-      is: "A hardware safety loop that cuts motor power even if every computer on board crashes",
-      how: "The motor loop runs on a dedicated real-time controller with a hardware watchdog; fault inputs kill drive power in silicon — no software path can override the stop."
+      was: "Los motores podían dispararse y sobrecalentar la electrónica de potencia",
+      is: "Un lazo de seguridad en hardware que corta la potencia de los motores aunque todas las computadoras a bordo fallen",
+      how: "El lazo de control de motores corre en un controlador dedicado de tiempo real con un watchdog de hardware; las entradas de falla cortan la potencia en silicio — ninguna ruta de software puede anular el paro.",
     },
     {
-      was: "Lost wheel-sensor ticks, so position estimates wandered",
-      is: "Odometry that cannot drop a tick, at any workload",
-      how: "Quadrature pulses are counted by dedicated PCNT hardware peripherals — silicon, not software — so SLAM load spikes can't cost a single encoder edge."
+      was: "Pulsos perdidos de los sensores de rueda, así que las estimaciones de posición vagaban",
+      is: "Odometría que no puede perder un pulso, a cualquier carga de trabajo",
+      how: "Los pulsos de cuadratura los cuentan periféricos de hardware PCNT dedicados — silicio, no software — así que los picos de carga de SLAM no pueden costar ni un solo flanco de encoder.",
     },
     {
-      was: "Sensors disagreed about the time; every map slowly drifted",
-      is: "One clock for every sensor — maps that stay put, shift after shift",
-      how: "The controller timestamps odometry and IMU data at the instant of capture and syncs its clock to the main computer, so sensor fusion runs against a single timebase."
+      was: "Los sensores no se ponían de acuerdo sobre la hora; cada mapa se desviaba lentamente",
+      is: "Un solo reloj para cada sensor — mapas que se quedan en su lugar, turno tras turno",
+      how: "El controlador marca con sello de tiempo la odometría y la IMU en el instante de captura y sincroniza su reloj con la computadora principal, así la fusión de sensores corre contra una sola base de tiempo.",
     },
     {
-      was: "One overloaded computer ran everything — and starved the motors",
-      is: "Two dedicated brains: one thinks, one drives — neither can starve the other",
-      how: "Mapping, planning and networking live on the AI computer; motor control lives on the real-time controller. Heavy AI workloads can no longer touch loop timing."
+      was: "Una computadora sobrecargada lo corría todo — y ahogaba los motores",
+      is: "Dos cerebros dedicados: uno piensa, uno conduce — ninguno puede ahogar al otro",
+      how: "El mapeo, la planeación y la red viven en la computadora de IA; el control de motores vive en el controlador de tiempo real. Las cargas pesadas de IA ya no pueden tocar la temporización del lazo.",
     },
     {
-      was: "About 25–30 minutes of cleaning per charge",
-      is: "≈4.8 hours at a 200-watt draw — and a five-minute swap for all-day work",
-      how: "The pack is sized by an energy model at a sustained 200-watt average draw; the 4-hour acceptance bar passes with a 20% margin before a single cell is ordered."
+      was: "Unos 25–30 minutos de limpieza por carga",
+      is: "≈4.8 horas a un consumo de 200 watts — y un cambio de cinco minutos para trabajar todo el día",
+      how: "El paquete se dimensiona con un modelo energético a un consumo promedio sostenido de 200 watts; la barra de aceptación de 4 horas pasa con un margen del 20% antes de ordenar una sola celda.",
     },
     {
-      was: "Irrigation was promised but never actually integrated",
-      is: "Water delivery wired in from day one — dosing, level and leak sensing",
-      how: "Pump, valve, water-level and flow sensors are first-class nodes on the supervised controller, with a CAN bus reserved for future accessories."
+      was: "La irrigación se prometió pero nunca se integró realmente",
+      is: "Entrega de agua cableada desde el día uno — dosificación, nivel y detección de fugas",
+      how: "La bomba, la válvula y los sensores de nivel y flujo son nodos de primera clase en el controlador supervisado, con un bus CAN reservado para accesorios futuros.",
     },
   ];
 
-  const tbl = document.createElement("table");
-  tbl.className = "dt failfix";
-  tbl.innerHTML = `<thead><tr><th style="width:38%">The 2025 prototype</th><th>RoboMop New Era</th></tr></thead>`;
-  const tb = document.createElement("tbody");
+  const wrap = document.createElement("div");
+  wrap.className = "failfix";
+  wrap.innerHTML = `<div class="ff-head"><span>El prototipo de 2025</span><span>RoboMop New Era</span></div>`;
   rows.forEach(r => {
-    const tr = document.createElement("tr");
-    tr.setAttribute("data-drill-keep", "");
-    tr.innerHTML = `<td style="color:var(--ink-md)"><span class="bug-dot"></span>${r.was}</td><td><b>${r.is}</b></td>`;
-    tr.addEventListener("click", e => {
-      U.showDrill({ title: "HOW IT WORKS", value: r.is, sub: r.how, source: "RoboMop New Era · engineering baseline, July 2026", x: e.clientX, y: e.clientY });
-    });
-    tb.appendChild(tr);
+    const d = document.createElement("div");
+    d.className = "ff-row";
+    d.setAttribute("data-drill-keep", "");
+    d.innerHTML = `<div class="ff-was">${r.was}</div><div class="ff-is">${r.is}</div>`;
+    d.addEventListener("click", e => U.showDrill({
+      title: "CÓMO FUNCIONA", value: r.is.split("—")[0].trim(),
+      sub: r.how, source: "RoboMop New Era · base de ingeniería, julio 2026", x: e.clientX, y: e.clientY
+    }));
+    wrap.appendChild(d);
   });
-  tbl.appendChild(tb);
-  body.appendChild(tbl);
+  body.appendChild(wrap);
 })();

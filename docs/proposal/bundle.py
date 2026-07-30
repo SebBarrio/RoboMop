@@ -3,7 +3,7 @@
 Inlines css/style.css, all <script src> files (vendor + js), in original order.
 Usage: python3 tools/bundle.py [outfile]
 """
-import re, sys, os
+import re, sys, os, base64
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 html = open(os.path.join(ROOT, "index.html"), encoding="utf-8").read()
@@ -27,6 +27,19 @@ def repl(m):
     return "<script>\n" + code + "\n</script>"
 
 html = re.sub(r'<script src="([^"]+)"></script>', repl, html)
+
+# inline render plates as base64 data URIs (single-file delivery;
+# srcset/sizes dropped — the 1254w asset is inlined at full resolution)
+def img_repl(m):
+    tag = m.group(0)
+    src = re.search(r'src="([^"]+)"', tag).group(1)
+    p = os.path.normpath(os.path.join(ROOT, src))
+    data = base64.b64encode(open(p, "rb").read()).decode()
+    tag = re.sub(r'src="[^"]*"', 'src="data:image/webp;base64,' + data + '"', tag)
+    tag = re.sub(r'\s*(srcset|sizes)="[^"]*"', "", tag)
+    return tag
+
+html = re.sub(r'<img [^>]*>', img_repl, html)
 
 out = sys.argv[1] if len(sys.argv) > 1 else os.path.join(ROOT, "dist-single.html")
 os.makedirs(os.path.dirname(out) or ".", exist_ok=True)

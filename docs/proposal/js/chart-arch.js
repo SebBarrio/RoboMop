@@ -1,11 +1,11 @@
-// ═══ §3 · Two-tier architecture topology (inspectable nodes) ═══
+// ═══ §3 · Topología de arquitectura de dos niveles (nodos inspeccionables) ═══
 (function () {
   const host = document.getElementById("arch-chart");
   if (!host) return;
   const body = U.frame(host, {
-    title: "System diagram",
-    sub: "CLICK ANY BLOCK FOR ROLE, INTERFACE AND THE 2025 BUG IT RETIRES · DASHED = RESERVED CAN TRUNK",
-    src: "RoboMop New Era · architecture baseline, July 2026",
+    title: "Diagrama del sistema",
+    sub: "CLIC EN CUALQUIER BLOQUE PARA VER SU ROL, INTERFAZ Y EL ERROR DE 2025 QUE RETIRA · PUNTEADO = TRONCAL CAN RESERVADA",
+    src: "RoboMop New Era · base de arquitectura, julio 2026",
   });
 
   const W = 880, H = 640;
@@ -13,32 +13,33 @@
     .attr("viewBox", `0 0 ${W} ${H}`).style("width", "100%").style("height", "auto").style("display", "block");
 
   const P = U.PAL;
+  const SRC = "RoboMop New Era · base de ingeniería, julio 2026";
   const nodes = {
-    jetson: { x: 440, y: 120, w: 230, h: 84, t: "Jetson Orin Nano 8GB", s: "ROS 2 · SLAM · Nav2 · fusion", d: "67 TOPS · 7–15 W · locked SBC", tier: "sbc", bug: "BUG D — compute contention: SLAM can saturate the Jetson without touching loop timing, because the loop no longer lives there.", src: "RoboMop New Era · engineering baseline, July 2026" },
-    lidar: { x: 120, y: 78, w: 168, h: 56, t: "2D LiDAR", s: "360° · 10–25 Hz", d: "USB", tier: "sbc", bug: "Feeds mapping on the SBC tier; timestamps reconciled against the MCU monotonic clock (M3).", src: "RoboMop New Era · engineering baseline, July 2026" },
-    cams: { x: 120, y: 178, w: 168, h: 56, t: "Two cameras", s: "perception roadmap", d: "USB 3", tier: "sbc", bug: "Dirt detection and below-LiDAR obstacle classification run natively on the locked GPU.", src: "RoboMop New Era · engineering baseline, July 2026" },
-    fleet: { x: 762, y: 120, w: 170, h: 62, t: "Fleet app / server", s: "maps · schedules · OTA", d: "WiFi 6 / BT", tier: "sbc", bug: "Connectivity lives on the SBC tier; network loss degrades planning, never motor safety.", src: "RoboMop New Era · engineering baseline, July 2026" },
-    esp: { x: 440, y: 470, w: 230, h: 84, t: "ESP32-S3-WROOM-1", s: "FreeRTOS · watchdog · safety", d: "$5.11 @100u · 0.3 W · locked MCU", tier: "mcu", bug: "BUGS A–D — owns the control loop in FreeRTOS; hardware watchdog + MCPWM fault inputs cut drive power in hardware if the SBC hangs.", src: "RoboMop New Era · engineering baseline, July 2026" },
-    drivers: { x: 120, y: 416, w: 176, h: 58, t: "Hub motor drivers ×2", s: "velocity cmd / feedback", d: "PWM / UART", tier: "mcu", bug: "BUG A — fault-input PWM kill is a hardware path; no software can override the stop.", src: "RoboMop New Era · engineering baseline, July 2026" },
-    enc: { x: 120, y: 524, w: 176, h: 58, t: "Wheel encoders", s: "quadrature", d: "PCNT hardware", tier: "mcu", bug: "BUG B — PCNT peripherals count edges in silicon; missed ticks become physically impossible at any CPU load.", src: "RoboMop New Era · engineering baseline, July 2026" },
-    imu: { x: 330, y: 596, w: 150, h: 52, t: "IMU", s: "timestamped at capture", d: "I²C / SPI", tier: "mcu", bug: "BUG C — stamped at capture against the MCU monotonic timebase; one clock for fusion.", src: "RoboMop New Era · engineering baseline, July 2026" },
-    pump: { x: 600, y: 596, w: 160, h: 52, t: "Pump + valve", s: "irrigation dosing", d: "GPIO / ADC", tier: "mcu", bug: "BUG F — irrigation is a first-class MCU node from day one, not a claim without hardware.", src: "RoboMop New Era · engineering baseline, July 2026" },
-    water: { x: 762, y: 524, w: 170, h: 58, t: "Water-level + flow", s: "tank sensing", d: "ADC / GPIO", tier: "mcu", bug: "BUG F — level, flow and leak behavior report over the same supervised bus.", src: "RoboMop New Era · engineering baseline, July 2026" },
-    bms: { x: 762, y: 416, w: 170, h: 58, t: "BMS + hot-swap", s: "backup rail switchover", d: "UART / GPIO", tier: "mcu", bug: "Swap ≤5 min with controls alive; backup-rail target ≥10 min, confirmed with you in Week 1.", src: "RoboMop New Era · engineering baseline, July 2026" },
-    estop: { x: 330, y: 330, w: 220, h: 52, t: "E-stop + bump chain", s: "hardware, MCU-supervised", d: "GPIO · fail-safe", tier: "mcu", bug: "BUG A — the safety chain sits below all software; one uncontrolled-motion event is a stop-work order.", src: "RoboMop New Era · engineering baseline, July 2026" },
+    jetson: { x: 440, y: 120, w: 230, h: 84, t: "Jetson Orin Nano 8GB", s: "ROS 2 · SLAM · Nav2 · fusión", d: "67 TOPS · 7–15 W · SBC fijado", tier: "sbc", bug: "BUG D — contención de cómputo: el SLAM puede saturar el Jetson sin tocar la temporización del lazo, porque el lazo ya no vive ahí.", src: SRC },
+    lidar: { x: 120, y: 78, w: 168, h: 56, t: "LiDAR 2D", s: "360° · 10–25 Hz", d: "USB", tier: "sbc", bug: "Alimenta el mapeo en el nivel SBC; sellos de tiempo reconciliados contra el reloj monotónico de la MCU (M3).", src: SRC },
+    cams: { x: 120, y: 178, w: 168, h: 56, t: "Dos cámaras", s: "ruta de percepción", d: "USB 3", tier: "sbc", bug: "La detección de suciedad y la clasificación de obstáculos bajos corren de forma nativa en el GPU fijado.", src: SRC },
+    fleet: { x: 762, y: 120, w: 170, h: 62, t: "App / servidor de flota", s: "mapas · horarios · OTA", d: "WiFi 6 / BT", tier: "sbc", bug: "La conectividad vive en el nivel SBC; perder la red degrada la planeación, nunca la seguridad de los motores.", src: SRC },
+    esp: { x: 440, y: 470, w: 230, h: 84, t: "ESP32-S3-WROOM-1", s: "FreeRTOS · watchdog · seguridad", d: "$5.11 @100u · 0.3 W · MCU fijada", tier: "mcu", bug: "BUGS A–D — es dueña del lazo de control en FreeRTOS; el watchdog de hardware + las entradas de falla MCPWM cortan la potencia en hardware si el SBC se cuelga.", src: SRC },
+    drivers: { x: 120, y: 416, w: 176, h: 58, t: "Drivers de motores ×2", s: "cmd de velocidad / retro", d: "PWM / UART", tier: "mcu", bug: "BUG A — el corte de PWM por entrada de falla es una ruta de hardware; ningún software puede anular el paro.", src: SRC },
+    enc: { x: 120, y: 524, w: 176, h: 58, t: "Encoders de rueda", s: "cuadratura", d: "hardware PCNT", tier: "mcu", bug: "BUG B — los periféricos PCNT cuentan flancos en silicio; perder pulsos se vuelve físicamente imposible a cualquier carga de CPU.", src: SRC },
+    imu: { x: 330, y: 596, w: 150, h: 52, t: "IMU", s: "sellada al capturar", d: "I²C / SPI", tier: "mcu", bug: "BUG C — sellada al capturar contra la base de tiempo monotónica de la MCU; un solo reloj para la fusión.", src: SRC },
+    pump: { x: 600, y: 596, w: 160, h: 52, t: "Bomba + válvula", s: "dosificación de riego", d: "GPIO / ADC", tier: "mcu", bug: "BUG F — la irrigación es un nodo de primera clase de la MCU desde el día uno, no una promesa sin hardware.", src: SRC },
+    water: { x: 762, y: 524, w: 170, h: 58, t: "Nivel de agua + flujo", s: "sensores del tanque", d: "ADC / GPIO", tier: "mcu", bug: "BUG F — nivel, flujo y comportamiento ante fugas reportan por el mismo bus supervisado.", src: SRC },
+    bms: { x: 762, y: 416, w: 170, h: 58, t: "BMS + cambio en caliente", s: "conmutación de riel de respaldo", d: "UART / GPIO", tier: "mcu", bug: "Cambio ≤5 min con controles despiertos; meta de riel de respaldo ≥10 min, confirmada con usted en la Semana 1.", src: SRC },
+    estop: { x: 330, y: 330, w: 220, h: 52, t: "Paro de emergencia + cadena de golpe", s: "hardware, supervisado por la MCU", d: "GPIO · fail-safe", tier: "mcu", bug: "BUG A — la cadena de seguridad está por debajo de todo el software; un solo evento de movimiento no controlado es una orden de paro de trabajo.", src: SRC },
   };
 
   const edges = [
     ["lidar", "jetson", "USB"], ["cams", "jetson", "USB 3"], ["jetson", "fleet", "WiFi 6 / BT"],
-    ["jetson", "esp", "UART · micro-ROS · framed + CRC + timestamps"],
+    ["jetson", "esp", "UART · micro-ROS · trama + CRC + sellos"],
     ["esp", "drivers", "PWM / UART"], ["enc", "esp", "PCNT"], ["imu", "esp", "I²C/SPI"],
     ["pump", "esp", "GPIO/ADC"], ["water", "esp", "ADC/GPIO"], ["bms", "esp", "UART/GPIO"], ["estop", "esp", "GPIO"],
   ];
 
-  // tier frames
+  // marcos de nivel
   const tiers = [
-    { x: 40, y: 30, w: 800, h: 190, label: "HIGH-LEVEL TIER · PERCEPTION, PLANNING, CONNECTIVITY (SBC)", col: P.red },
-    { x: 40, y: 300, w: 800, h: 322, label: "REAL-TIME TIER · DETERMINISTIC CONTROL AND SAFETY (MCU)", col: P.ink },
+    { x: 40, y: 30, w: 800, h: 190, label: "NIVEL SUPERIOR · PERCEPCIÓN, PLANEACIÓN, CONECTIVIDAD (SBC)", col: P.red },
+    { x: 40, y: 300, w: 800, h: 322, label: "NIVEL DE TIEMPO REAL · CONTROL DETERMINISTA Y SEGURIDAD (MCU)", col: P.ink },
   ];
   tiers.forEach(t => {
     svg.append("rect").attr("x", t.x).attr("y", t.y).attr("width", t.w).attr("height", t.h)
@@ -67,14 +68,14 @@
       .text(lab);
   });
 
-  // reserved CAN trunk (dashed)
+  // troncal CAN reservada (punteada)
   const can = edgeG.append("path")
     .attr("d", `M ${nodes.esp.x + nodes.esp.w / 2} ${nodes.esp.y + 10} C 700 380, 700 340, 640 322`)
     .attr("fill", "none").attr("stroke", P.red).attr("stroke-width", 1.2).attr("stroke-dasharray", "5 4").attr("opacity", 0.75);
   labG.append("text").attr("x", 868).attr("y", 330).attr("font-size", 9).attr("fill", P.red)
     .attr("text-anchor", "end")
     .attr("paint-order", "stroke").attr("stroke", "#fff").attr("stroke-width", 4)
-    .text("CAN 2.0 (TWAI) · reserved: irrigation, battery, safety nodes");
+    .text("CAN 2.0 (TWAI) · reservada: irrigación, batería, nodos de seguridad");
 
   Object.values(nodes).forEach(n => {
     const g = nodeG.append("g").style("cursor", "pointer").attr("data-drill-keep", "");

@@ -1,4 +1,4 @@
-// ═══ Cover C · The blueprint (wireframe) + three-way mode switcher ═══
+// ═══ Cover · The blueprint (wireframe) ═══
 (function () {
   const canvas = document.getElementById("cover-canvas-w");
   let bc = canvas ? U.bindCanvas(canvas) : null, view = null, raf = 0, active = false;
@@ -35,30 +35,6 @@
     }
   };
 
-  // ── mode switcher (loads after all covers) ──
-  const MODES = {
-    rec: { cv: document.getElementById("cover-canvas"), api: window.COVER_A },
-    x: { cv: document.getElementById("cover-canvas-x"), api: window.COVER_X },
-    w: { cv: document.getElementById("cover-canvas-w"), api: window.COVER_W },
-  };
-  function setMode(m) {
-    if (!MODES[m]) m = "rec";
-    Object.entries(MODES).forEach(([key, M]) => {
-      if (!M.cv) return;
-      const on = key === m;
-      M.cv.style.display = on ? "" : "none";
-      if (M.api && M.api.setActive) M.api.setActive(on);
-    });
-    document.querySelectorAll("#cover-mode button").forEach(b => b.classList.toggle("on", b.dataset.mode === m));
-    try { localStorage.setItem("robomop-cover", m); } catch (e) { }
-  }
-  document.querySelectorAll("#cover-mode button").forEach(b => {
-    b.addEventListener("click", ev => { ev.stopPropagation(); setMode(b.dataset.mode); });
-  });
-  const urlMode = new URLSearchParams(location.search).get("cover");
-  let initial = "rec";
-  if (urlMode === "x" || urlMode === "w" || urlMode === "rec") initial = urlMode;
-  else { try { initial = localStorage.getItem("robomop-cover") || "rec"; } catch (e) { } }
-  // activate after layout settles (hidden canvases measure 0×0)
-  requestAnimationFrame(() => setMode(initial));
+  // ── blueprint is the only cover: activate once layout settles ──
+  requestAnimationFrame(() => window.COVER_W.setActive(true));
 })();
