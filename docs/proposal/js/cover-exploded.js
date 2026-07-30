@@ -7,7 +7,7 @@
     { key: "chassis", w: 30, d: 21, h: 4.2, col: "#0d2c44", side: "#071e30", hi: "#16405f",
       head: "CHASIS · DOS MOTORES EN RUEDA", sub: "impreso en 3D funcional · plataforma de trapeador atrás", col2: P.ink },
     { key: "pack", w: 24, d: 16, h: 5.2, col: "#3e5c76", side: "#2c4457", hi: "#527b9d",
-      head: "PAQUETE LFP · 960 WH", sub: "24 V · 40 Ah · 4.8 h est. · cambio ≤5 min", col2: P.redHi },
+      head: "PAQUETE LFP · 960 WH", sub: "25.6 V nominales · 40 Ah · 4.8 h est. · cambio ≤5 min", col2: P.redHi },
     { key: "pcb1", w: 26, d: 18, h: 1.7, col: "#155233", side: "#0d3a23", hi: "#1d7048",
       head: "PCB 1 · POTENCIA / TREN MOTRIZ", sub: "ESP32-S3 tiempo real · watchdog · corte PWM", col2: P.red },
     { key: "pcb2", w: 24, d: 16, h: 1.7, col: "#1d7048", side: "#155233", hi: "#2a8f5f",

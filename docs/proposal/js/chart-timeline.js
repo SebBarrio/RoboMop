@@ -2,18 +2,19 @@
 (function () {
   const host = document.getElementById("timeline-chart");
   if (!host) return;
+  const SRC = "RoboMop New Era · base de ingeniería, julio 2026";
   const body = U.frame(host, {
     title: "Fases y compuertas de revisión a lo largo de 16 semanas",
     sub: "BANDAS = FASES (P1–P8) · PLACAS = COMPUERTAS G0–G6 · PUNTEADO = CONGELACIÓN DE FUNCIONES · CLIC EN CUALQUIER ELEMENTO PARA DETALLE",
-    src: "Plan de entrega · RoboMop New Era, julio 2026",
+    src: SRC,
   });
+  body.classList.add("chart-viewport");
 
   const W = 880, H = 330, mL = 60, mR = 40;
   const svg = d3.select(body).append("svg")
     .attr("viewBox", `0 0 ${W} ${H}`).style("width", "100%").style("height", "auto").style("display", "block");
   const P = U.PAL;
   const x = d3.scaleLinear().domain([0, 16]).range([mL, W - mR]);
-  const SRC = "RoboMop New Era · base de ingeniería, julio 2026";
 
   // color de fase: temprano = escala tinta, verificación/aceptación = familia azul
   const bandCol = i => i < 4 ? ["#42566a", "#5b7186", "#74869a", "#42566a"][i % 4] : ["#2251ff", "#1233b8", "#2251ff", "#051c2c"][i % 4];

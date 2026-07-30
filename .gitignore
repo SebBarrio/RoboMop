@@ -12,6 +12,7 @@ node_modules/
 # Local tooling
 .claude/
 .impeccable/
+.github/skills
 
 # Local tooling
 .superpowers/

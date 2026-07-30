@@ -5,8 +5,8 @@
   const oh = document.getElementById("objectives-chart");
   if (oh) {
     const body = U.frame(oh, {
-      title: "Diez objetivos de entrega",
-      sub: "LAS TOLERANCIAS NUMÉRICAS SE CONGELAN CON USTED EN LA SEMANA 1 · CLIC EN UNA FILA PARA EL CRITERIO",
+      title: "Diez objetivos verificables de la entrega",
+      sub: "LAS TOLERANCIAS NUMÉRICAS SE CONGELAN CON USTED EN LA SEMANA 1",
       src: "Compromisos de aceptación · RoboMop New Era, julio 2026",
     });
     const tbl = document.createElement("table");
@@ -28,8 +28,8 @@
   const th = document.getElementById("team-chart");
   if (th) {
     const body = U.frame(th, {
-      title: "Roles del proyecto",
-      sub: "PASE EL CURSOR PARA EL MANDATO COMPLETO",
+      title: "Responsabilidades del equipo",
+      sub: "MANDATOS Y RESPONSABILIDADES DEL EQUIPO",
       src: "El equipo · RoboMop New Era, julio 2026",
     });
     const mag = document.createElement("div");
@@ -69,8 +69,8 @@
   const kh = document.getElementById("kpi-chart");
   if (kh) {
     const body = U.frame(kh, {
-      title: "KPIs reportados semanalmente",
-      sub: "PAQUETE DE ESTADO CADA VIERNES · UN EAC SOBRE EL TECHO ES UNA LÍNEA ROJA",
+      title: "Indicadores clave reportados semanalmente",
+      sub: "INFORME DE ESTADO CADA VIERNES · UN EAC POR ENCIMA DEL TECHO ACTIVA UNA ALERTA ROJA",
       src: "Métricas de reporte semanal · RoboMop New Era, julio 2026",
     });
     const tbl = document.createElement("table");

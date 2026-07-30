@@ -6,18 +6,19 @@
   const host = document.getElementById("energy-chart");
   if (!host) return;
   const Pw = window.RPT.power;
+  const SRC = "RoboMop New Era · modelo energético, julio 2026";
   const body = U.frame(host, {
     title: "Capacidad de batería y autonomía estimada",
     sub: "ARRIBA = ASIGNACIÓN DE ENERGÍA DEL PAQUETE A UN CONSUMO PROMEDIO DE 200 W · ABAJO = AUTONOMÍA, UN PAQUETE Y LUEGO EL REPUESTO EN CALIENTE · CLIC PARA DETALLE",
-    src: "Modelo energético · base de ingeniería RoboMop New Era, julio 2026",
+    src: SRC,
   });
+  body.classList.add("chart-viewport");
 
   const W = 880, H = 430, mL = 150, mR = 90;
   const svg = d3.select(body).append("svg")
     .attr("viewBox", `0 0 ${W} ${H}`).style("width", "100%").style("height", "auto").style("display", "block");
   const P = U.PAL;
   const RED = window.REDUCE;
-  const SRC = "RoboMop New Era · modelo energético, julio 2026";
 
   // ── Panel 1: asignación de Wh por descarga completa a 200 W ──
   const xw = d3.scaleLinear().domain([0, Pw.packWh]).range([mL, W - mR]);
@@ -146,10 +147,10 @@
 
   svg.append("text").attr("x", mL).attr("y", H - 52)
     .attr("font-size", 10).attr("fill", P.inkLo)
-    .text("La cifra de 200 W es un promedio sostenido de peor caso — motores de tracción más cabezal de limpieza a plena carga,");
+    .text("La cifra de 200 W es un promedio sostenido de peor caso: motores de tracción y cabezal de limpieza a plena carga,");
   svg.append("text").attr("x", mL).attr("y", H - 34)
     .attr("font-size", 10).attr("fill", P.inkLo)
-    .text("no una mezcla optimista. Paquete: LFP 8S2P 25.6 V · 40 Ah (1.024 kWh nominal, ≈847.9 Wh utilizables).");
+    .text("no una mezcla optimista. Paquete LFP 8S2P: 25.6 V · 40 Ah (1.024 kWh nominales; 960 Wh para el modelo).");
   svg.append("text").attr("x", mL).attr("y", H - 16)
     .attr("font-size", 10).attr("fill", P.inkLo)
     .text("La entrega base incluye un paquete; la cifra de 9.6 h supone un repuesto cargado en el estante.");

@@ -44,12 +44,12 @@ window.RPT = {
       { id: "PCB 2", role: "Tarjeta portadora Jetson a la medida, ensamblada", cost1: 180 },
     ],
     mechanisms: [
-      { id: "M1", name: "Lazo de control de tiempo real estricto", fix: "La MCU es dueña del lazo de motores en FreeRTOS + watchdog de hardware + corte de PWM por entrada de falla MCPWM", retires: "BUG A 2025 · disparo de motores, sobrecalentamiento del puente H" },
-      { id: "M2", name: "Captura de encoders por hardware", fix: "Los periféricos PCNT del ESP32-S3 cuentan los flancos de cuadratura en silicio, con cero carga de CPU", retires: "BUG B 2025 · datos de encoder perdidos tras la integración de la PCB" },
-      { id: "M3", name: "Base de tiempo monotónica unificada", fix: "La MCU marca temporalmente odometría/IMU al capturar, reloj sincronizado con el Jetson; robot_localization fusiona contra un solo reloj", retires: "BUG C 2025 · desincronización LiDAR/odometría/IMU, deriva del mapa" },
-      { id: "M4", name: "División de cómputo en dos niveles", fix: "Percepción, SLAM, Nav2 y conectividad en el SBC; control determinista en la MCU", retires: "BUG D 2025 · contención entre alto nivel y tiempo real en un solo SoC" },
-      { id: "M5", name: "Dimensionamiento energético primero", fix: "La autonomía se calcula a partir de consumos medidos contra la meta de turno antes de fabricar", retires: "BUG E 2025 · ~25–30 min de autonomía" },
-      { id: "M6", name: "Irrigación como nodo de primera clase", fix: "Bomba, válvula, nivel de agua y flujo cableados a la MCU desde el día uno; troncal CAN reservada para nodos futuros", retires: "BUG F 2025 · irrigación nunca integrada" },
+      { id: "M1", name: "Lazo de control de tiempo real estricto", fix: "La MCU es dueña del lazo de motores en FreeRTOS + watchdog de hardware + corte de PWM por entrada de falla MCPWM", retires: "INCIDENCIA A (2025) · disparo de motores y sobrecalentamiento del puente H" },
+      { id: "M2", name: "Captura de encoders por hardware", fix: "Los periféricos PCNT del ESP32-S3 cuentan los flancos de cuadratura en silicio, con cero carga de CPU", retires: "INCIDENCIA B (2025) · datos de encoder perdidos tras la integración de la PCB" },
+      { id: "M3", name: "Base de tiempo monotónica unificada", fix: "La MCU marca temporalmente odometría/IMU al capturar, reloj sincronizado con el Jetson; robot_localization fusiona contra un solo reloj", retires: "INCIDENCIA C (2025) · desincronización LiDAR/odometría/IMU y deriva del mapa" },
+      { id: "M4", name: "División de cómputo en dos niveles", fix: "Percepción, SLAM, Nav2 y conectividad en el SBC; control determinista en la MCU", retires: "INCIDENCIA D (2025) · contención entre alto nivel y tiempo real en un solo SoC" },
+      { id: "M5", name: "Dimensionamiento energético primero", fix: "La autonomía se calcula a partir de consumos medidos contra la meta de turno antes de fabricar", retires: "INCIDENCIA E (2025) · aproximadamente 25–30 min de autonomía" },
+      { id: "M6", name: "Irrigación como nodo de primera clase", fix: "Bomba, válvula, nivel de agua y flujo cableados a la MCU desde el día uno; troncal CAN reservada para nodos futuros", retires: "INCIDENCIA F (2025) · irrigación nunca integrada" },
     ],
     link: "UART · micro-ROS · con trama + CRC + sellos de tiempo",
   },
@@ -90,9 +90,9 @@ window.RPT = {
   ],
   bomVolTotals: { u1: 12362, u10: 10090, u100: 8372 },
 
-  // Modelo de potencia (sobre un paquete de 960 Wh, 24 V · 40 Ah)
+  // Modelo de potencia: presupuesto de 960 Wh sobre un paquete nominal de 25.6 V · 40 Ah (1,024 Wh).
   power: {
-    packWh: 960, packSpec: "24 V · 40 Ah LFP",
+    packWh: 960, packSpec: "25.6 V nominales · 40 Ah LFP",
     sbcW: 10, idleW: 5, tractionW: 185,
     avgW: 200, acceptH: 4.0,
     computeWh: 60, tractionWh: 740, marginWh: 160,
@@ -134,43 +134,43 @@ window.RPT = {
     { id: "OBJ-06", obj: "Demostrar autonomía", crit: "Mapeo, localización, navegación, replaneación, cobertura contra la matriz congelada de la Semana 1" },
     { id: "OBJ-07", obj: "Integrar percepción", crit: "Dos cámaras, LiDAR, IMU y sensores auxiliares calibrados y con sello de tiempo" },
     { id: "OBJ-08", obj: "Integrar irrigación", crit: "Control de flujo/nivel, comportamiento ante fugas, operación conjunta con la misión" },
-    { id: "OBJ-09", obj: "Integrar conectividad", crit: "Backend/frontend, telemetría, comandos, recuperación de red, bitácora" },
+    { id: "OBJ-09", obj: "Integrar conectividad", crit: "Servicios de backend y frontend, telemetría, comandos, recuperación de red y bitácora" },
     { id: "OBJ-10", obj: "Generar evidencia con intención de producción", crit: "BOM, revisiones, serialización, fixtures, pruebas repetibles para una fase posterior de hasta 10 unidades" },
   ],
 
   // Riesgos prioritarios
   risks: [
-    { id: "R01", risk: "Calendario comprimido de 16 semanas", lvl: 10, response: "Congelar W2/W12, trabajo en paralelo, WIP limitado", trigger: "Desliz crítico >3 días" },
-    { id: "R02", risk: "Equipo de dos personas", lvl: 10, response: "Prioridad a la ruta crítica, automatización, 20% de capacidad de retrabajo", trigger: "Dos sprints perdidos" },
-    { id: "R03", risk: "PCBs / componentes tardíos", lvl: 9, response: "Pedido temprano, seguimiento, módulo de desarrollo de respaldo", trigger: "Amenaza a G3" },
-    { id: "R04", risk: "Datos de celda o masa incorrectos", lvl: 9, response: "Hoja de datos, número de parte y muestra física en W1", trigger: "Cualquier discrepancia" },
-    { id: "R05", risk: "Consumo promedio >200 W", lvl: 8, response: "Instrumentación temprana, modelo energético correlacionado", trigger: "Pronóstico >212 W" },
+    { id: "R01", risk: "Calendario comprimido de 16 semanas", lvl: 10, response: "Congelar en las semanas 2 y 12, trabajo en paralelo y trabajo en curso limitado", trigger: "Retraso de la ruta crítica > 3 días" },
+    { id: "R02", risk: "Equipo de dos personas", lvl: 10, response: "Prioridad para la ruta crítica, automatización y reserva del 20 % de capacidad para retrabajo", trigger: "Dos sprints perdidos" },
+    { id: "R03", risk: "PCBs o componentes tardíos", lvl: 9, response: "Pedido anticipado, seguimiento y módulo de desarrollo de respaldo", trigger: "Amenaza a G3" },
+    { id: "R04", risk: "Datos de celda o masa incorrectos", lvl: 9, response: "Hoja de datos, número de parte y muestra física en la Semana 1", trigger: "Cualquier discrepancia" },
+    { id: "R05", risk: "Consumo promedio > 200 W", lvl: 8, response: "Instrumentación temprana y modelo energético correlacionado", trigger: "Pronóstico > 212 W" },
     { id: "R06", risk: "Inestabilidad de cambio en caliente, conector o respaldo", lvl: 8, response: "Conector con seguro, pruebas de inrush/térmicas/ciclos", trigger: "Reinicio, arco o calentamiento" },
-    { id: "R07", risk: "Errores de sellos de tiempo / tramas", lvl: 8, response: "Base de tiempo única, sellos en origen, reproducción/calibración", trigger: "Desplazamiento visible del mapa" },
+    { id: "R07", risk: "Errores en sellos de tiempo o tramas", lvl: 8, response: "Base de tiempo única, sellos de tiempo en origen, reproducción y calibración", trigger: "Desplazamiento visible del mapa" },
     { id: "R08", risk: "Simulación no correlacionada", lvl: 7, response: "Compuertas de procedencia y correlación", trigger: "Error fuera de tolerancia" },
     { id: "R09", risk: "Fuga de irrigación hacia la electrónica", lvl: 7, response: "Segregación, rutas de goteo, sensor, prueba de fuga en banco", trigger: "Cualquier fuga" },
-    { id: "R10", risk: "Alcance/software excede la capacidad", lvl: 7, response: "Clases/contratos de congelación, priorizar la ruta de aceptación W10", trigger: "Integración incompleta" },
-    { id: "R11", risk: "EAC excede la autorización", lvl: 6, response: "Cotizaciones en destino, EAC semanal, contingencia controlada", trigger: "EAC >$55,000" },
-    { id: "R12", risk: "Movimiento no controlado", lvl: 6, response: "Inhibición por hardware, paro de emergencia, watchdog, pruebas por etapas", trigger: "Un evento: paro de trabajo" },
+    { id: "R10", risk: "El alcance de software excede la capacidad", lvl: 7, response: "Clases y contratos de congelación; priorizar la ruta de aceptación de la Semana 10", trigger: "Integración incompleta" },
+    { id: "R11", risk: "EAC excede la autorización", lvl: 6, response: "Cotizaciones en destino, EAC semanal, contingencia controlada", trigger: "EAC > MXN $55,000" },
+    { id: "R12", risk: "Movimiento no controlado", lvl: 6, response: "Inhibición por hardware, paro de emergencia, watchdog, pruebas por etapas", trigger: "Un evento: detener todo el trabajo" },
   ],
 
   // Semáforos de KPI
   kpis: [
-    { kpi: "Varianza de hitos críticos", green: "≤2 días", yellow: "3–5 días", red: ">5 días" },
-    { kpi: "EAC", green: "≤$47,097.85", yellow: "$47,097.86–$54,162.53", red: ">$55,000" },
-    { kpi: "Reserva antes de W12", green: "≥50%", yellow: "25–49%", red: "<25%" },
-    { kpi: "Partes críticas a tiempo", green: "≥95%", yellow: "85–94%", red: "<85%" },
-    { kpi: "Pruebas obligatorias pasadas W14", green: "≥95%", yellow: "80–94%", red: "<80%" },
-    { kpi: "P0/P1 abiertos al liberar", green: "0", yellow: "1 con disposición", red: ">1" },
+    { kpi: "Desviación de hitos críticos", green: "≤2 días", yellow: "3–5 días", red: ">5 días" },
+    { kpi: "EAC (estimación al cierre)", green: "≤ MXN $47,097.85", yellow: "MXN $47,097.86–$55,000", red: "> MXN $55,000" },
+    { kpi: "Reserva antes de la Semana 12", green: "≥50%", yellow: "25–49%", red: "<25%" },
+    { kpi: "Componentes críticos a tiempo", green: "≥95%", yellow: "85–94%", red: "<85%" },
+    { kpi: "Pruebas obligatorias aprobadas al cierre de la Semana 14", green: "≥95%", yellow: "80–94%", red: "<80%" },
+    { kpi: "P0/P1 abiertos en la liberación", green: "0", yellow: "1 con disposición", red: ">1" },
     { kpi: "Autonomía a 200 W", green: "≥4.0 h", yellow: "3.8–3.99 h", red: "<3.8 h" },
     { kpi: "Cambio de batería", green: "≤5 min", yellow: "5–6 min", red: ">6 min" },
-    { kpi: "Movimiento no controlado", green: "0", yellow: "N/A", red: "Cualquier evento" },
+    { kpi: "Movimiento no controlado", green: "0", yellow: "No aplica", red: "Cualquier evento" },
   ],
 
   changeClasses: [
-    { cls: "Clase 1", cond: "Sin costo externo, sin impacto a ruta crítica, interfaces o seguridad", appr: "PM" },
-    { cls: "Clase 2", cond: "Costo ≤MXN $1,000 o impacto ≤2 días, sin reducción de seguridad", appr: "PM + Ingeniero Senior" },
-    { cls: "Clase 3", cond: "Costo >MXN $1,000, uso de reserva, arquitectura, interfaces, seguridad o hitos", appr: "Patrocinador" },
+    { cls: "Clase 1", cond: "Sin costo externo y sin impacto en la ruta crítica, las interfaces o la seguridad", appr: "Gerente de Proyecto" },
+    { cls: "Clase 2", cond: "Costo ≤ MXN $1,000 o impacto ≤ 2 días, sin reducción de seguridad", appr: "Gerente de Proyecto + Ingeniero Senior" },
+    { cls: "Clase 3", cond: "Costo > MXN $1,000, uso de reserva o impacto en arquitectura, interfaces, seguridad o hitos", appr: "Patrocinador" },
   ],
 
   freeze: [
@@ -194,8 +194,8 @@ window.RPT = {
   ],
 
   team: [
-    { role: "Patrocinador", name: "Luis Vazquez", resp: "Aprueba la propuesta, el presupuesto, el uso de la contingencia y los cambios mayores; resuelve excepciones de alcance, costo y calendario; presente en cada compuerta y en la aceptación final." },
-    { role: "Gerente de Proyecto", name: "Germán Velázquez", resp: "Dueño del alcance, calendario, costo, partes, compras, riesgos, cambios y documentación; su único punto de contacto; coordina la línea de trabajo de software." },
-    { role: "Ingeniero Senior", name: "Sebastian Barrio", resp: "Dueño de la arquitectura del robot y las decisiones técnicas: mecánica, electrónica, batería, tarjetas, firmware, autonomía, percepción y la evidencia de pruebas detrás de cada afirmación." },
+    { role: "Patrocinador", name: "Luis Vazquez", resp: "Aprueba la propuesta, el presupuesto, el uso de la contingencia y los cambios mayores; resuelve excepciones de alcance, costo y calendario; participa en cada compuerta y en la aceptación final." },
+    { role: "Gerente de Proyecto", name: "Germán Velázquez", resp: "Responsable del alcance, calendario, costo, partes, compras, riesgos, cambios y documentación; es su único punto de contacto y coordina la línea de trabajo de software." },
+    { role: "Ingeniero Senior", name: "Sebastian Barrio", resp: "Responsable de la arquitectura del robot y de las decisiones técnicas: mecánica, electrónica, batería, tarjetas, firmware, autonomía, percepción y evidencia de pruebas para cada afirmación." },
   ],
 };

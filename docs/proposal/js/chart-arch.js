@@ -2,31 +2,32 @@
 (function () {
   const host = document.getElementById("arch-chart");
   if (!host) return;
+  const SRC = "RoboMop New Era · base de ingeniería, julio 2026";
   const body = U.frame(host, {
     title: "Diagrama del sistema",
     sub: "CLIC EN CUALQUIER BLOQUE PARA VER SU ROL, INTERFAZ Y EL ERROR DE 2025 QUE RETIRA · PUNTEADO = TRONCAL CAN RESERVADA",
-    src: "RoboMop New Era · base de arquitectura, julio 2026",
+    src: SRC,
   });
+  body.classList.add("chart-viewport");
 
   const W = 880, H = 640;
   const svg = d3.select(body).append("svg")
     .attr("viewBox", `0 0 ${W} ${H}`).style("width", "100%").style("height", "auto").style("display", "block");
 
   const P = U.PAL;
-  const SRC = "RoboMop New Era · base de ingeniería, julio 2026";
   const nodes = {
-    jetson: { x: 440, y: 120, w: 230, h: 84, t: "Jetson Orin Nano 8GB", s: "ROS 2 · SLAM · Nav2 · fusión", d: "67 TOPS · 7–15 W · SBC fijado", tier: "sbc", bug: "BUG D — contención de cómputo: el SLAM puede saturar el Jetson sin tocar la temporización del lazo, porque el lazo ya no vive ahí.", src: SRC },
+    jetson: { x: 440, y: 120, w: 230, h: 84, t: "Jetson Orin Nano 8GB", s: "ROS 2 · SLAM · Nav2 · fusión", d: "67 TOPS · 7–15 W · SBC fijado", tier: "sbc", bug: "Incidencia D (2025): el SLAM puede saturar el Jetson sin afectar la temporización del lazo, porque el lazo ya no se ejecuta ahí.", src: SRC },
     lidar: { x: 120, y: 78, w: 168, h: 56, t: "LiDAR 2D", s: "360° · 10–25 Hz", d: "USB", tier: "sbc", bug: "Alimenta el mapeo en el nivel SBC; sellos de tiempo reconciliados contra el reloj monotónico de la MCU (M3).", src: SRC },
     cams: { x: 120, y: 178, w: 168, h: 56, t: "Dos cámaras", s: "ruta de percepción", d: "USB 3", tier: "sbc", bug: "La detección de suciedad y la clasificación de obstáculos bajos corren de forma nativa en el GPU fijado.", src: SRC },
     fleet: { x: 762, y: 120, w: 170, h: 62, t: "App / servidor de flota", s: "mapas · horarios · OTA", d: "WiFi 6 / BT", tier: "sbc", bug: "La conectividad vive en el nivel SBC; perder la red degrada la planeación, nunca la seguridad de los motores.", src: SRC },
-    esp: { x: 440, y: 470, w: 230, h: 84, t: "ESP32-S3-WROOM-1", s: "FreeRTOS · watchdog · seguridad", d: "$5.11 @100u · 0.3 W · MCU fijada", tier: "mcu", bug: "BUGS A–D — es dueña del lazo de control en FreeRTOS; el watchdog de hardware + las entradas de falla MCPWM cortan la potencia en hardware si el SBC se cuelga.", src: SRC },
-    drivers: { x: 120, y: 416, w: 176, h: 58, t: "Drivers de motores ×2", s: "cmd de velocidad / retro", d: "PWM / UART", tier: "mcu", bug: "BUG A — el corte de PWM por entrada de falla es una ruta de hardware; ningún software puede anular el paro.", src: SRC },
-    enc: { x: 120, y: 524, w: 176, h: 58, t: "Encoders de rueda", s: "cuadratura", d: "hardware PCNT", tier: "mcu", bug: "BUG B — los periféricos PCNT cuentan flancos en silicio; perder pulsos se vuelve físicamente imposible a cualquier carga de CPU.", src: SRC },
-    imu: { x: 330, y: 596, w: 150, h: 52, t: "IMU", s: "sellada al capturar", d: "I²C / SPI", tier: "mcu", bug: "BUG C — sellada al capturar contra la base de tiempo monotónica de la MCU; un solo reloj para la fusión.", src: SRC },
-    pump: { x: 600, y: 596, w: 160, h: 52, t: "Bomba + válvula", s: "dosificación de riego", d: "GPIO / ADC", tier: "mcu", bug: "BUG F — la irrigación es un nodo de primera clase de la MCU desde el día uno, no una promesa sin hardware.", src: SRC },
-    water: { x: 762, y: 524, w: 170, h: 58, t: "Nivel de agua + flujo", s: "sensores del tanque", d: "ADC / GPIO", tier: "mcu", bug: "BUG F — nivel, flujo y comportamiento ante fugas reportan por el mismo bus supervisado.", src: SRC },
-    bms: { x: 762, y: 416, w: 170, h: 58, t: "BMS + cambio en caliente", s: "conmutación de riel de respaldo", d: "UART / GPIO", tier: "mcu", bug: "Cambio ≤5 min con controles despiertos; meta de riel de respaldo ≥10 min, confirmada con usted en la Semana 1.", src: SRC },
-    estop: { x: 330, y: 330, w: 220, h: 52, t: "Paro de emergencia + cadena de golpe", s: "hardware, supervisado por la MCU", d: "GPIO · fail-safe", tier: "mcu", bug: "BUG A — la cadena de seguridad está por debajo de todo el software; un solo evento de movimiento no controlado es una orden de paro de trabajo.", src: SRC },
+    esp: { x: 440, y: 470, w: 230, h: 84, t: "ESP32-S3-WROOM-1", s: "FreeRTOS · watchdog · seguridad", d: "$5.11 @100u · 0.3 W · MCU fijada", tier: "mcu", bug: "Incidencias A–D (2025): el ESP32 es dueño del lazo de control en FreeRTOS; el watchdog y las entradas de falla MCPWM cortan la potencia si el SBC se bloquea.", src: SRC },
+    drivers: { x: 120, y: 416, w: 176, h: 58, t: "Drivers de motores ×2", s: "cmd de velocidad / retro", d: "PWM / UART", tier: "mcu", bug: "Incidencia A (2025): el corte de PWM por entrada de falla es una ruta de hardware; ningún software puede anular el paro.", src: SRC },
+    enc: { x: 120, y: 524, w: 176, h: 58, t: "Encoders de rueda", s: "cuadratura", d: "hardware PCNT", tier: "mcu", bug: "Incidencia B (2025): los periféricos PCNT cuentan flancos en silicio; los picos de carga de CPU no pueden perder pulsos.", src: SRC },
+    imu: { x: 330, y: 596, w: 150, h: 52, t: "IMU", s: "marca de tiempo en origen", d: "I²C / SPI", tier: "mcu", bug: "Incidencia C (2025): cada medición se marca al capturar contra la base de tiempo monotónica de la MCU; un solo reloj para la fusión.", src: SRC },
+    pump: { x: 600, y: 596, w: 160, h: 52, t: "Bomba + válvula", s: "dosificación de riego", d: "GPIO / ADC", tier: "mcu", bug: "Incidencia F (2025): la irrigación es un nodo de primera clase de la MCU desde el día uno, no una función pendiente de integración.", src: SRC },
+    water: { x: 762, y: 524, w: 170, h: 58, t: "Nivel de agua + flujo", s: "sensores del tanque", d: "ADC / GPIO", tier: "mcu", bug: "Incidencia F (2025): nivel, flujo y comportamiento ante fugas reportan por el mismo bus supervisado.", src: SRC },
+    bms: { x: 762, y: 416, w: 170, h: 58, t: "BMS + cambio en caliente", s: "conmutación de alimentación de respaldo", d: "UART / GPIO", tier: "mcu", bug: "Cambio ≤5 min con controles despiertos; meta de alimentación de respaldo ≥10 min, confirmada con usted en la Semana 1.", src: SRC },
+    estop: { x: 330, y: 330, w: 220, h: 52, t: "Paro de emergencia + cadena de golpe", s: "hardware, supervisado por la MCU", d: "GPIO · fail-safe", tier: "mcu", bug: "Incidencia A (2025): la cadena de seguridad está por debajo de todo el software; un evento de movimiento no controlado ordena detener el trabajo.", src: SRC },
   };
 
   const edges = [

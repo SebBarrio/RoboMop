@@ -3,8 +3,8 @@
   const host = document.getElementById("risk-chart");
   if (!host) return;
   const body = U.frame(host, {
-    title: "Doce riesgos prioritarios, ordenados",
-    sub: "PUNTAJE DE DIEZ CELDAS = AMENAZA AL CALENDARIO Y LA ACEPTACIÓN · CLIC EN UNA FILA PARA LA FICHA COMPLETA DEL REGISTRO",
+    title: "Doce riesgos prioritarios, ordenados por puntaje",
+    sub: "PUNTAJE SOBRE 10: AMENAZA PARA EL CALENDARIO Y LA ACEPTACIÓN",
     src: "Registro de riesgos · RoboMop New Era, julio 2026",
   });
 
@@ -39,6 +39,6 @@
 
   const note = document.createElement("p");
   note.className = "chart-src";
-  note.textContent = "Los riesgos rojos (puntaje ≥6) se revisan semanalmente; R12 movimiento no controlado — cualquier evento es una orden de paro de trabajo.";
+  note.textContent = "Los riesgos con puntaje ≥ 6 se revisan semanalmente; R12, movimiento no controlado: cualquier evento exige detener los trabajos.";
   body.appendChild(note);
 })();

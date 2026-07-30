@@ -22,9 +22,9 @@ window.U = (() => {
   // accent usages recolor automatically; true negatives (declines/crashes/missing)
   // must use PAL.neg — audited per chart.
   const PAL = {
-    paper: "#ffffff", hi: "#f4f4f5", ink: "#141a21", inkMd: "#46505a", inkLo: "#8a929b",
+    paper: "#ffffff", hi: "#f4f4f5", ink: "#141a21", inkMd: "#46505a", inkLo: "#69737d",
     line: "#d9dade", lineLo: "#ededf0", red: "#0057b8", redHi: "#003e8c",
-    blue: "#7a45c9", copper: "#b07a10", green: "#008a6d", gold: "#b07a10",
+    blue: "#7a45c9", copper: "#8a6100", green: "#00755d", gold: "#8a6100",
     neg: "#c22f4e", accent: "#0057b8", navy: "#141a21",
   };
   const SERIES = [PAL.red, PAL.blue, PAL.copper, PAL.green];
@@ -107,7 +107,7 @@ window.U = (() => {
       <div class="d-title">${title}</div>
       <div class="d-val">${value}${delta != null ? ` <span class="${delta >= 0 ? "pos" : "neg"}" style="font-size:15px">${fmt.pct(delta)}</span>` : ""}</div>
       ${sub ? `<div class="d-sub">${sub}</div>` : ""}
-      ${source ? `<div class="d-src">Source · ${source}</div>` : ""}`;
+      ${source ? `<div class="d-src">Fuente · ${source}</div>` : ""}`;
     drill.hidden = false; drillOpen = true;
     const r = drill.getBoundingClientRect();
     let left = clamp(x + 14, 8, window.innerWidth - r.width - 8);
@@ -143,7 +143,7 @@ window.U = (() => {
     el.appendChild(body);
     if (src) {
       const s = document.createElement("p");
-      s.className = "chart-src"; s.textContent = "Source · " + src;
+      s.className = "chart-src"; s.textContent = "Fuente · " + src;
       el.appendChild(s);
     }
     return body;
