@@ -35,7 +35,7 @@
     ctx.clearRect(0, 0, w, h);
     const W = WINS[cur];
     const mono = (s, x, y, o = {}) => {
-      ctx.font = `${o.b ? "700 " : ""}${o.sz || 10}px Menlo, Consolas, monospace`;
+      ctx.font = `${o.b ? "700 " : ""}${o.sz || 10}px 'JetBrains Mono', Menlo, Consolas, monospace`;
       ctx.fillStyle = o.c || P.inkLo; ctx.textAlign = o.al || "left";
       ctx.fillText(s, x, y);
     };
@@ -45,7 +45,7 @@
     ctx.strokeStyle = P.red; ctx.lineWidth = 1.5;
     ctx.strokeRect(28, y - 16, 44, 24);
     mono(W.no, 50, y + 1, { b: true, c: P.red, al: "center", sz: 11 });
-    ctx.font = "700 21px 'et-book', Palatino, Georgia, serif";
+    ctx.font = "700 21px 'Space Grotesk', 'Inter', system-ui, sans-serif";
     ctx.fillStyle = P.ink; ctx.textAlign = "left";
     ctx.fillText(W.t, 86, y + 2);
     y += 22;
@@ -86,7 +86,7 @@
       ctx.strokeStyle = P.lineLo; ctx.lineWidth = 1;
       ctx.strokeRect(sx, sy, (w - 56) / 2 - 8, 56);
       mono(s[0], sx + 10, sy + 18, { sz: 8.5 });
-      ctx.font = "700 15px Menlo, Consolas, monospace"; ctx.fillStyle = P.red;
+      ctx.font = "700 15px 'JetBrains Mono', Menlo, Consolas, monospace"; ctx.fillStyle = P.red;
       ctx.fillText(s[1], sx + 10, sy + 42);
       hits.push({ x: sx, y: sy, w: (w - 56) / 2 - 8, h: 56, d: { title: s[0], value: s[1], sub: W.t, source: SRC, } });
     });

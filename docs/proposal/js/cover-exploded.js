@@ -234,10 +234,10 @@
           ctx.fillStyle = L.col2;
           if (mode === "wire") { ctx.beginPath(); ctx.arc(lx - 8, ly + 4, 2.6, 0, U.TAU); ctx.stroke(); }
           else { ctx.beginPath(); ctx.arc(lx - 8, ly + 4, 2.6, 0, U.TAU); ctx.fill(); }
-          ctx.font = "700 10.5px Menlo, Consolas, monospace";
+          ctx.font = "700 10.5px 'JetBrains Mono', Menlo, Consolas, monospace";
           ctx.fillStyle = L.col2; ctx.textAlign = "left";
           ctx.fillText(L.head, lx, ly + 2);
-          ctx.font = "10px Menlo, Consolas, monospace";
+          ctx.font = "10px 'JetBrains Mono', Menlo, Consolas, monospace";
           ctx.fillStyle = P.inkLo;
           ctx.fillText(L.sub, lx, ly + 17);
           ly += 40;
@@ -252,7 +252,7 @@
       [[26, 26], [W - 26, 26], [26, H - 26], [W - 26, H - 26]].forEach(([mx, my]) => {
         ctx.beginPath(); ctx.moveTo(mx - 8, my); ctx.lineTo(mx + 8, my); ctx.moveTo(mx, my - 8); ctx.lineTo(mx, my + 8); ctx.stroke();
       });
-      ctx.font = "10px Menlo, Consolas, monospace"; ctx.fillStyle = P.inkLo; ctx.textAlign = "left";
+      ctx.font = "10px 'JetBrains Mono', Menlo, Consolas, monospace"; ctx.fillStyle = P.inkLo; ctx.textAlign = "left";
       ctx.fillText("FIG. 1 · ROBOMOP NEW ERA · CINCO CAPAS · ESCALA NTS · " + (k > 0.5 ? "CLIC PARA ARMAR" : "CLIC PARA EXPLOTAR"), 28, H - 14);
     }
     return { u, cx, cy };

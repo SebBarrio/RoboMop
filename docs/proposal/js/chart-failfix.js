@@ -41,19 +41,30 @@
     },
   ];
 
-  const wrap = document.createElement("div");
-  wrap.className = "failfix";
-  wrap.innerHTML = `<div class="ff-head"><span>El prototipo de 2025</span><span>RoboMop New Era</span></div>`;
-  rows.forEach(r => {
-    const d = document.createElement("div");
-    d.className = "ff-row";
-    d.setAttribute("data-drill-keep", "");
-    d.innerHTML = `<div class="ff-was">${r.was}</div><div class="ff-is">${r.is}</div>`;
-    d.addEventListener("click", e => U.showDrill({
+  const table = document.createElement("table");
+  table.className = "dt failfix";
+  table.innerHTML = `
+    <thead>
+      <tr>
+        <th>El prototipo de 2025</th>
+        <th>RoboMop New Era</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${rows.map(() => `<tr data-drill-keep><td class="ff-was"></td><td class="ff-is"></td></tr>`).join("")}
+    </tbody>
+  `;
+
+  const trs = table.querySelectorAll("tbody tr");
+  rows.forEach((r, i) => {
+    const tr = trs[i];
+    tr.querySelector(".ff-was").textContent = r.was;
+    tr.querySelector(".ff-is").textContent = r.is;
+    tr.addEventListener("click", e => U.showDrill({
       title: "CÓMO FUNCIONA", value: r.is.split("—")[0].trim(),
       sub: r.how, source: "RoboMop New Era · base de ingeniería, julio 2026", x: e.clientX, y: e.clientY
     }));
-    wrap.appendChild(d);
   });
-  body.appendChild(wrap);
+
+  body.appendChild(table);
 })();

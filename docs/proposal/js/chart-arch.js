@@ -86,7 +86,7 @@
       .attr("rx", 4).attr("fill", main ? col : "#fff")
       .attr("stroke", col).attr("stroke-width", main ? 0 : 1.4);
     g.append("text").attr("x", n.x).attr("y", n.y - (n.s ? 8 : -4)).attr("text-anchor", "middle")
-      .attr("font-size", 12).attr("font-weight", 700).attr("font-family", "'et-book', Palatino, Georgia, serif")
+      .attr("font-size", 12).attr("font-weight", 700).attr("font-family", "'Space Grotesk', 'Inter', system-ui, sans-serif")
       .attr("fill", main ? "#fff" : P.ink).text(n.t);
     if (n.s) g.append("text").attr("x", n.x).attr("y", n.y + 9).attr("text-anchor", "middle")
       .attr("font-size", 9.5).attr("fill", main ? "rgba(255,255,255,.85)" : P.inkLo).text(n.s);

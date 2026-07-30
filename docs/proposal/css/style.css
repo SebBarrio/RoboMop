@@ -3,6 +3,8 @@
    White paper / cool-charcoal ink / Kobalt cobalt accent (#0057B8).
    Neutral studio grays (de-blued), editorial quote/note system,
    magazine term columns, borderless right rail, render "plates".
+   Type (2026-07-29): blueprint technical — Space Grotesk display,
+   Inter text, JetBrains Mono data/labels (self-hosted woff2, fonts.css).
    ═══════════════════════════════════════════════════════════ */
 :root {
   --paper: #ffffff;
@@ -20,9 +22,9 @@
   --green: #00755d;
   --gold: #8a6100;
   --neg: #c22f4e;           /* semantic negative — declines, risk, missing */
-  --serif: "et-book", "Iowan Old Style", Palatino, "Palatino Linotype", "Book Antiqua", Georgia, serif;
-  --sans: "et-book", "Iowan Old Style", Palatino, "Palatino Linotype", "Book Antiqua", Georgia, serif;
-  --mono: Menlo, Consolas, "SF Mono", "Liberation Mono", "DejaVu Sans Mono", ui-monospace, monospace;
+  --display: "Space Grotesk", "Inter", system-ui, -apple-system, "Segoe UI", Arial, sans-serif;
+  --sans: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  --mono: "JetBrains Mono", Menlo, Consolas, "SF Mono", "Liberation Mono", "DejaVu Sans Mono", ui-monospace, monospace;
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -84,12 +86,14 @@ a { color: var(--blue); }
   color: var(--accent); margin-bottom: 26px; text-transform: uppercase;
 }
 .cover-title {
+  font-family: var(--display);
   font-size: clamp(44px, 6.6vw, 78px); font-weight: 700;
   line-height: 1.08; letter-spacing: -0.008em;
 }
 .cover-title .cover-num { color: var(--accent); }
 .cover-sub {
-  font-size: clamp(18px, 2.2vw, 26px); font-weight: 700; color: var(--ink-md);
+  font-family: var(--display);
+  font-size: clamp(18px, 2.2vw, 26px); font-weight: 500; color: var(--ink-md);
   margin: 20px 0 26px; letter-spacing: 0;
 }
 .cover-lede { max-width: 620px; font-size: 16.5px; color: var(--ink-md); line-height: 1.75; }
@@ -144,8 +148,8 @@ a { color: var(--blue); }
   content: ""; flex: 0 0 26px; height: 3px;
   background: var(--accent);
 }
-h2 { font-family: var(--sans); font-size: clamp(27px, 3.1vw, 38px); font-weight: 700; line-height: 1.22; letter-spacing: -0.005em; margin-bottom: 22px; max-width: 20em; text-wrap: balance; }
-h3 { font-family: var(--sans); font-size: 21px; font-weight: 700; line-height: 1.4; letter-spacing: -0.01em; margin-bottom: 14px; text-wrap: balance; }
+h2 { font-family: var(--display); font-size: clamp(27px, 3.1vw, 38px); font-weight: 700; line-height: 1.22; letter-spacing: -0.005em; margin-bottom: 22px; max-width: 20em; text-wrap: balance; }
+h3 { font-family: var(--display); font-size: 21px; font-weight: 700; line-height: 1.4; letter-spacing: -0.01em; margin-bottom: 14px; text-wrap: balance; }
 .sub-h { margin-top: 26px; }
 .prose p { margin-bottom: 18px; text-wrap: pretty; }
 .muted { color: var(--ink-lo); font-size: 14px; }
@@ -270,7 +274,7 @@ h3 { font-family: var(--sans); font-size: 21px; font-weight: 700; line-height: 1
   #energy-chart .chart-viewport svg,
   #timeline-chart .chart-viewport svg { min-width: 880px; }
 }
-.chart-title { font-weight: 700; font-size: 17.5px; letter-spacing: -0.01em; margin: 0 0 3px 0; }
+.chart-title { font-family: var(--display); font-weight: 700; font-size: 17.5px; letter-spacing: -0.01em; margin: 0 0 3px 0; }
 .chart-sub { font-family: var(--mono); font-size: 10.5px; color: var(--ink-lo); margin: 0 0 14px 0; letter-spacing: .04em; padding-bottom: 8px; border-bottom: 1px solid var(--line-lo); }
 .chart-src { font-family: var(--mono); font-size: 10px; color: var(--ink-lo); margin: 10px 0 4px; }
 .chart-frame svg text { font-family: var(--mono); }
@@ -317,7 +321,7 @@ h3 { font-family: var(--sans); font-size: 21px; font-weight: 700; line-height: 1
   padding: 14px 12px 8px;
 }
 .inline-chart svg text { font-family: var(--mono); }
-.inline-chart .ic-title { font-weight: 700; font-size: 13.5px; margin: 0 0 2px 4px; font-family: var(--sans); }
+.inline-chart .ic-title { font-weight: 700; font-size: 13.5px; margin: 0 0 2px 4px; font-family: var(--display); }
 .inline-chart .ic-src { font-family: var(--mono); font-size: 9.5px; color: var(--ink-lo); margin: 6px 4px 2px; }
 
 /* ── Pull-quote · editorial (heavy top rule, hairline bottom — no tinted card) ── */
@@ -345,8 +349,8 @@ h3 { font-family: var(--sans); font-size: 21px; font-weight: 700; line-height: 1
 .quote-card .q-badges { display: none; }
 .quote-card .q-zh { display: none; }
 .quote-card .q-text {
-  font-size: 22px; font-style: italic;
-  font-family: var(--serif); color: var(--ink);
+  font-size: 22px; font-style: normal; font-weight: 500;
+  font-family: var(--display); color: var(--ink);
   line-height: 1.52; margin-bottom: 14px; letter-spacing: -0.005em;
   text-wrap: balance;
 }
@@ -428,7 +432,7 @@ table.dt tr.hl td { background: rgba(0,87,184,.05); }
 .term-mag .term + .term { border-left: 1px solid var(--line-lo); }
 .term-mag .term:first-child { padding-left: 2px; }
 .term-mag .t-abbr {
-  font-family: var(--serif); font-weight: 700; font-size: 34px;
+  font-family: var(--display); font-weight: 700; font-size: 34px;
   letter-spacing: -0.01em; color: var(--ink); line-height: 1.1;
   transition: color .2s ease;
 }
@@ -503,9 +507,9 @@ main, footer#sec-sources { margin-right: var(--railw); }
   background: transparent;
 }
 
-/* ── dek · italic serif deck, no border chrome ── */
+/* ── dek · italic text-face deck, no border chrome ── */
 .dek {
-  font-family: var(--serif); font-style: italic;
+  font-family: var(--sans); font-style: italic;
   font-size: 19px; line-height: 1.62; color: var(--ink-md);
   margin: -2px 0 28px; max-width: 600px;
   border: 0; padding: 0;
@@ -542,7 +546,19 @@ hr.sep { border: 0; height: 1px; background: var(--line); margin: 0 auto; max-wi
 tr.gap-row td { background: rgba(194,47,78,.04); }
 
 /* failure→fix table */
-table.failfix td { cursor: pointer; }
+table.failfix { table-layout: fixed; }
+table.failfix th { width: 50%; }
+table.failfix td { cursor: pointer; vertical-align: top; }
+table.failfix td.ff-was { color: var(--ink-md); padding-right: 18px; }
+table.failfix td.ff-is {
+  color: var(--ink);
+  background: rgba(0,87,184,.04);
+  border-left: 2px solid var(--accent);
+  padding-left: 18px;
+}
+table.failfix tr:hover td { background: var(--paper-hi); }
+table.failfix tr:hover td.ff-is { background: rgba(0,87,184,.07); }
+
 .bug-dot {
   display: inline-block; width: 7px; height: 7px; border-radius: 50%;
   background: var(--neg); margin-right: 8px; vertical-align: 1px;
@@ -613,6 +629,8 @@ table.failfix td { cursor: pointer; }
 @media (max-width: 640px) {
   .chart-frame { overflow-x: auto; -webkit-overflow-scrolling: touch; }
   .chart-frame table.dt { min-width: 560px; }
+  /* sign table lives outside .chart-frame — scroll it locally, never the page */
+  #sign-table { display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; }
 }
 
 /* KPI dots */
@@ -623,7 +641,7 @@ table.failfix td { cursor: pointer; }
 table.kpi td.num { white-space: normal; }
 
 /* chart svg text baseline font */
-.chart-frame svg text { font-family: Menlo, Consolas, monospace; }
+.chart-frame svg text { font-family: var(--mono); }
 
 /* cover title sized to clear the right-side artwork */
 .cover-title { font-size: clamp(40px, 5.4vw, 66px); max-width: 13em; }
