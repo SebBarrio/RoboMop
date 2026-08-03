@@ -169,7 +169,7 @@ window.RPT = {
 
   changeClasses: [
     { cls: "Clase 1", cond: "Sin costo externo y sin impacto en la ruta crítica, las interfaces o la seguridad", appr: "Gerente de Proyecto" },
-    { cls: "Clase 2", cond: "Costo ≤ MXN $1,000 o impacto ≤ 2 días, sin reducción de seguridad", appr: "Gerente de Proyecto + Ingeniero Senior" },
+    { cls: "Clase 2", cond: "Costo ≤ MXN $1,000 o impacto ≤ 2 días, sin reducción de seguridad", appr: "Gerente de Proyecto + Lead Robotics & Systems Engineer" },
     { cls: "Clase 3", cond: "Costo > MXN $1,000, uso de reserva o impacto en arquitectura, interfaces, seguridad o hitos", appr: "Patrocinador" },
   ],
 
@@ -196,6 +196,6 @@ window.RPT = {
   team: [
     { role: "Patrocinador", name: "Luis Vazquez", resp: "Aprueba la propuesta, el presupuesto, el uso de la contingencia y los cambios mayores; resuelve excepciones de alcance, costo y calendario; participa en cada compuerta y en la aceptación final." },
     { role: "Gerente de Proyecto", name: "Germán Velázquez", resp: "Responsable del alcance, calendario, costo, partes, compras, riesgos, cambios y documentación; es su único punto de contacto y coordina la línea de trabajo de software." },
-    { role: "Ingeniero Senior", name: "Sebastian Barrio", resp: "Responsable de la arquitectura del robot y de las decisiones técnicas: mecánica, electrónica, batería, tarjetas, firmware, autonomía, percepción y evidencia de pruebas para cada afirmación." },
+    { role: "Lead Robotics & Systems Engineer", name: "Sebastian Barrio", resp: "Responsable de la arquitectura del robot y de las decisiones técnicas: mecánica, electrónica, batería, tarjetas, firmware, autonomía, percepción y evidencia de pruebas para cada afirmación." },
   ],
 };
