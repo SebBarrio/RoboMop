@@ -16,10 +16,13 @@
   if (ms) {
     const A = window.RPT.ask, P = window.RPT.power;
     const items = [
-      { v: A.weeks + " semanas", k: "Entrega en dieciséis semanas, cerrando con una prueba de aceptación presenciada", t: "ENTREGA", val: "16 semanas", s: "RoboMop New Era · julio 2026" },
-      { v: "MXN $" + A.bac.toLocaleString("en-US", { minimumFractionDigits: 2 }), k: "Precio total: estimación base más su contingencia controlada del 15%", t: "PRECIO TOTAL", val: "MXN $54,162.53", s: "RoboMop New Era · julio 2026" },
-      { v: "MXN $" + A.cap.toLocaleString("en-US"), k: "Techo de gasto — nunca se cruza sin su aprobación explícita", t: "TECHO DE GASTO", val: "MXN $55,000", s: "RoboMop New Era · julio 2026" },
-      { v: "≥4.0 h @200 W", k: "Autonomía de aceptación garantizada; el modelo energético estima 4.8 h a 200 W", t: "AUTONOMÍA DE ACEPTACIÓN", val: "≥4.0 h", s: "RoboMop New Era · julio 2026" },
+      { v: A.weeks + " semanas", k: "Desde la firma provisional y el NTP, cerrando con una aceptación presenciada", t: "ENTREGA", val: "16 semanas desde NTP", s: "RoboMop New Era · agosto 2026" },
+      { v: "MXN $" + A.bac.toLocaleString("en-US", { minimumFractionDigits: 2 }), k: "Forecast de hardware: base más contingencia Sponsor del 15%", t: "HARDWARE", val: "MXN $57,200.83", s: "RoboMop New Era · agosto 2026" },
+      { v: "MXN $" + A.pmServices.toLocaleString("en-US"), k: "Servicios profesionales del Project Manager por el desarrollo completo", t: "PROJECT MANAGER", val: "MXN $160,000", s: "RoboMop New Era · agosto 2026" },
+      { v: "MXN $" + A.seniorServices.toLocaleString("en-US"), k: "Servicios profesionales del Senior Engineer por el desarrollo completo", t: "SENIOR ENGINEER", val: "MXN $160,000", s: "RoboMop New Era · agosto 2026" },
+      { v: "MXN $" + A.services.toLocaleString("en-US"), k: "Servicios profesionales totales de ambos roles", t: "SERVICIOS PROFESIONALES", val: "MXN $320,000", s: "RoboMop New Era · agosto 2026" },
+      { v: "MXN $" + A.projectBudget.toLocaleString("en-US", { minimumFractionDigits: 2 }), k: "Presupuesto total planeado: hardware con contingencia más servicios", t: "PRESUPUESTO DEL PROYECTO", val: "MXN $377,200.83", s: "RoboMop New Era · agosto 2026" },
+      { v: "≥4.0 h @200 W", k: "Aceptación mínima; el modelo de 960 Wh estima 4.8 h y 20% sobre 800 Wh", t: "AUTONOMÍA DE ACEPTACIÓN", val: "≥4.0 h", s: "RoboMop New Era · agosto 2026" },
     ];
     items.forEach(it => {
       const d = document.createElement("div");

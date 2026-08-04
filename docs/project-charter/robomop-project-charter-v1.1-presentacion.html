@@ -1,0 +1,947 @@
+<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>RoboMop — Project Charter v1.1</title><style>:root{--ink:#172128;--navy:#17324d;--blue:#236a91;--rust:#b8563e;--gold:#c58a2d;--paper:#fffdfa;--wash:#f2efe8;--line:#d8d3c9;--muted:#66727a;--green:#476f5d}
+*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:#e8e5de;color:var(--ink);font-family:"Segoe UI",Arial,sans-serif;line-height:1.48;font-size:15px}.toolbar{position:fixed;right:18px;top:16px;z-index:30;display:flex;gap:7px}.toolbar button{border:1px solid #aeb4b6;background:var(--paper);padding:8px 12px;font-weight:700;color:var(--ink);cursor:pointer}.toolbar button:hover{background:var(--navy);color:white}.document{width:min(1040px,calc(100% - 32px));margin:28px auto 60px;background:var(--paper);box-shadow:0 18px 55px rgba(27,35,40,.14)}
+.cover{min-height:900px;padding:78px 76px 58px;display:flex;flex-direction:column;justify-content:space-between;background:linear-gradient(90deg,var(--paper) 0 70%,#eef1ee 70% 100%);border-top:10px solid var(--navy)}.kicker{font:800 12px/1.2 Consolas,monospace;letter-spacing:.18em;text-transform:uppercase;color:var(--blue)}.cover h1{font:700 58px/1.02 Georgia,serif;letter-spacing:-.045em;margin:20px 0 12px;max-width:700px}.cover .lead{font-size:20px;max-width:660px;color:#44515a}.cover-rule{width:80px;height:5px;background:var(--rust);margin:26px 0}.cover-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0;border-top:1px solid var(--ink);max-width:680px}.cover-cell{padding:14px 18px 14px 0;border-bottom:1px solid var(--line)}.cover-cell b{display:block;font-size:16px}.cover-cell span{font:700 10px Consolas,monospace;color:var(--muted);text-transform:uppercase;letter-spacing:.09em}.cover-bottom{display:flex;justify-content:space-between;align-items:flex-end;gap:24px}.status{border:1px solid var(--navy);padding:12px 16px;font-weight:800;color:var(--navy)}.doc-id{font:700 11px Consolas,monospace;text-align:right;color:var(--muted)}
+.executive{padding:42px 76px;background:var(--navy);color:white;display:grid;grid-template-columns:1.35fr .65fr;gap:52px}.executive h2{color:white;border:0;margin:0 0 16px;font-size:27px}.executive p{margin:0;color:#e2eaf0}.decision-box{border-top:2px solid var(--gold);padding-top:14px}.decision-box b{display:block;font-size:24px}.decision-box span{font-size:12px;color:#cbd6dd}.toc{padding:52px 76px}.toc h2{border:0;margin-top:0}.toc ol{columns:2;column-gap:50px;padding-left:22px}.toc li{break-inside:avoid;margin:0 0 10px;color:var(--muted)}.toc a{color:var(--ink);text-decoration:none;border-bottom:1px solid var(--line)}
+.content{padding:0 76px 70px}.content h2{font:700 31px/1.15 Georgia,serif;color:var(--navy);border-top:4px solid var(--navy);padding-top:18px;margin:58px 0 22px;break-before:page}.content h2:first-child{break-before:auto}.content h3{font:700 18px/1.25 Georgia,serif;margin:30px 0 10px;color:var(--navy)}.content h4{margin:22px 0 8px}.content p{max-width:850px}.content strong{color:#142a3b}.content table{width:100%;border-collapse:collapse;margin:18px 0 28px;font-size:12.5px;break-inside:auto}.content thead{display:table-header-group}.content tr{break-inside:avoid}.content th{background:var(--navy);color:white;text-align:left;font:800 10px Consolas,monospace;text-transform:uppercase;letter-spacing:.04em;padding:9px 10px;border:1px solid var(--navy)}.content td{padding:8px 10px;border:1px solid var(--line);vertical-align:top}.content tr:nth-child(even) td{background:#f6f3ed}.content ul,.content ol{padding-left:23px}.content li{margin:5px 0}.content code{font:700 12px Consolas,monospace;background:#eeebe4;padding:2px 5px;color:var(--rust)}.content blockquote{margin:20px 0;padding:14px 18px;background:#f2ede1;border-left:4px solid var(--gold)}.signature{display:grid;grid-template-columns:repeat(3,1fr);gap:24px;margin-top:55px}.sig{border-top:1px solid var(--ink);padding-top:8px;font-size:12px}.sig b{display:block}.sig span{color:var(--muted)}.page-note{padding:18px 76px 30px;color:var(--muted);font:700 10px Consolas,monospace;border-top:1px solid var(--line);display:flex;justify-content:space-between}
+@media(max-width:760px){.cover,.toc,.content{padding-left:28px;padding-right:28px}.cover{min-height:760px}.cover h1{font-size:42px}.executive{grid-template-columns:1fr;padding:34px 28px}.toc ol{columns:1}.cover-grid{grid-template-columns:1fr}.document{width:100%;margin:0}.toolbar{position:sticky;top:0;background:#e8e5de;padding:8px;justify-content:flex-end}}
+@media print{@page{size:A4;margin:14mm 13mm}body{background:white;font-size:10.5pt}.toolbar{display:none}.document{width:100%;margin:0;box-shadow:none}.cover{height:269mm;min-height:0;padding:24mm 17mm 16mm;break-after:page}.cover h1{font-size:45pt}.executive{padding:16mm;break-after:page}.toc{padding:14mm 16mm;break-after:page}.content{padding:0}.content h2{font-size:22pt;margin-top:0;padding-top:8mm}.content h3{font-size:14pt}.content table{font-size:8.5pt;margin:4mm 0 6mm}.content th{font-size:7.5pt;padding:2mm}.content td{padding:1.7mm}.page-note{display:none}.status{font-size:10pt}.cover .lead{font-size:14pt}}
+</style></head><body><div class="toolbar"><button onclick="window.print()">Imprimir / PDF</button><button onclick="document.querySelector('.toc').scrollIntoView()">Contenido</button></div><main class="document"><section class="cover"><div><div class="kicker">Project Charter / Programa de reconstrucción</div><div class="cover-rule"></div><h1>RoboMop<br>New Era</h1><p class="lead">Producto autónomo de limpieza, integrado y verificable en 16 semanas desde NTP.</p></div><div class="cover-grid"><div class="cover-cell"><span>Sponsor</span><b>Luis Vazquez</b></div><div class="cover-cell"><span>Project Manager</span><b>Germán Velázquez</b></div><div class="cover-cell"><span>Senior Engineer</span><b>Sebastian Barrio</b></div><div class="cover-cell"><span>Hardware + contingencia</span><b>MXN $57,200.83</b></div><div class="cover-cell"><span>Servicios Project Manager</span><b>MXN $160,000</b></div><div class="cover-cell"><span>Servicios Senior Engineer</span><b>MXN $160,000</b></div><div class="cover-cell"><span>Presupuesto planeado</span><b>MXN $377,200.83</b></div><div class="cover-cell"><span>Duración</span><b>16 semanas desde NTP</b></div><div class="cover-cell"><span>Entrega mínima</span><b>1 robot + 1 acumulador</b></div></div><div class="cover-bottom"><div class="status">VERSIÓN 1.1 · APROBACIÓN PROVISIONAL</div><div class="doc-id">EMISIÓN 03 AGO 2026<br>BASELINE REVISADO</div></div></section><section class="executive"><div><h2>Decisión solicitada</h2><p>Aprobar provisionalmente el alcance, la matriz inicial, el hardware con contingencia por MXN $57,200.83, los servicios del Project Manager por MXN $160,000 y los servicios del Senior Engineer por MXN $160,000. Presupuesto planeado: MXN $377,200.83 antes de cargas fiscales aplicables. La Semana 1 inicia únicamente con firma provisional y NTP escrito del Sponsor.</p></div><div class="decision-box"><span>Resultado esperado</span><b>Producto final integrado y aceptado</b><span>No contará con homologación en esta fase.</span></div></section><nav class="toc"><h2>Contenido</h2><ol><li><a href="#1-proposito-y-autorizacion">1. Propósito y autorización</a></li><li><a href="#2-caso-de-negocio">2. Caso de negocio</a></li><li><a href="#3-objetivos-medibles">3. Objetivos medibles</a></li><li><a href="#4-alcance">4. Alcance</a></li><li><a href="#5-entregables">5. Entregables</a></li><li><a href="#6-baseline-tecnico-de-planeacion">6. Baseline técnico de planeación</a></li><li><a href="#7-organizacion-y-gobierno">7. Organización y gobierno</a></li><li><a href="#8-plan-integrado-de-16-semanas">8. Plan integrado de 16 semanas</a></li><li><a href="#9-presupuesto-y-administracion-de-compras">9. Presupuesto y administración de compras</a></li><li><a href="#10-riesgos-prioritarios">10. Riesgos prioritarios</a></li><li><a href="#11-estrategia-de-calidad-prueba-y-aceptacion">11. Estrategia de calidad, prueba y aceptación</a></li><li><a href="#12-control-del-proyecto">12. Control del proyecto</a></li><li><a href="#13-control-de-cambios">13. Control de cambios</a></li><li><a href="#14-cierre-del-proyecto">14. Cierre del proyecto</a></li><li><a href="#15-decisiones-a-congelar-en-srrpdr">15. Decisiones a congelar en SRR/PDR</a></li><li><a href="#16-autorizacion-y-firmas">16. Autorización y firmas</a></li></ol></nav><section class="content"><h2 id="1-proposito-y-autorizacion">1. Propósito y autorización</h2>
+<p>Este Project Charter autoriza la ejecución de un programa de 16 semanas para desarrollar RoboMop como un producto autónomo de limpieza, integrado y verificable. El proyecto reemplaza la arquitectura 2025; conserva sus resultados únicamente como evidencia, fuente de fallos y requisitos de prevención.</p>
+<p>El resultado será el producto final correspondiente al alcance de esta fase: una unidad completa que demuestre arquitectura, integración, seguridad funcional, autonomía energética, navegación, percepción, irrigación y conectividad. <strong>No contará con homologación en esta fase.</strong></p>
+<p>La firma provisional de este Charter, acompañada de una confirmación escrita de <strong>luz verde / Notice to Proceed (NTP)</strong> emitida por el Sponsor, autoriza al Project Manager a iniciar la Semana 1, ejecutar el alcance, coordinar las compras que el Sponsor pagará, solicitar uso de contingencia y detener trabajo ante riesgos de seguridad. La Semana 1 comienza el primer día hábil posterior a que existan ambos actos: firma provisional y NTP. Antes del NTP no corre el calendario de 16 semanas ni existe autorización para comprometer compras.</p>
+<hr />
+<h2 id="2-caso-de-negocio">2. Caso de negocio</h2>
+<p>El prototipo 2025 confirmó la viabilidad general, pero también expuso limitaciones que impiden conservar su arquitectura como baseline:</p>
+<ul>
+<li>autonomía de 25–30 minutos;</li>
+<li>conectores de alta corriente intermitentes;</li>
+<li>sobrecalentamiento de puente H después de motor runaway;</li>
+<li>conexiones de encoder poco confiables;</li>
+<li>competencia entre cómputo de alto nivel y control en tiempo real;</li>
+<li>desincronización LiDAR–odometría–IMU;</li>
+<li>deriva y offsets de mapa;</li>
+<li>integración incompleta de irrigación;</li>
+<li>discrepancias entre claims finales y evidencia tardía de mapeo.</li>
+</ul>
+<p>La nueva etapa convierte esas lecciones en requisitos, arquitectura separada, pruebas por subsistema y evidencia repetible. El objetivo de negocio es entregar el producto final de esta fase y generar una base técnica que permita evaluar posteriormente su expansión de fabricación hasta 10 unidades.</p>
+<hr />
+<h2 id="3-objetivos-medibles">3. Objetivos medibles</h2>
+<table>
+<thead>
+<tr>
+<th>ID</th>
+<th>Objetivo</th>
+<th>Criterio de éxito</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>OBJ-01</td>
+<td>Entregar el producto final del proyecto en 16 semanas</td>
+<td>Final Acceptance Test y handoff en Semana 16</td>
+</tr>
+<tr>
+<td>OBJ-02</td>
+<td>Controlar el costo del proyecto</td>
+<td>Hardware base MXN $49,739.85; contingencia Sponsor MXN $7,460.98; forecast de hardware MXN $57,200.83; Project Manager MXN $160,000; Senior Engineer MXN $160,000; servicios totales MXN $320,000; presupuesto total planeado MXN $377,200.83</td>
+</tr>
+<tr>
+<td>OBJ-03</td>
+<td>Demostrar autonomía energética</td>
+<td>≥4.0 h desde 100% de carga bajo perfil de aceptación de 200 W promedio worst case</td>
+</tr>
+<tr>
+<td>OBJ-04</td>
+<td>Demostrar intercambio de acumulador</td>
+<td>Swap ≤5 min, sin reinicio de controles; respaldo objetivo de diseño ≥10 min, a confirmar en SRR</td>
+</tr>
+<tr>
+<td>OBJ-05</td>
+<td>Demostrar movimiento seguro</td>
+<td>E-stop, watchdog, command timeout, motor inhibit y respuesta controlada a fallas</td>
+</tr>
+<tr>
+<td>OBJ-06</td>
+<td>Demostrar autonomía</td>
+<td>Mapeo, localización, navegación, replanning y cobertura contra matriz congelada en SRR</td>
+</tr>
+<tr>
+<td>OBJ-07</td>
+<td>Integrar percepción</td>
+<td>Dos cámaras, LiDAR, IMU y sensores auxiliares calibrados y timestamped</td>
+</tr>
+<tr>
+<td>OBJ-08</td>
+<td>Integrar irrigación</td>
+<td>Control de flujo/nivel, leak behavior y operación conjunta con la misión</td>
+</tr>
+<tr>
+<td>OBJ-09</td>
+<td>Integrar conectividad</td>
+<td>Backend/frontend, telemetría, comandos, recuperación de red y logging</td>
+</tr>
+<tr>
+<td>OBJ-10</td>
+<td>Generar evidencia de intención productiva</td>
+<td>BoM, revisiones, serialización, fixtures y pruebas repetibles aplicables a una fase posterior de hasta 10 unidades</td>
+</tr>
+</tbody>
+</table>
+<p>La matriz provisional de aceptación incluida en este Charter define la barra inicial de éxito. En el SRR de Semana 1 sólo podrá completarse el método, ambiente e instrumentación o modificarse una cifra mediante Change Class 3 aprobada por el Sponsor, PM y Senior Engineer. Ninguna métrica podrá relajarse después de observar resultados.</p>
+<h3 id="31-matriz-provisional-de-aceptacion-y-trazabilidad-contractual">3.1 Matriz provisional de aceptación y trazabilidad contractual</h3>
+<table>
+<thead>
+<tr>
+<th>ID</th>
+<th>Requisito / entregable</th>
+<th>Umbral provisional</th>
+<th>Método / evidencia</th>
+<th style="text-align: right;">Repetición</th>
+<th>Waiver</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>ACC-01</td>
+<td>Entrega integrada</td>
+<td>1 robot, 1 acumulador LFP, 1 cargador, software y paquete técnico completo</td>
+<td>Inspección y acta de entrega</td>
+<td style="text-align: right;">1</td>
+<td>No para faltantes obligatorios</td>
+</tr>
+<tr>
+<td>ACC-02</td>
+<td>Autonomía energética</td>
+<td>≥4.0 h desde 100% bajo perfil promedio de 200 W; modelo de planeación 960 Wh / 200 W = 4.8 h y 20% sobre la energía requerida de 800 Wh</td>
+<td>Log de energía, SoC, voltajes, temperaturas, potencia y eventos; validación interna previa + FAT presenciada</td>
+<td style="text-align: right;">1 FAT después de validación interna</td>
+<td>No</td>
+</tr>
+<tr>
+<td>ACC-03</td>
+<td>Cambio de acumulador</td>
+<td>≤5 min; controles activos; sin arco, reinicio ni pérdida de estado</td>
+<td>Cronómetro, video y log de controles</td>
+<td style="text-align: right;">3</td>
+<td>No si existe condición insegura</td>
+</tr>
+<tr>
+<td>ACC-04</td>
+<td>Paro e inhibición</td>
+<td>E-stop e inhibit llevan las salidas de tracción al estado seguro, impiden rearranque automático y requieren reset deliberado; tiempo/distancia se congelan en SRR antes de pruebas móviles</td>
+<td>Osciloscopio/log, video y fault injection</td>
+<td style="text-align: right;">Cada modo/falla</td>
+<td>No</td>
+</tr>
+<tr>
+<td>ACC-05</td>
+<td>Movimiento no controlado</td>
+<td>0 eventos durante verificación y FAT</td>
+<td>Hazard/defect log y pruebas de stale command, network loss, brownout, reset y sensor failure</td>
+<td style="text-align: right;">Matriz completa</td>
+<td>No</td>
+</tr>
+<tr>
+<td>ACC-06</td>
+<td>Navegación y cobertura</td>
+<td>≥95% del área alcanzable del circuito acordado; 0 colisiones; misión completada en ≥9/10 corridas</td>
+<td>Ground truth, mapa, rosbag y reporte de cobertura</td>
+<td style="text-align: right;">10</td>
+<td>Sólo Class 3, nunca para colisión insegura</td>
+</tr>
+<tr>
+<td>ACC-07</td>
+<td>Localización</td>
+<td>Error RMS ≤0.20 m y relocalización ≤30 s en el circuito acordado</td>
+<td>Ground truth + rosbag + reporte</td>
+<td style="text-align: right;">3 corridas</td>
+<td>Class 3 antes de FAT</td>
+</tr>
+<tr>
+<td>ACC-08</td>
+<td>Limpieza e irrigación</td>
+<td>≥90% de remoción del patrón de suciedad acordado; flujo dentro de ±15% del setpoint; 0 fugas hacia electrónica y sin charcos fuera del límite acordado</td>
+<td>Protocolo before/after, medición de flujo, inspección y leak test</td>
+<td style="text-align: right;">3 zonas</td>
+<td>No para fuga hacia electrónica</td>
+</tr>
+<tr>
+<td>ACC-09</td>
+<td>Percepción</td>
+<td>Detecta las clases congeladas en SRR con ≥90% recall y ≤10% falsos positivos en el dataset/circuito acordado</td>
+<td>Dataset versionado, replay y pruebas físicas</td>
+<td style="text-align: right;">Dataset + 3 corridas</td>
+<td>Class 3 antes de FAT</td>
+</tr>
+<tr>
+<td>ACC-10</td>
+<td>Conectividad</td>
+<td>Reconexión y recuperación de estado ≤60 s; ≥99% de telemetría esperada registrada durante FAT</td>
+<td>Logs backend/robot y prueba de pérdida/retorno de red</td>
+<td style="text-align: right;">3 ciclos</td>
+<td>Class 3 antes de FAT</td>
+</tr>
+<tr>
+<td>ACC-11</td>
+<td>Seguridad eléctrica y térmica</td>
+<td>Sin trips inesperados, celdas fuera de límites, conductores/conectores sobre su rating ni acceso de agua a electrónica</td>
+<td>Logs térmicos/eléctricos, inspección, leak/fault tests</td>
+<td style="text-align: right;">Matriz completa</td>
+<td>No</td>
+</tr>
+<tr>
+<td>ACC-12</td>
+<td>Documentación</td>
+<td>100% de CAD/STL, BoM, source, binaries, configuración, calibraciones, resultados, manuales y known issues entregados y versionados</td>
+<td>Checklist de configuración y archivo de release</td>
+<td style="text-align: right;">1</td>
+<td>P2 sólo para corrección editorial</td>
+</tr>
+</tbody>
+</table>
+<p>Los valores de ACC-06 a ACC-10 son una <strong>propuesta inicial para decisión</strong> en la presentación y firma provisional. Si una cifra no es aceptada, deberá reemplazarse por un valor explícito antes de liberar compras irreversibles dependientes de ella.</p>
+<hr />
+<h2 id="4-alcance">4. Alcance</h2>
+<h3 id="41-incluido">4.1 Incluido</h3>
+<ul>
+<li>Requisitos, arquitectura, ICD, matriz de aceptación y hazard/FMEA.</li>
+<li>Desensamble forense del sistema 2025.</li>
+<li>Chasis funcional impreso en 3D, mounts, packaging y drivetrain de dos motores conforme a la propuesta vigente.</li>
+<li>Un acumulador LFP completo como entrega mínima, BMS sourced y cargador compatible.</li>
+<li>Hot swap ≤5 min y continuidad de controles durante el cambio.</li>
+<li>Arquitectura de cómputo y control separada, con PCB(s) de potencia/control fabricadas o ensambladas en China.</li>
+<li>NVIDIA Jetson Orin Nano 8GB Super Dev Kit y SSD NVMe 256 GB como baseline seleccionado.</li>
+<li>Control determinista de bajo nivel con watchdogs, safe states y motor inhibit.</li>
+<li>Dos cámaras, dos RPLIDAR S2, IMU, cliff/ToF, bump, nivel/flujo/fuga, corriente y temperatura.</li>
+<li>ROS 2, Isaac Sim e Isaac ROS para gemelo digital y validación anticipada.</li>
+<li>Mapeo, localización, navegación, cobertura y percepción por cámara.</li>
+<li>Irrigación integrada.</li>
+<li>Backend, frontend, conectividad, alertas, logs y recuperación de estado.</li>
+<li>Pruebas digitales, de banco, subsistema, integración, fault injection, regresión y aceptación.</li>
+<li>CAD/STL, BoM, código, firmware, configuración, calibración, procedimientos, evidencia y manuales.</li>
+</ul>
+<h3 id="42-fuera-de-alcance">4.2 Fuera de alcance</h3>
+<ul>
+<li>Homologación regulatoria del producto en esta fase.</li>
+<li>Tooling definitivo, moldes, chasis metálico o enclosure de producción.</li>
+<li>Expansión de fabricación a unidades adicionales, la cual será evaluada como una fase posterior.</li>
+<li>Flota comercial completa, operación 24/7 o infraestructura cloud a escala.</li>
+<li>Segunda o múltiples iteraciones completas de PCB de producción.</li>
+<li>Garantía de desempeño fuera del ambiente y perfiles congelados en SRR.</li>
+<li>Servicios, obligaciones o garantías posteriores a los 16 semanas, salvo que se pacten en el contrato futuro.</li>
+</ul>
+<hr />
+<h2 id="5-entregables">5. Entregables</h2>
+<ol>
+<li>Un robot RoboMop final, funcional e integrado conforme al alcance aprobado.</li>
+<li>Un acumulador LFP funcional como mínimo y un cargador compatible.</li>
+<li>Chasis funcional impreso en 3D conforme a la propuesta aprobada y drivetrain de dos motorreductores instalado.</li>
+<li>Electrónica high-/low-level, arneses, conectores y dispositivos de seguridad.</li>
+<li>Suite de sensores nueva: dos cámaras, dos RPLIDAR S2, IMU y sensores auxiliares.</li>
+<li>Sistema de irrigación integrado.</li>
+<li>Firmware, ROS 2, autonomía, percepción y software de misión.</li>
+<li>Backend/frontend y conectividad requeridos para aceptación.</li>
+<li>Gemelo digital y escenarios reproducibles en Isaac.</li>
+<li>Matriz de verificación con resultados y datos crudos.</li>
+<li>CAD/STL, BoM, source, binaries, configuration y calibration records.</li>
+<li>Risk, issue, decision, change y defect logs.</li>
+<li>Manual de operación, carga, swap, mantenimiento y seguridad.</li>
+<li>Informe final con recomendaciones para la siguiente fase y hasta 10 unidades.</li>
+</ol>
+<hr />
+<h2 id="6-baseline-tecnico-de-planeacion">6. Baseline técnico de planeación</h2>
+<table>
+<thead>
+<tr>
+<th>Subsistema</th>
+<th>Baseline</th>
+<th>Estado</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Compute</td>
+<td>NVIDIA Jetson Orin Nano 8GB Super Dev Kit + SSD NVMe 256 GB</td>
+<td>Seleccionado conforme a la propuesta; PDR confirma interfaces y configuración</td>
+</tr>
+<tr>
+<td>Control</td>
+<td>ESP32-S3-WROOM-1 N16R8</td>
+<td>Seleccionado conforme a la propuesta; PDR confirma interfaces y seguridad</td>
+</tr>
+<tr>
+<td>Arquitectura</td>
+<td>Tier de alto nivel separado del control determinista</td>
+<td>Requisito arquitectónico</td>
+</tr>
+<tr>
+<td>Acumulador</td>
+<td>16 celdas LiFePO4 40135, 3.2 V/20 Ah, 8S2P, 25.6 V, 40 Ah, 1.024 kWh nominales</td>
+<td>Celdas seleccionadas conforme a propuesta; validar muestra y assembly</td>
+</tr>
+<tr>
+<td>Energía operativa del modelo</td>
+<td>960 Wh; 800 Wh requeridos para 4 h a 200 W; reserva del modelo 160 Wh / 20%</td>
+<td>Baseline de planeación aprobado; requiere correlación física sin reducir el criterio ≥4 h</td>
+</tr>
+<tr>
+<td>Drivetrain</td>
+<td>2 × 60GP-60ZYT24X0SZ-B, 24 V, 100 W, 1:18, 270 rpm, encoder 500 ppr</td>
+<td>Seleccionado conforme a la propuesta; PDR valida torque, freno, integración y duty cycle</td>
+</tr>
+<tr>
+<td>Percepción</td>
+<td>2 cámaras + 2 × RPLIDAR S2 + IMU</td>
+<td>LiDAR seleccionado; cámaras/IMU se congelan en PDR dentro de sus cuentas</td>
+</tr>
+<tr>
+<td>Cliff/proximidad</td>
+<td>Cuatro ToF-class + bump sensors</td>
+<td>Baseline de desarrollo, no safety-rated</td>
+</tr>
+<tr>
+<td>Simulación</td>
+<td>ROS 2 + Isaac Sim/Isaac ROS</td>
+<td>Requerido antes de pruebas autónomas físicas</td>
+</tr>
+<tr>
+<td>Chasis</td>
+<td>Impresión 3D funcional conforme a la propuesta vigente</td>
+<td>Producto final de esta fase; homologación no incluida</td>
+</tr>
+</tbody>
+</table>
+<p>El peso propuesto de 7.29 kg para el acumulador es un objetivo preliminar y debe incluir enclosure, BMS, protección, conector, asas, guías y tolerancias antes de aceptarse.</p>
+<hr />
+<h2 id="7-organizacion-y-gobierno">7. Organización y gobierno</h2>
+<h3 id="sponsor-luis-vazquez">Sponsor — Luis Vazquez</h3>
+<ul>
+<li>Aprueba Charter, BAC, uso de contingencia y cambios Class 3.</li>
+<li>Resuelve excepciones de alcance, costo y calendario.</li>
+<li>Presencia obligatoria en gates y aceptación final.</li>
+</ul>
+<h3 id="project-manager-german-velazquez">Project Manager — Germán Velázquez</h3>
+<ul>
+<li>Responsable de alcance, calendario, costo, BoM, procurement, riesgos, cambios, releases y documentación.</li>
+<li>Apoya mecánica, electricidad, acumulador, ensamble, integración y pruebas.</li>
+<li>Coordina el workstream de software, pero no ejecuta desarrollo de software.</li>
+</ul>
+<h3 id="senior-engineer-sebastian-barrio">Senior Engineer — Sebastian Barrio</h3>
+<ul>
+<li>Responsable de arquitectura, interfaces, decisiones técnicas, integración mecánica/eléctrica, acumulador/potencia, liberación técnica de PCBs, firmware, software, ROS/Isaac, autonomía, percepción y evidencia técnica.</li>
+</ul>
+<h3 id="autoridad-de-seguridad">Autoridad de seguridad</h3>
+<p>Germán y Sebastian pueden detener inmediatamente cualquier prueba por movimiento no controlado, anomalía de batería/BMS, calentamiento de conectores, riesgo eléctrico, fuga de agua o condición insegura.</p>
+<h3 id="raci-ejecutivo">RACI ejecutivo</h3>
+<table>
+<thead>
+<tr>
+<th>Work package</th>
+<th>Sponsor</th>
+<th>PM</th>
+<th>Senior Engineer</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Charter, alcance y presupuesto</td>
+<td>A</td>
+<td>R</td>
+<td>C</td>
+</tr>
+<tr>
+<td>Requisitos y aceptación</td>
+<td>I</td>
+<td>A/R</td>
+<td>R</td>
+</tr>
+<tr>
+<td>Arquitectura e interfaces</td>
+<td>I</td>
+<td>C</td>
+<td>A/R</td>
+</tr>
+<tr>
+<td>Compras y costo</td>
+<td>A en excepciones</td>
+<td>A/R</td>
+<td>C</td>
+</tr>
+<tr>
+<td>Chasis y drivetrain</td>
+<td>I</td>
+<td>R/soporte</td>
+<td>A/R</td>
+</tr>
+<tr>
+<td>Acumulador, hot swap y seguridad</td>
+<td>I</td>
+<td>R/soporte</td>
+<td>A/R</td>
+</tr>
+<tr>
+<td>Electrónica y firmware</td>
+<td>I</td>
+<td>C hardware / I firmware</td>
+<td>A/R</td>
+</tr>
+<tr>
+<td>ROS, autonomía, percepción y app</td>
+<td>I</td>
+<td>I/coordinación</td>
+<td>A/R</td>
+</tr>
+<tr>
+<td>Integración y verificación</td>
+<td>I</td>
+<td>A/R coordinación</td>
+<td>R técnico</td>
+</tr>
+<tr>
+<td>Aceptación final</td>
+<td>A</td>
+<td>R</td>
+<td>C/evidencia</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="8-plan-integrado-de-16-semanas">8. Plan integrado de 16 semanas</h2>
+<table>
+<thead>
+<tr>
+<th>Fase</th>
+<th style="text-align: right;">Semanas</th>
+<th>Resultado de salida</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Autorización, requisitos y SRR</td>
+<td style="text-align: right;">1</td>
+<td>Charter, requisitos, aceptación, hazards y evidencia 2025</td>
+</tr>
+<tr>
+<td>Arquitectura, PDR y compras</td>
+<td style="text-align: right;">2</td>
+<td>Arquitectura/ICD congelados y long-lead orders liberadas</td>
+</tr>
+<tr>
+<td>Diseño concurrente y simulación</td>
+<td style="text-align: right;">3–4</td>
+<td>CAD, hot swap design, PCB package, Isaac baseline</td>
+</tr>
+<tr>
+<td>Construcción y pruebas de subsistema</td>
+<td style="text-align: right;">5–8</td>
+<td>Battery bench, drivetrain, irrigación, control, sensores y PCB bring-up</td>
+</tr>
+<tr>
+<td>Integración incremental</td>
+<td style="text-align: right;">8–12</td>
+<td>Rolling chassis, sensores, autonomía, irrigación, app y misión completa</td>
+</tr>
+<tr>
+<td>Feature Freeze</td>
+<td style="text-align: right;">fin de 12</td>
+<td>Sin nuevo scope; sistema completo configurado</td>
+</tr>
+<tr>
+<td>Verificación</td>
+<td style="text-align: right;">13–14</td>
+<td>Campañas de energía/seguridad y autonomía/limpieza/conectividad</td>
+</tr>
+<tr>
+<td>Corrección y regresión</td>
+<td style="text-align: right;">15</td>
+<td>Acceptance blockers cerrados y release candidate</td>
+</tr>
+<tr>
+<td>Aceptación y entrega</td>
+<td style="text-align: right;">16</td>
+<td>FAT, documentación, handoff y firma</td>
+</tr>
+</tbody>
+</table>
+<h3 id="gates">Gates</h3>
+<table>
+<thead>
+<tr>
+<th>Gate</th>
+<th style="text-align: right;">Momento</th>
+<th>Criterio</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>G0</td>
+<td style="text-align: right;">Inicio</td>
+<td>Charter provisional firmado y NTP/luz verde escrita del Sponsor</td>
+</tr>
+<tr>
+<td>G1 — SRR</td>
+<td style="text-align: right;">Fin W1</td>
+<td>Requisitos, matriz de aceptación, hazards y ambiente de FAT congelados</td>
+</tr>
+<tr>
+<td>G2 — PDR</td>
+<td style="text-align: right;">Fin W2</td>
+<td>Arquitectura, interfaces, cotizaciones landed, sourcing y long-leads aprobados</td>
+</tr>
+<tr>
+<td>G3 — Subsystem Readiness</td>
+<td style="text-align: right;">Fin W8</td>
+<td>Evidencia cuantitativa de cada subsistema aprobada contra su matriz</td>
+</tr>
+<tr>
+<td>G4 — Feature Complete</td>
+<td style="text-align: right;">Fin W12</td>
+<td>Robot integrado; configuración identificada; feature freeze</td>
+</tr>
+<tr>
+<td>G5 — Verification Complete</td>
+<td style="text-align: right;">Fin W14</td>
+<td>100% de pruebas obligatorias ejecutadas; P0 = 0; plan cerrado para cualquier P1</td>
+</tr>
+<tr>
+<td>G6 — Final Release</td>
+<td style="text-align: right;">W16</td>
+<td>Todos los requisitos no dispensables aprobados, entrega aceptada y riesgos no críticos documentados</td>
+</tr>
+</tbody>
+</table>
+<p>Cada gate se registra como <strong>Pass, Conditional Pass o Fail</strong>, con entradas, evidencia, aprobadores, condiciones, owner y fecha de cierre. Un Conditional Pass no puede liberar trabajo que dependa de un hazard crítico abierto. Sponsor, PM y Senior Engineer tienen dos días hábiles para emitir su decisión; un retraso de aprobación fuera de ese plazo desplaza el calendario en la misma cantidad de días, salvo recovery plan acordado.</p>
+<h3 id="ruta-critica">Ruta crítica</h3>
+<p><code>Charter → SRR → PDR → PCBs/long leads → recepción → bring-up → power/drivetrain seguro → calibración/localización → integración completa → verificación → regresión → FAT</code></p>
+<p>Cualquier retraso mayor a tres días laborables sobre la ruta crítica requiere un recovery plan y decisión del PM; dos sprints consecutivos incumplidos requieren revisión de alcance o recursos con el Sponsor.</p>
+<hr />
+<h2 id="9-presupuesto-y-administracion-de-compras">9. Presupuesto y administración de compras</h2>
+<table>
+<thead>
+<tr>
+<th>Cuenta</th>
+<th style="text-align: right;">Base MXN</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Jetson + SSD</td>
+<td style="text-align: right;">$8,500.00</td>
+</tr>
+<tr>
+<td>Acumulador + BMS</td>
+<td style="text-align: right;">$10,000.00</td>
+</tr>
+<tr>
+<td>Dos motores/drivetrain</td>
+<td style="text-align: right;">$6,999.85</td>
+</tr>
+<tr>
+<td>ESP32-S3-WROOM-1 N16R8</td>
+<td style="text-align: right;">$122.00</td>
+</tr>
+<tr>
+<td>Dos PCBs ensambladas conforme a la propuesta (USD $160 + USD $180 a MXN $18/USD)</td>
+<td style="text-align: right;">$6,120.00</td>
+</tr>
+<tr>
+<td>Dos cámaras</td>
+<td style="text-align: right;">$2,198.00</td>
+</tr>
+<tr>
+<td>LiDAR, IMU y sensores auxiliares nuevos</td>
+<td style="text-align: right;">$8,300.00</td>
+</tr>
+<tr>
+<td>Irrigación</td>
+<td style="text-align: right;">$1,200.00</td>
+</tr>
+<tr>
+<td>Chasis 3D y consumibles mecánicos</td>
+<td style="text-align: right;">$1,000.00</td>
+</tr>
+<tr>
+<td>Arneses, conectores y seguridad</td>
+<td style="text-align: right;">$1,500.00</td>
+</tr>
+<tr>
+<td>Testing, logística y consumibles</td>
+<td style="text-align: right;">$1,800.00</td>
+</tr>
+<tr>
+<td>Cargador, respaldo y hot swap</td>
+<td style="text-align: right;">$2,000.00</td>
+</tr>
+<tr>
+<td><strong>Hardware estimado base</strong></td>
+<td style="text-align: right;"><strong>$49,739.85</strong></td>
+</tr>
+<tr>
+<td>Contingencia de hardware controlada por el Sponsor, 15%</td>
+<td style="text-align: right;"><strong>$7,460.98</strong></td>
+</tr>
+<tr>
+<td><strong>Forecast de hardware con contingencia</strong></td>
+<td style="text-align: right;"><strong>$57,200.83</strong></td>
+</tr>
+<tr>
+<td><strong>Techo recomendado de hardware, sujeto a aprobación</strong></td>
+<td style="text-align: right;"><strong>$58,000.00</strong></td>
+</tr>
+<tr>
+<td>Servicios profesionales — Project Manager</td>
+<td style="text-align: right;"><strong>$160,000.00</strong></td>
+</tr>
+<tr>
+<td>Servicios profesionales — Senior Engineer</td>
+<td style="text-align: right;"><strong>$160,000.00</strong></td>
+</tr>
+<tr>
+<td><strong>Servicios profesionales totales</strong></td>
+<td style="text-align: right;"><strong>$320,000.00</strong></td>
+</tr>
+<tr>
+<td><strong>Presupuesto total planeado del proyecto</strong></td>
+<td style="text-align: right;"><strong>$377,200.83</strong></td>
+</tr>
+<tr>
+<td><strong>Autorización máxima propuesta, hardware + servicios</strong></td>
+<td style="text-align: right;"><strong>$378,000.00</strong></td>
+</tr>
+</tbody>
+</table>
+<p>La cuenta de hardware es un <strong>presupuesto del proyecto</strong>, no un precio fijo ni un anticipo al equipo. El Sponsor pagará el hardware conforme se autoricen las compras, ya sea directamente al proveedor o mediante reembolso contra factura, CFDI, recibo o ticket válido y evidencia de recepción. La contingencia pertenece al Sponsor, sólo se utiliza contra riesgos materializados y cualquier remanente permanece con el Sponsor; no financia scope opcional.</p>
+<p>Los servicios profesionales se presupuestan por separado: <strong>MXN $160,000 para el Project Manager</strong> y <strong>MXN $160,000 para el Senior Engineer</strong>, para un total de <strong>MXN $320,000</strong> durante el desarrollo completo de 16 semanas. La facturación, hitos y fechas de pago de cada rol se pactarán en el contrato futuro; no se cargan a las cuentas de hardware ni a su contingencia. El Sponsor absorberá y procesará el IVA, retenciones u otras cargas fiscales aplicables conforme al contrato y la legislación correspondiente.</p>
+<p>IVA, impuestos, retenciones, importación, aranceles, brokerage, envío y variación cambiaria asociados a compras autorizadas serán absorbidos por el Sponsor. Antes de cada compra, el PM presentará al Sponsor costo esperado, impuestos/logística conocidos, proveedor, alternativa y escenario recomendado. El Sponsor aprobará por escrito uno de los siguientes escenarios: <strong>(A)</strong> pago directo; <strong>(B)</strong> reembolso documentado; <strong>(C)</strong> sustitución equivalente; o <strong>(D)</strong> uso de contingencia. Todas las compras se registrarán en un ledger con cuenta, fecha, autorización, factura/ticket, importe, impuesto, tipo de cambio, recepción y saldo.</p>
+<p>No existe obligación de pagar por adelantado el hardware como suma global. Las compras de entrega larga se programarán desde W1–W2, pero ninguna compra crítica se libera sin NTP, autorización escrita del Sponsor, part number, interface check, rating, lead time, costo puesto en destino y escenario de proveedor.</p>
+<hr />
+<h2 id="10-riesgos-prioritarios">10. Riesgos prioritarios</h2>
+<table>
+<thead>
+<tr>
+<th>ID</th>
+<th>Riesgo</th>
+<th>Nivel inicial</th>
+<th>Respuesta principal</th>
+<th>Trigger</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>R01</td>
+<td>Calendario de 16 semanas comprimido</td>
+<td>Rojo</td>
+<td>Freeze W2/W12, trabajo paralelo, WIP limitado</td>
+<td>Slip crítico &gt;3 días</td>
+</tr>
+<tr>
+<td>R02</td>
+<td>Equipo de sólo dos personas</td>
+<td>Rojo</td>
+<td>Prioridad a ruta crítica, automatización, 20% capacidad para rework</td>
+<td>Dos sprints incumplidos</td>
+</tr>
+<tr>
+<td>R03</td>
+<td>PCBs/componentes tardíos</td>
+<td>Rojo</td>
+<td>Orden temprana, tracking y dev-module fallback</td>
+<td>Amenaza a G3</td>
+</tr>
+<tr>
+<td>R04</td>
+<td>Datos de celda o masa incorrectos</td>
+<td>Rojo</td>
+<td>Datasheet, part number y muestra física W1</td>
+<td>Cualquier discrepancia</td>
+</tr>
+<tr>
+<td>R05</td>
+<td>Consumo promedio &gt;200 W</td>
+<td>Rojo</td>
+<td>Instrumentación temprana y energy model correlacionado</td>
+<td>Forecast &gt;212 W</td>
+</tr>
+<tr>
+<td>R06</td>
+<td>Hot swap, conector o backup inestable</td>
+<td>Rojo</td>
+<td>Locking connector, inrush/thermal/cycle tests</td>
+<td>Reset, arco o calentamiento</td>
+</tr>
+<tr>
+<td>R07</td>
+<td>Timestamp/frame errors</td>
+<td>Rojo</td>
+<td>Timebase único, source timestamps, replay/calibration</td>
+<td>Offset de mapa visible</td>
+</tr>
+<tr>
+<td>R08</td>
+<td>Simulación no correlacionada</td>
+<td>Rojo</td>
+<td>Provenance y correlation gates</td>
+<td>Error fuera de tolerancia</td>
+</tr>
+<tr>
+<td>R09</td>
+<td>Irrigación fuga hacia electrónica</td>
+<td>Rojo</td>
+<td>Segregación, drip paths, sensor y bench leak test</td>
+<td>Cualquier fuga</td>
+</tr>
+<tr>
+<td>R10</td>
+<td>Scope/software excede capacidad</td>
+<td>Rojo</td>
+<td>Congelar clases/contratos, priorizar acceptance path</td>
+<td>Integración incompleta W10</td>
+</tr>
+<tr>
+<td>R11</td>
+<td>EAC de hardware excede autorización</td>
+<td>Rojo</td>
+<td>Cotizaciones landed, ledger semanal y contingencia controlada</td>
+<td>Forecast &gt;$58,000</td>
+</tr>
+<tr>
+<td>R12</td>
+<td>Movimiento no controlado</td>
+<td>Rojo / crítico</td>
+<td>Hardware inhibit, E-stop, watchdog, revisión técnica y staged tests</td>
+<td>Un evento: stop-work y P0</td>
+</tr>
+</tbody>
+</table>
+<p>Los riesgos rojos se revisan semanalmente; los hazards de seguridad se escalan de inmediato.</p>
+<hr />
+<h2 id="11-estrategia-de-calidad-prueba-y-aceptacion">11. Estrategia de calidad, prueba y aceptación</h2>
+<h3 id="niveles-de-verificacion">Niveles de verificación</h3>
+<ol>
+<li><strong>Digital:</strong> unit tests, contract tests, static analysis, Isaac scenarios y log replay.</li>
+<li><strong>Banco:</strong> acumulador, potencia, BMS, control, motores, sensores, irrigación y comunicaciones.</li>
+<li><strong>Subsistema:</strong> drivetrain, hot-swap, irrigación y localización.</li>
+<li><strong>Integrado:</strong> robot completo en condiciones normales y de falla.</li>
+<li><strong>Aceptación:</strong> ejecución presenciada de la matriz congelada.</li>
+</ol>
+<p>La simulación no sustituye aceptación física de runtime, temperatura, conectores, hot swap, frenado, fugas, integridad estructural ni seguridad eléctrica.</p>
+<h3 id="campanas-obligatorias">Campañas obligatorias</h3>
+<ul>
+<li>Cuatro horas continuas bajo el perfil de 200 W.</li>
+<li>Swap ≤5 minutos y continuidad de controles.</li>
+<li>E-stop, watchdog, stale command, network loss, brownout, reset, pack removal y sensor failure.</li>
+<li>Mapeo repetible, timestamps, frames y relocalización.</li>
+<li>Navegación, replanning, restricted zones y cobertura.</li>
+<li>Percepción de clases congeladas y comportamiento seguro ante incertidumbre.</li>
+<li>Irrigación: flujo, nivel, fuga, clog y dry-run.</li>
+<li>Backend/frontend: comandos, estado, mapas, reconnect, alertas y logs.</li>
+<li>Regresión completa antes del release.</li>
+</ul>
+<h3 id="criterios-minimos-de-aceptacion-final">Criterios mínimos de aceptación final</h3>
+<ul>
+<li>Runtime ≥4.0 h desde 100% bajo perfil acordado de 200 W.</li>
+<li>Sin trips inesperados del BMS, undervoltage de celda, sobretemperatura o reinicio.</li>
+<li>Sin calentamiento inaceptable o contacto intermitente del conector.</li>
+<li>Swap ≤5 min y controles activos durante el cambio.</li>
+<li>Cero defectos P0 abiertos y cierre técnico de todos los hazards críticos.</li>
+<li>Cero defectos P1 abiertos, salvo disposición conjunta escrita del Sponsor y Senior Engineer que confirme ausencia de impacto en seguridad y establezca corrección en ≤10 días hábiles.</li>
+<li>100% de requisitos obligatorios y de la matriz de autonomía, percepción, irrigación, conectividad y seguridad aprobados; no basta con ejecutarlos.</li>
+<li>Robot, acumulador, cargador, software y technical data package entregados.</li>
+</ul>
+<h3 id="severidad-waiver-y-retest">Severidad, waiver y retest</h3>
+<ul>
+<li><strong>P0 — crítico / release blocker:</strong> condición con potencial de lesión, movimiento no controlado, pérdida de E-stop/inhibit, evento térmico/eléctrico de batería, agua en electrónica, corrupción que invalide evidencia o incumplimiento de un requisito no dispensable. Requiere stop-work, análisis de causa, corrección, regresión y cierre técnico; no admite waiver comercial.</li>
+<li><strong>P1 — mayor:</strong> incumplimiento de función o umbral obligatorio sin hazard crítico. Debe cerrarse antes de FAT; excepcionalmente puede aceptarse con decisión escrita Sponsor + Senior Engineer, justificación, impacto, workaround y fecha de corrección ≤10 días hábiles.</li>
+<li><strong>P2 — menor:</strong> defecto cosmético, editorial o de usabilidad que no afecta seguridad, función obligatoria ni evidencia. Puede entregarse en punch list con corrección ≤20 días hábiles.</li>
+</ul>
+<p>Después de una corrección se repite la prueba fallida y la regresión de todas las funciones que puedan verse afectadas. El Sponsor acepta comercialmente la entrega; el Senior Engineer avala el cierre técnico. Ninguno puede, por sí solo, dispensar una condición de seguridad.</p>
+<h3 id="repetibilidad-para-una-expansion-de-hasta-10-unidades">Repetibilidad para una expansión de hasta 10 unidades</h3>
+<p>Las pruebas deben ser repetibles y versionadas. Cada assembly crítico tendrá part number/revision, identificación trazable, firmware/configuration, calibración y pass/fail record. Los fixtures, scripts, arneses y desviaciones de la unidad se documentarán para que una siguiente fase pueda convertirlos en incoming inspection, subsystem test y end-of-line test.</p>
+<hr />
+<h2 id="12-control-del-proyecto">12. Control del proyecto</h2>
+<h3 id="cadencia">Cadencia</h3>
+<ul>
+<li>Sprint planning: inicio de cada semana.</li>
+<li>Daily sync: 10–15 minutos.</li>
+<li>Revisión técnica/riesgos: mitad de semana.</li>
+<li>Demo y aceptación: fin de semana.</li>
+<li>Status package: viernes.</li>
+<li>Sponsor: gates, excepciones, contingencia y aceptación.</li>
+</ul>
+<h3 id="status-semanal-obligatorio">Status semanal obligatorio</h3>
+<ul>
+<li>Sprint goal y entregables aceptados.</li>
+<li>Milestones y ruta crítica.</li>
+<li>BoM revision, AC, committed, ETC, EAC y reserva.</li>
+<li>Supplier/long-lead status.</li>
+<li>Release maturity por subsistema.</li>
+<li>Top risks, hazards y defects P0/P1.</li>
+<li>Decisiones y cambios abiertos.</li>
+<li>Look-ahead de dos semanas.</li>
+</ul>
+<h3 id="kpis">KPIs</h3>
+<table>
+<thead>
+<tr>
+<th>KPI</th>
+<th style="text-align: right;">Verde</th>
+<th style="text-align: right;">Amarillo</th>
+<th style="text-align: right;">Rojo</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Variación milestone crítico</td>
+<td style="text-align: right;">≤2 días</td>
+<td style="text-align: right;">3–5 días</td>
+<td style="text-align: right;">&gt;5 días</td>
+</tr>
+<tr>
+<td>Forecast hardware</td>
+<td style="text-align: right;">≤$49,739.85</td>
+<td style="text-align: right;">$49,739.86–$58,000</td>
+<td style="text-align: right;">&gt;$58,000</td>
+</tr>
+<tr>
+<td>Reserva antes de W12</td>
+<td style="text-align: right;">≥50%</td>
+<td style="text-align: right;">25–49%</td>
+<td style="text-align: right;">&lt;25%</td>
+</tr>
+<tr>
+<td>Partes críticas a tiempo</td>
+<td style="text-align: right;">≥95%</td>
+<td style="text-align: right;">85–94%</td>
+<td style="text-align: right;">&lt;85%</td>
+</tr>
+<tr>
+<td>Mandatory tests passed W14</td>
+<td style="text-align: right;">100%</td>
+<td style="text-align: right;">95–99% con plan de cierre</td>
+<td style="text-align: right;">&lt;95%</td>
+</tr>
+<tr>
+<td>P0 abiertos en cualquier release</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">N/A</td>
+<td style="text-align: right;">≥1</td>
+</tr>
+<tr>
+<td>P1 abiertos en release</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">1 con disposición conjunta</td>
+<td style="text-align: right;">&gt;1</td>
+</tr>
+<tr>
+<td>Runtime a 200 W</td>
+<td style="text-align: right;">≥4.0 h</td>
+<td style="text-align: right;">3.8–3.99 h</td>
+<td style="text-align: right;">&lt;3.8 h</td>
+</tr>
+<tr>
+<td>Swap</td>
+<td style="text-align: right;">≤5 min</td>
+<td style="text-align: right;">5–6 min</td>
+<td style="text-align: right;">&gt;6 min</td>
+</tr>
+<tr>
+<td>Uncontrolled motion</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">N/A</td>
+<td style="text-align: right;">Cualquier evento</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="13-control-de-cambios">13. Control de cambios</h2>
+<table>
+<thead>
+<tr>
+<th>Clase</th>
+<th>Condición</th>
+<th>Aprobación</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Class 1</td>
+<td>Sin costo externo, sin ruta crítica, interfaz o seguridad</td>
+<td>PM</td>
+</tr>
+<tr>
+<td>Class 2</td>
+<td>Costo ≤MXN $1,000 e impacto ≤2 días, sin reducción de seguridad, sin uso de contingencia y sin activar Class 3</td>
+<td>PM + Senior Engineer</td>
+</tr>
+<tr>
+<td>Class 3</td>
+<td>Costo &gt;MXN $1,000, uso de reserva, arquitectura, interfaz, seguridad o milestone</td>
+<td>Sponsor</td>
+</tr>
+</tbody>
+</table>
+<p>Toda modificación de arquitectura después de Semana 2 y todo feature nuevo después de Semana 12 se consideran Class 3. Siempre aplica la clase más alta activada por cualquiera de las condiciones.</p>
+<hr />
+<h2 id="14-cierre-del-proyecto">14. Cierre del proyecto</h2>
+<p>El proyecto se considera completo cuando:</p>
+<ol>
+<li>La matriz final está 100% ejecutada, aprobada y firmada.</li>
+<li>Todos los objetivos no dispensables pasan; sólo P1 no relacionados con seguridad pueden tener la disposición conjunta definida.</li>
+<li>No existen defectos P0 abiertos.</li>
+<li>Los P1 tienen disposición autorizada.</li>
+<li>Compras, impuestos, facturas/tickets, reembolsos, contingencia y servicios están reconciliados contra el presupuesto aprobado.</li>
+<li>Robot y accesorios acordados se entregaron.</li>
+<li>CAD, BoM, source, binaries, configuration, calibrations, evidence, logs y manuales están archivados.</li>
+<li>Se documentaron recomendaciones para la siguiente revisión y hasta 10 unidades.</li>
+<li>El Sponsor firma aceptación y cierre.</li>
+</ol>
+<hr />
+<h2 id="15-decisiones-a-congelar-en-srrpdr">15. Decisiones a congelar en SRR/PDR</h2>
+<ol>
+<li>Números de parte finales de BMS, IMU, cámaras y componentes auxiliares; Jetson, ESP32-S3, celdas, motorreductores y dos RPLIDAR S2 se adoptan de la propuesta vigente.</li>
+<li>Responsabilidad exacta de diseño de PCB y contenido landed de la cotización.</li>
+<li>Confirmación del target de respaldo de controles de 10 minutos.</li>
+<li>Ratificación o Change Class 3 de los valores provisionales ACC-06 a ACC-10.</li>
+<li>Tiempos/distancias de frenado, límites ambientales, superficie y circuito del Final Acceptance Test.</li>
+<li>Masa máxima aceptada del assembly completo del acumulador.</li>
+<li>Fallback por retraso o falla de primera revisión de PCB.</li>
+</ol>
+<hr />
+<h2 id="16-autorizacion-y-firmas">16. Autorización y firmas</h2>
+<p>La firma provisional aprueba el alcance, la matriz inicial, el presupuesto de hardware base de MXN $49,739.85, la contingencia Sponsor de MXN $7,460.98, el forecast de hardware de MXN $57,200.83, el techo propuesto de hardware de MXN $58,000, los servicios del Project Manager por MXN $160,000 y los servicios del Senior Engineer por MXN $160,000. Los servicios profesionales suman MXN $320,000 y el presupuesto total planeado suma MXN $377,200.83 antes de cargas fiscales aplicables. La Semana 1 y el calendario de 16 semanas sólo comienzan cuando el Sponsor emite el NTP/luz verde escrita. Los términos de facturación de cada servicio y demás condiciones comerciales se incorporarán al contrato futuro.</p>
+<table>
+<thead>
+<tr>
+<th>Rol</th>
+<th>Nombre</th>
+<th>Decisión</th>
+<th>Fecha</th>
+<th>Firma</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Sponsor</td>
+<td>Luis Vazquez</td>
+<td>Aprobar / Rechazar</td>
+<td></td>
+<td></td>
+</tr>
+<tr>
+<td>Project Manager</td>
+<td>Germán Velázquez</td>
+<td>Aceptar responsabilidad</td>
+<td></td>
+<td></td>
+</tr>
+<tr>
+<td>Senior Engineer</td>
+<td>Sebastian Barrio</td>
+<td>Avalar baseline técnico y de verificación</td>
+<td></td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<hr />
+<p><strong>Documento controlado — RoboMop New Era — Project Charter v1.1 para aprobación provisional</strong></p></section><footer class="page-note"><span>ROBOMOP NEW ERA · PROJECT CHARTER</span><span>V1.1 · APROBACIÓN PROVISIONAL</span></footer></main></body></html>

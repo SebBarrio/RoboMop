@@ -39,7 +39,7 @@
       <td style="color:var(--ink-md)">${window.RPT.fxNote}</td>
       <td></td><td class="num" style="text-align:right"><b>${mxn(window.RPT.ask.base)}</b></td><td></td>`;
     tot.setAttribute("data-drill-keep", "");
-    tot.addEventListener("click", e => U.showDrill({ title: "ESTIMACIÓN BASE", value: "MXN " + mxn(window.RPT.ask.base), sub: "Más una contingencia del 15% controlada por el Patrocinador: MXN $54,162.53 todo incluido, techo de MXN $55,000. 84.08% comprometible en las Semanas 1–2.", source: SRC, x: e.clientX, y: e.clientY }));
+    tot.addEventListener("click", e => U.showDrill({ title: "HARDWARE BASE", value: "MXN " + mxn(window.RPT.ask.base), sub: "Forecast con contingencia Sponsor del 15%: MXN $57,200.83; techo propuesto MXN $58,000. El hardware se paga por compra autorizada y documentada.", source: SRC, x: e.clientX, y: e.clientY }));
     tb.appendChild(tot);
     tbl.appendChild(tb);
     body.appendChild(tbl);

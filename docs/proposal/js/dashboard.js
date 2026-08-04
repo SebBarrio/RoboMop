@@ -8,11 +8,11 @@
   const SRC = "RoboMop New Era · base de ingeniería, julio 2026";
 
   const WINS = {
-    ask: { no: "§0", t: "La decisión solicitada", stats: [["PRESUPUESTO BASE", "MXN $47,097.85"], ["BAC", "MXN $54,162.53"], ["TECHO", "MXN $55,000"], ["DURACIÓN", "16 semanas"]] },
+    ask: { no: "§0", t: "La decisión solicitada", stats: [["HW + CONT.", "MXN $57,200.83"], ["PROJECT MANAGER", "MXN $160,000"], ["SENIOR ENGINEER", "MXN $160,000"], ["TOTAL PLANEADO", "MXN $377,200.83"]] },
     case: { no: "§1", t: "El caso para reconstruir", stats: [["AUTONOMÍA 2025", "25–30 min"], ["CLASES DE FALLA", "6 → 6 correcciones"], ["MODELO DE AUTONOMÍA 2026", "4.8 h est."], ["LÍNEA BASE", "2025 retirada"]] },
-    decisions: { no: "§2", t: "Lista de materiales", stats: [["PARTES DEFINIDAS", "6 fijadas"], ["GRUPOS PRESUPUESTADOS", "11 grupos"], ["BASE", "MXN $47,097.85"], ["BAC", "MXN $54,162.53"]] },
+    decisions: { no: "§2", t: "Lista de materiales", stats: [["PARTES DEFINIDAS", "6 fijadas"], ["GRUPOS PRESUPUESTADOS", "11 grupos"], ["HW BASE", "MXN $49,739.85"], ["HW + CONT.", "MXN $57,200.83"]] },
     arch: { no: "§3", t: "Arquitectura de dos niveles", stats: [["ENLACE", "micro-ROS UART"], ["SEGURIDAD", "watchdog HW"], ["BASE DE TIEMPO", "monotónica MCU"], ["TRONCAL", "CAN 2.0 reservada"]] },
-    energy: { no: "§4", t: "Energía y autonomía", stats: [["PAQUETE", "960 Wh"], ["CONSUMO PROM.", "200 W"], ["UN PAQUETE", "4.8 h est."], ["DOS PAQUETES", "9.6 h est."]] },
+    energy: { no: "§4", t: "Energía y autonomía", stats: [["PAQUETE NOMINAL", "1.024 kWh"], ["MODELO OPERATIVO", "960 Wh"], ["CONSUMO PROM.", "200 W"], ["UN ACUMULADOR", "4.8 h est."]] },
     plan: { no: "§5", t: "Plan de 16 semanas", stats: [["FASES", "8 + congelación"], ["COMPUERTAS", "G0–G6"], ["CIERRE DE DISEÑO", "S2"], ["CONG. DE FUNCIONES", "S12"]] },
     risk: { no: "§6", t: "Riesgos prioritarios", stats: [["REGISTRO", "12 riesgos"], ["TOPE", "R01 calendario"], ["REVISIÓN ROJOS", "semanal"], ["PARO DE TRABAJO", "1 evento de movimiento"]] },
     accept: { no: "§7", t: "Calidad y aceptación", stats: [["OBJETIVOS", "10"], ["NIVELES", "5"], ["P0 AL LIBERAR", "0 abiertos"], ["CONG. REQUISITOS", "S1"]] },
@@ -103,8 +103,8 @@
     ctx.beginPath(); ctx.moveTo(scale(A.cap), y - 4); ctx.lineTo(scale(A.cap), y + 18); ctx.stroke();
     mono("BASE " + (A.base / 1000).toFixed(1) + "K", fx0, y + 30, { sz: 8.5, c: P.inkMd });
     mono("BAC " + (A.bac / 1000).toFixed(1) + "K", scale(A.bac) - 4, y - 8, { sz: 8.5, c: P.red, al: "right", b: true });
-    mono("TECHO 55.0K", scale(A.cap), y + 30, { sz: 8.5, c: P.neg, al: "right", b: true });
-    hits.push({ x: fx0, y: y - 6, w: fw, h: 40, d: { title: "ESCALERA DE FINANCIAMIENTO", value: "BAC MXN $54,162.53", sub: "Base $47,097.85 + contingencia del 15% controlada por el Patrocinador; techo $55,000.", source: SRC } });
+    mono("TECHO 58.0K", scale(A.cap), y + 30, { sz: 8.5, c: P.neg, al: "right", b: true });
+    hits.push({ x: fx0, y: y - 6, w: fw, h: 40, d: { title: "PRESUPUESTO DEL PROYECTO", value: "MXN $377,200.83", sub: "Hardware con contingencia $57,200.83 + Project Manager $160,000 + Senior Engineer $160,000.", source: SRC } });
     y += 52;
 
     // celdas de estado de subsistemas
