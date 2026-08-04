@@ -725,6 +725,10 @@ table.kpi td.num { white-space: normal; }
       color: var(--ink-lo);
     }
   }
+  @page :first {
+    margin-bottom: 10mm;
+    @bottom-center { content: none; }
+  }
 
   * {
     -webkit-print-color-adjust: exact !important;
@@ -759,8 +763,8 @@ table.kpi td.num { white-space: normal; }
   /* Cover as standalone title page */
   #cover {
     margin-right: 0;
-    height: 257mm;
-    min-height: 257mm;
+    height: 100vh;
+    min-height: 100vh;
     page-break-after: always;
     position: relative;
     overflow: hidden;
@@ -777,11 +781,15 @@ table.kpi td.num { white-space: normal; }
   .cover-sheet {
     position: absolute;
     right: 0;
-    top: auto;
-    bottom: 10mm;
-    translate: none;
-    width: 52%;
+    top: 100%;
+    bottom: auto;
+    translate: 0 -100%;
+    width: 96%;
     margin: 0;
+    grid-template-columns: 40% 55%;
+    grid-template-areas: ". top" "side front";
+    column-gap: 5%;
+    row-gap: 18px;
     page-break-inside: avoid;
   }
   /* The cover plate is introduced with CSS wipes on screen.  A PDF is
@@ -794,7 +802,20 @@ table.kpi td.num { white-space: normal; }
     transform: none !important;
     opacity: 1 !important;
   }
-  .cs-tag { position: static; display: block; text-align: right; margin-top: 8px; }
+  .cs-tag {
+    position: absolute;
+    top: 0;
+    right: auto;
+    bottom: auto;
+    left: 0;
+    width: 40%;
+    display: block;
+    text-align: right;
+    margin-top: 0;
+    font-size: 7pt;
+    line-height: 1.5;
+    letter-spacing: .12em;
+  }
   .cover-kicker { font-size: 8.5pt; letter-spacing: 0.18em; margin-bottom: 8mm; text-align: left; }
   .cover-title {
     font-family: var(--display);
