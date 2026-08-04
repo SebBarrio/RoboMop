@@ -1,0 +1,545 @@
+{
+  "schema_version": "1.0.0",
+  "document": {
+    "id": "ROBOMOP-QG-V1.1",
+    "title": "RoboMop New Era — Assessment consolidado del Quality Gate",
+    "version": "1.1",
+    "cutoff_date": "2026-08-03",
+    "approval_meeting_date": "2026-08-04",
+    "language": "es-MX",
+    "status": "ready_for_presentation_and_conditional_approval",
+    "public_proposal_url": "https://sebbarrio.github.io/RoboMop/proposal/",
+    "repository_url": "https://github.com/SebBarrio/RoboMop",
+    "base_branch": "Droid-implementation",
+    "published_baseline_merge_commit": "241f3dcbe9fca43e79736aa99fbec0c7a464ec29"
+  },
+  "executive_verdict": {
+    "overall": "GO_FOR_PRESENTATION_CONDITIONAL_FOR_SIGNATURE",
+    "gates": [
+      {
+        "gate": "public_proposal_presentation",
+        "verdict": "GO",
+        "condition": "The public URL was independently verified with the corrected financial baseline."
+      },
+      {
+        "gate": "scope_cost_and_technical_negotiation",
+        "verdict": "GO",
+        "condition": "The 2026-08-04 meeting is the decision gate."
+      },
+      {
+        "gate": "new_chassis_concept_approval",
+        "verdict": "GO_FOR_DECISION",
+        "condition": "Approval must be recorded; it does not release CAD for fabrication."
+      },
+      {
+        "gate": "provisional_charter_signature",
+        "verdict": "CONDITIONAL_GO",
+        "condition": "Commercial, technical and documentary reservations must be captured in the signed record."
+      },
+      {
+        "gate": "notice_to_proceed",
+        "verdict": "CONDITIONAL_GO",
+        "condition": "Week 1 starts only after provisional Charter signature and written Sponsor NTP."
+      },
+      {
+        "gate": "commercial_contract",
+        "verdict": "NO_GO_NOT_AUDITABLE",
+        "condition": "The contract does not yet exist and must be drafted after negotiation."
+      },
+      {
+        "gate": "cad_release_for_fabrication",
+        "verdict": "NO_GO",
+        "condition": "Current CAD represents the prior iteration and must be reconciled and approved at PDR."
+      },
+      {
+        "gate": "final_product_acceptance",
+        "verdict": "NO_GO_BY_DEFINITION",
+        "condition": "Physical verification evidence is required during the project."
+      }
+    ]
+  },
+  "people": {
+    "sponsor": {
+      "name": "Luis Vazquez",
+      "role": "Sponsor"
+    },
+    "project_manager": {
+      "name": "Germán Velázquez",
+      "role": "Project Manager"
+    },
+    "senior_engineer": {
+      "name": "Sebastian Barrio",
+      "role": "Senior Engineer"
+    }
+  },
+  "project": {
+    "duration_weeks": 16,
+    "week_1_start_conditions": [
+      "provisional_charter_signature",
+      "written_sponsor_notice_to_proceed"
+    ],
+    "delivery": {
+      "robot_units": 1,
+      "lfp_accumulators": 1,
+      "chargers": 1,
+      "includes_software": true,
+      "includes_cad_bom_and_test_evidence": true,
+      "homologation_included": false
+    },
+    "method": {
+      "planning": "waterfall_phases_dependencies_and_gates",
+      "execution": "weekly_sprints",
+      "feature_freeze_week": 12,
+      "verification_weeks": [13, 14],
+      "regression_week": 15,
+      "final_acceptance_week": 16
+    }
+  },
+  "financial_baseline_mxn": {
+    "hardware_base": 49739.85,
+    "sponsor_hardware_contingency": 7460.98,
+    "hardware_forecast": 57200.83,
+    "hardware_proposed_cap": 58000.0,
+    "project_manager_services": 160000.0,
+    "senior_engineer_services": 160000.0,
+    "professional_services_total": 320000.0,
+    "planned_project_budget_before_applicable_fiscal_charges": 377200.83,
+    "hardware_plus_services_reference_cap_before_applicable_fiscal_charges": 378000.0,
+    "rules": {
+      "hardware_is_global_advance": false,
+      "purchase_methods": [
+        "sponsor_direct_payment",
+        "documented_reimbursement",
+        "authorized_equivalent_substitution",
+        "authorized_contingency_use"
+      ],
+      "required_purchase_evidence": [
+        "written_authorization",
+        "invoice_cfdi_receipt_or_valid_ticket",
+        "proof_of_payment",
+        "proof_of_receipt",
+        "purchase_ledger_entry"
+      ],
+      "contingency_owner": "Sponsor",
+      "unused_contingency_disposition": "remains_with_sponsor",
+      "taxes_and_landed_costs": "processed_and_absorbed_by_sponsor_subject_to_future_contract_and_applicable_law"
+    },
+    "contract_terms_to_define": [
+      "gross_or_net_treatment_for_each_professional_fee",
+      "invoicing_and_payment_milestones",
+      "payment_dates",
+      "individual_tax_and_withholding_treatment",
+      "earned_work",
+      "early_termination",
+      "unavailability_or_replacement",
+      "service_acceptance",
+      "post_week_16_corrections"
+    ]
+  },
+  "energy_baseline": {
+    "chemistry": "LiFePO4",
+    "configuration": "8S2P",
+    "cell_count": 16,
+    "nominal_voltage_v": 25.6,
+    "fully_charged_voltage_v": 29.2,
+    "capacity_ah": 40,
+    "nominal_energy_wh": 1024,
+    "operational_model_energy_wh": 960,
+    "reference_average_power_w": 200,
+    "modeled_runtime_h": 4.8,
+    "physical_acceptance_runtime_h_min": 4.0,
+    "energy_required_for_acceptance_wh": 800,
+    "model_reserve_wh": 160,
+    "reserve_over_minimum_acceptance_energy_pct": 20,
+    "modeled_runtime_is_physical_evidence": false,
+    "delivery_accumulator_count": 1,
+    "swap_target_minutes_max": 5,
+    "controls_backup_design_target_minutes_min": 10
+  },
+  "technical_baseline": {
+    "high_level_compute": "NVIDIA Jetson Orin Nano 8GB Super Dev Kit with 256GB NVMe SSD",
+    "deterministic_controller": "ESP32-S3-WROOM-1 N16R8",
+    "architecture": "high_level_compute_separated_from_deterministic_motor_and_safety_control",
+    "drivetrain": "two 24V 100W gearmotors with 500ppr encoders",
+    "perception": {
+      "cameras": 2,
+      "lidar": "2 x RPLIDAR S2",
+      "imu": 1,
+      "auxiliary_sensors": [
+        "cliff_or_tof",
+        "bump",
+        "water_level",
+        "flow",
+        "leak",
+        "current",
+        "temperature"
+      ]
+    },
+    "irrigation": [
+      "tank",
+      "pump",
+      "flow_control",
+      "level_sensing",
+      "leak_behavior"
+    ],
+    "simulation": [
+      "ROS 2",
+      "Isaac Sim",
+      "Isaac ROS"
+    ],
+    "connectivity": [
+      "backend",
+      "frontend",
+      "telemetry",
+      "commands",
+      "alerts",
+      "state_recovery",
+      "logging"
+    ],
+    "pcbs": {
+      "pcb_1_usd": 160,
+      "pcb_2_usd": 180,
+      "total_usd": 340,
+      "planning_fx_mxn_per_usd": 18,
+      "planning_total_mxn": 6120,
+      "quote_scope_to_confirm": [
+        "bare_boards",
+        "components",
+        "assembly",
+        "setup_or_nre",
+        "programming",
+        "testing",
+        "shipping",
+        "taxes",
+        "rework"
+      ]
+    }
+  },
+  "cad_and_design_approval": {
+    "current_cad_state": "represents_prior_chassis_iteration",
+    "proposal_state": "current_proposed_technical_baseline",
+    "approval_gate_date": "2026-08-04",
+    "current_cad_is_evidence_of_new_design_conformity": false,
+    "concept_approval_equals_fabrication_release": false,
+    "required_meeting_decisions": [
+      "approve_condition_or_reject_new_chassis_concept",
+      "authorize_cad_update",
+      "reconcile_proposal_charter_cad_layout_and_bom",
+      "define_materials_structure_dimensions_mass_and_manufacturability",
+      "confirm_cost_and_schedule_impact"
+    ],
+    "post_approval_action": {
+      "technical_owner": "Senior Engineer",
+      "document_control_owner": "Project Manager",
+      "target_gate": "PDR_end_of_week_2",
+      "affected_artifacts": [
+        "CAD",
+        "layout",
+        "BoM",
+        "renders",
+        "mechanical_interfaces"
+      ],
+      "reviews": [
+        "mechanical",
+        "electrical",
+        "thermal",
+        "safety",
+        "manufacturability"
+      ],
+      "evidence": [
+        "versioned_files",
+        "design_review_record",
+        "PDR_decision"
+      ]
+    }
+  },
+  "gates": [
+    {
+      "id": "G0",
+      "week": 0,
+      "name": "NTP",
+      "exit_criteria": "Provisional Charter signed and written Sponsor NTP"
+    },
+    {
+      "id": "G1",
+      "week": 1,
+      "name": "SRR",
+      "exit_criteria": "Requirements, hazards, FAT environment and acceptance matrix frozen"
+    },
+    {
+      "id": "G2",
+      "week": 2,
+      "name": "PDR",
+      "exit_criteria": "Architecture, CAD/layout, interfaces, BoM, sourcing and long leads approved"
+    },
+    {
+      "id": "G3",
+      "week": 8,
+      "name": "Subsystem Readiness",
+      "exit_criteria": "Quantitative subsystem evidence approved"
+    },
+    {
+      "id": "G4",
+      "week": 12,
+      "name": "Feature Complete",
+      "exit_criteria": "Integrated robot and feature freeze"
+    },
+    {
+      "id": "G5",
+      "week": 14,
+      "name": "Verification Complete",
+      "exit_criteria": "Mandatory tests executed, zero P0, P1 closure plan"
+    },
+    {
+      "id": "G6",
+      "week": 16,
+      "name": "Final Release",
+      "exit_criteria": "Non-waivable requirements passed, delivery accepted, noncritical risks documented"
+    }
+  ],
+  "acceptance_matrix": [
+    {
+      "id": "ACC-01",
+      "requirement": "integrated_delivery",
+      "threshold": "1 robot, 1 LFP accumulator, 1 charger, software and technical package",
+      "evidence": "inspection_and_delivery_record",
+      "waiver": "not_for_mandatory_missing_items"
+    },
+    {
+      "id": "ACC-02",
+      "requirement": "energy_runtime",
+      "threshold": ">=4.0 h at the agreed 200 W profile",
+      "evidence": "energy_soc_voltage_temperature_power_and_event_logs_plus_witnessed_FAT",
+      "waiver": "none"
+    },
+    {
+      "id": "ACC-03",
+      "requirement": "accumulator_swap",
+      "threshold": "<=5 min, controls active, no arc, reboot or state loss",
+      "evidence": "timer_video_and_logs_three_repetitions",
+      "waiver": "none_for_unsafe_condition"
+    },
+    {
+      "id": "ACC-04",
+      "requirement": "estop_and_motor_inhibit",
+      "threshold": "safe state, no automatic restart",
+      "evidence": "oscilloscope_logs_video_and_fault_injection",
+      "waiver": "none"
+    },
+    {
+      "id": "ACC-05",
+      "requirement": "uncontrolled_motion",
+      "threshold": "zero_events",
+      "evidence": "hazard_and_defect_log",
+      "waiver": "none"
+    },
+    {
+      "id": "ACC-06",
+      "requirement": "navigation_and_coverage",
+      "threshold": ">=95% reachable area, zero collisions, >=9/10 completed missions",
+      "evidence": "ground_truth_map_rosbag_and_coverage_report",
+      "waiver": "class_3_only_never_for_unsafe_collision"
+    },
+    {
+      "id": "ACC-07",
+      "requirement": "localization",
+      "threshold": "RMS <=0.20 m and relocalization <=30 s",
+      "evidence": "ground_truth_rosbag_and_report",
+      "waiver": "class_3_before_FAT"
+    },
+    {
+      "id": "ACC-08",
+      "requirement": "cleaning_and_irrigation",
+      "threshold": ">=90% agreed soil removal, flow within +/-15%, zero leaks toward electronics",
+      "evidence": "before_after_flow_measurement_inspection_and_leak_test",
+      "waiver": "none_for_leak_toward_electronics"
+    },
+    {
+      "id": "ACC-09",
+      "requirement": "perception",
+      "threshold": ">=90% recall and <=10% false positives on frozen classes",
+      "evidence": "versioned_dataset_replay_and_physical_tests",
+      "waiver": "class_3_before_FAT"
+    },
+    {
+      "id": "ACC-10",
+      "requirement": "connectivity",
+      "threshold": "state recovery <=60 s and >=99% expected telemetry logged",
+      "evidence": "robot_and_backend_logs",
+      "waiver": "class_3_before_FAT"
+    },
+    {
+      "id": "ACC-11",
+      "requirement": "electrical_and_thermal_safety",
+      "threshold": "no unexpected trips, cells out of limits, over-rated conductors or water in electronics",
+      "evidence": "thermal_electrical_logs_inspection_fault_and_leak_tests",
+      "waiver": "none"
+    },
+    {
+      "id": "ACC-12",
+      "requirement": "documentation",
+      "threshold": "100% versioned technical package",
+      "evidence": "release_configuration_checklist",
+      "waiver": "P2_editorial_only"
+    }
+  ],
+  "defect_classes": {
+    "P0": {
+      "meaning": "critical_release_blocker",
+      "rule": "stop_work_root_cause_fix_regression_and_technical_closure_no_commercial_waiver"
+    },
+    "P1": {
+      "meaning": "major_noncritical_nonconformance",
+      "rule": "close_before_FAT_or_joint_written_disposition_with_deadline_and_retest"
+    },
+    "P2": {
+      "meaning": "minor_cosmetic_editorial_or_usability_issue",
+      "rule": "documented_punch_list_only_if_no_safety_function_or_evidence_impact"
+    }
+  },
+  "priority_risks": [
+    "compressed_16_week_schedule",
+    "two_person_execution_team",
+    "pcb_and_component_lead_time",
+    "incorrect_cell_mass_or_supplier_data",
+    "average_power_above_200W",
+    "hot_swap_connector_or_backup_instability",
+    "timestamp_and_frame_errors",
+    "simulation_not_correlated",
+    "irrigation_leak_toward_electronics",
+    "software_scope_exceeds_capacity",
+    "hardware_forecast_above_58000_MXN",
+    "uncontrolled_motion"
+  ],
+  "publication_verification": {
+    "verified_url": "https://sebbarrio.github.io/RoboMop/proposal/",
+    "http_accessible": true,
+    "old_54162_53_amount_absent": true,
+    "todo_incluido_absent": true,
+    "planned_project_budget_377200_83_present": true,
+    "separate_pm_and_senior_service_fields_present": true,
+    "objective_02_reconciled": true,
+    "pull_request_4_merged": true,
+    "pull_request_4_merge_commit": "241f3dcbe9fca43e79736aa99fbec0c7a464ec29",
+    "automated_ci_checks_reported": false,
+    "manual_validations": [
+      "javascript_syntax",
+      "html_parsing",
+      "self_contained_bundle_generation",
+      "desktop_render_no_blocking_clipping",
+      "added_line_secret_scan",
+      "git_diff_check"
+    ]
+  },
+  "resolved_items": [
+    "separate_160000_MXN_fee_for_each_professional",
+    "320000_MXN_professional_services_total",
+    "377200_83_MXN_planned_project_budget",
+    "progressive_sponsor_hardware_payment",
+    "sponsor_owned_contingency",
+    "single_accumulator_delivery",
+    "1024Wh_nominal_960Wh_operational_4_8h_model",
+    "four_hour_physical_acceptance",
+    "20_percent_margin_over_800Wh_requirement",
+    "provisional_charter_plus_written_NTP_start_rule",
+    "12_row_provisional_acceptance_matrix",
+    "P0_P1_P2_rules",
+    "6120_MXN_two_PCB_planning_amount",
+    "public_proposal_republication"
+  ],
+  "signature_and_ntp_conditions": [
+    "define_economic_effect_of_provisional_signature",
+    "define_professional_fee_accrual",
+    "define_payment_milestones_and_invoicing",
+    "define_VAT_withholdings_and_tax_treatment",
+    "define_early_termination_and_earned_work",
+    "define_post_week_16_P1_and_P2_corrections",
+    "define_hardware_ownership_and_disposition_on_cancellation",
+    "define_document_order_of_precedence",
+    "record_new_chassis_approval_and_historical_CAD_status",
+    "define_SRR_acceptance_matrix_ratification_mechanism",
+    "define_legal_identity_IP_warranty_liability_and_termination_in_future_contract"
+  ],
+  "recommended_document_precedence": [
+    "signed_contract",
+    "signed_commercial_and_acceptance_annexes",
+    "signed_project_charter",
+    "approved_acceptance_matrix_and_gate_records",
+    "controlled_CAD_BoM_and_technical_release",
+    "versioned_commercial_proposal",
+    "uncontrolled_informational_material"
+  ],
+  "meeting_decisions": [
+    {
+      "id": "DEC-01",
+      "decision": "approve_phase_scope_and_delivery",
+      "allowed_outcomes": ["approve", "condition", "reject"]
+    },
+    {
+      "id": "DEC-02",
+      "decision": "approve_hardware_forecast_and_cap",
+      "allowed_outcomes": ["approve", "adjust"]
+    },
+    {
+      "id": "DEC-03",
+      "decision": "approve_160000_MXN_fee_for_each_professional",
+      "allowed_outcomes": ["approve", "adjust"]
+    },
+    {
+      "id": "DEC-04",
+      "decision": "define_tax_invoicing_and_payment_treatment",
+      "allowed_outcomes": ["agreed", "pending_contract"]
+    },
+    {
+      "id": "DEC-05",
+      "decision": "approve_new_chassis_concept",
+      "allowed_outcomes": ["approve", "condition", "reject"]
+    },
+    {
+      "id": "DEC-06",
+      "decision": "authorize_replacement_of_prior_CAD",
+      "allowed_outcomes": ["yes", "no", "conditional"]
+    },
+    {
+      "id": "DEC-07",
+      "decision": "ratify_or_change_initial_acceptance_matrix",
+      "allowed_outcomes": ["ratify", "class_3_change"]
+    },
+    {
+      "id": "DEC-08",
+      "decision": "approve_provisional_signature_and_NTP_rule",
+      "allowed_outcomes": ["approve", "adjust"]
+    },
+    {
+      "id": "DEC-09",
+      "decision": "authorize_post_NTP_long_lead_purchases",
+      "allowed_outcomes": ["yes", "no", "per_purchase"]
+    },
+    {
+      "id": "DEC-10",
+      "decision": "assign_future_contract_owner_and_due_date",
+      "allowed_outcomes": ["owner_and_date_required"]
+    }
+  ],
+  "claims_not_yet_physically_demonstrated": [
+    "four_hour_runtime",
+    "hot_swap",
+    "electrical_and_thermal_safety",
+    "estop_and_motor_inhibit",
+    "navigation_localization_and_coverage",
+    "perception",
+    "cleaning_and_irrigation",
+    "connectivity",
+    "structural_integrity",
+    "new_chassis_performance"
+  ],
+  "final_rules": {
+    "presentation": "GO",
+    "technical_baseline_decision": "GO",
+    "provisional_signature": "CONDITIONAL_GO",
+    "notice_to_proceed": "CONDITIONAL_GO",
+    "cad_fabrication_release": "NO_GO_UNTIL_UPDATED_AND_PDR_APPROVED",
+    "commercial_contract": "NO_GO_UNTIL_DRAFTED_AND_REVIEWED",
+    "final_product_acceptance": "NO_GO_UNTIL_PHYSICAL_EVIDENCE_AND_ZERO_OPEN_P0"
+  }
+}
