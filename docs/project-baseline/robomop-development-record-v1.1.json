@@ -1,0 +1,621 @@
+{
+  "schema_version": "1.0.0",
+  "document": {
+    "id": "ROBOMOP-DEVELOPMENT-RECORD-V1.1",
+    "title": "RoboMop New Era — Development Record and Traceability Baseline",
+    "version": "1.1",
+    "traceability_cutoff": "2026-08-03",
+    "approval_meeting_date": "2026-08-04",
+    "purpose": "Preserve project planning, research, decisions, superseded assumptions, architecture work, quality findings, artifacts and remaining work in the cloud.",
+    "repository": "https://github.com/SebBarrio/RoboMop",
+    "public_proposal": "https://sebbarrio.github.io/RoboMop/proposal/",
+    "language": "en-US_with_es-MX_project_terms"
+  },
+  "status_vocabulary": {
+    "CURRENT": "Approved planning baseline or latest controlled baseline.",
+    "PROPOSED": "Current proposal requiring Sponsor or design-gate approval.",
+    "SUPERSEDED": "Earlier assumption retained for decision traceability.",
+    "REFERENCE": "Useful historical or engineering evidence, not controlling the new design.",
+    "EVIDENCE_PENDING": "Requirement or estimate still requiring physical validation."
+  },
+  "executive_summary": {
+    "transformation": "Rebuild the 2025 Raspberry Pi/PCA9685 prototype into an industrial autonomous cleaning product with separate deterministic control, improved energy, new chassis/drivetrain, irrigation, autonomy, connectivity, digital-twin validation and subsystem-first testing.",
+    "delivery_window_weeks": 16,
+    "delivery": {
+      "integrated_robots": 1,
+      "lfp_accumulators": 1,
+      "chargers": 1,
+      "software_and_technical_package": true,
+      "homologation_in_this_phase": false
+    },
+    "current_position": {
+      "public_proposal": "GO_FOR_PRESENTATION",
+      "technical_and_new_chassis_negotiation": "GO_FOR_DECISION",
+      "provisional_charter_and_ntp": "CONDITIONAL_GO",
+      "cad_release": "NO_GO_UNTIL_UPDATED_AND_PDR_APPROVED",
+      "commercial_contract": "NOT_YET_AUDITABLE",
+      "final_acceptance": "PENDING_PHYSICAL_EVIDENCE"
+    }
+  },
+  "legacy_2025": {
+    "status": "REFERENCE_ONLY",
+    "architecture_to_preserve": false,
+    "lessons": [
+      {
+        "topic": "runtime",
+        "observed": "approximately 25 to 30 minutes",
+        "derived_requirement": "new energy model and >=4 h physical acceptance"
+      },
+      {
+        "topic": "high_current_connections",
+        "observed": "intermittent connectors",
+        "derived_requirement": "rated locked connector, voltage-drop, thermal and cycle verification"
+      },
+      {
+        "topic": "motor_safety",
+        "observed": "H-bridge overheated after motor runaway",
+        "derived_requirement": "deterministic control, independent inhibit, watchdog and fault injection"
+      },
+      {
+        "topic": "encoders",
+        "observed": "connections unreliable after PCB integration",
+        "derived_requirement": "hardware counting, connector and EMI verification, staged bring-up"
+      },
+      {
+        "topic": "compute_contention",
+        "observed": "high-level and real-time workloads competed",
+        "derived_requirement": "separate SBC and deterministic MCU"
+      },
+      {
+        "topic": "time_synchronization",
+        "observed": "LiDAR-odometry-IMU drift and map offsets",
+        "derived_requirement": "source timestamps, monotonic timebase, calibration and replay"
+      },
+      {
+        "topic": "autonomy_evidence",
+        "observed": "late records still showed mapping misalignment",
+        "derived_requirement": "revalidate all mapping, localization and navigation claims"
+      },
+      {
+        "topic": "irrigation",
+        "observed": "integration incomplete",
+        "derived_requirement": "first-class irrigation subsystem from requirements onward"
+      }
+    ]
+  },
+  "baseline_evolution": [
+    {
+      "stage": "initial_rebuild_review",
+      "status": "REFERENCE",
+      "contributions": [
+        "requirements_before_design",
+        "ConOps_PRD_SRS",
+        "hazard_analysis_and_FMEA",
+        "requirements_to_verification_traceability",
+        "architecture_trade_studies",
+        "subsystem_benches",
+        "digital_twin_correlation",
+        "controlled_releases",
+        "EVT_DVT_PVT_maturity_model",
+        "supplier_DFM_DFA_DFT_and_EOL_strategy"
+      ],
+      "early_hypotheses": [
+        "5_km_h",
+        "eight_hour_operation",
+        "two_hub_motors",
+        "hot_swap",
+        "Jetson_class_compute",
+        "ESP_class_controller",
+        "two_PCBS",
+        "CAN_UART_micro_ROS",
+        "960_Wh_example_pack"
+      ]
+    },
+    {
+      "stage": "conservative_four_hour_battery_roadmap",
+      "status": "SUPERSEDED_AS_PRESENTATION_BASELINE",
+      "nominal_energy_wh": 1024,
+      "usable_soc_fraction": 0.9,
+      "system_efficiency": 0.92,
+      "modeled_usable_energy_wh": 847.872,
+      "reference_power_w": 200,
+      "modeled_runtime_h": 4.23936,
+      "retained_value": "Sensitivity and lifecycle evidence"
+    },
+    {
+      "stage": "current_energy_presentation_baseline",
+      "status": "CURRENT",
+      "nominal_energy_wh": 1024,
+      "operational_planning_energy_wh": 960,
+      "reference_power_w": 200,
+      "modeled_runtime_h": 4.8,
+      "physical_acceptance_h_min": 4.0,
+      "energy_required_for_four_hours_wh": 800,
+      "model_reserve_wh": 160,
+      "reserve_over_minimum_pct": 20,
+      "is_physical_result": false
+    },
+    {
+      "stage": "conventional_product_development_range",
+      "status": "REFERENCE",
+      "first_integrated_EVT_weeks": "20-30",
+      "DVT_design_freeze_weeks": "30-42",
+      "PVT_pilot_readiness_weeks": "38-52"
+    },
+    {
+      "stage": "compressed_sponsor_delivery_plan",
+      "status": "CURRENT",
+      "weeks": 16,
+      "compression_mechanisms": [
+        "one_integrated_product_for_this_phase",
+        "parallel_workstreams",
+        "early_architecture_and_procurement_freeze",
+        "subsystem_first_integration",
+        "feature_freeze_week_12",
+        "verification_weeks_13_14",
+        "regression_week_15",
+        "FAT_and_handoff_week_16"
+      ],
+      "risk": "HIGH"
+    }
+  ],
+  "commercial_baseline": {
+    "currency": "MXN",
+    "hardware_base": 49739.85,
+    "sponsor_contingency": 7460.98,
+    "hardware_forecast": 57200.83,
+    "hardware_ceiling_proposed": 58000.0,
+    "project_manager_services": 160000.0,
+    "senior_engineer_services": 160000.0,
+    "professional_services_total": 320000.0,
+    "planned_project_budget_before_applicable_fiscal_charges": 377200.83,
+    "hardware_cap_plus_services_reference_before_applicable_fiscal_charges": 378000.0,
+    "procurement_rules": [
+      "no_global_hardware_advance",
+      "sponsor_direct_payment_or_documented_reimbursement",
+      "written_authorization_before_purchase",
+      "invoice_CFDi_receipt_or_ticket",
+      "proof_of_payment_and_receipt",
+      "purchase_ledger",
+      "sponsor_owns_contingency",
+      "unused_contingency_remains_with_sponsor",
+      "part_number_interface_rating_lead_time_landed_cost_and_alternative_review"
+    ],
+    "superseded_figures": [
+      {
+        "value": "approximately 40000 hardware target",
+        "reason": "scope and sourcing maturation"
+      },
+      {
+        "value": "47097.85 base and 54162.53 with contingency",
+        "reason": "PCB and BoM reconciliation"
+      },
+      {
+        "value": "3000 to 3600 PCB allowance",
+        "reason": "corrected to 6120 from USD 160 plus USD 180 at 18 MXN per USD"
+      },
+      {
+        "value": "160000 joint professional services",
+        "reason": "corrected to 160000 per professional"
+      },
+      {
+        "value": "217200.83 project total",
+        "reason": "corrected professional-services total"
+      },
+      {
+        "value": "TODO INCLUIDO",
+        "reason": "hardware and professional services follow separate commercial rules"
+      }
+    ]
+  },
+  "organization": {
+    "sponsor": {
+      "name": "Luis Vazquez",
+      "responsibilities": [
+        "scope_and_budget_approval",
+        "contingency_approval",
+        "Class_3_changes",
+        "gate_decisions",
+        "commercial_acceptance",
+        "written_NTP"
+      ]
+    },
+    "project_manager": {
+      "name": "Germán Velázquez",
+      "responsibilities": [
+        "scope",
+        "schedule",
+        "cost",
+        "BoM",
+        "procurement",
+        "risk_and_change_control",
+        "documentation",
+        "physical_development_support",
+        "assembly",
+        "integration",
+        "verification_coordination"
+      ],
+      "primary_software_implementer": false
+    },
+    "senior_engineer": {
+      "name": "Sebastian Barrio",
+      "responsibilities": [
+        "architecture",
+        "interfaces",
+        "mechanical_and_electrical_design",
+        "accumulator_and_power",
+        "PCB_release",
+        "firmware",
+        "ROS_and_Isaac",
+        "autonomy",
+        "perception",
+        "technical_evidence"
+      ]
+    },
+    "safety_stop_authority": [
+      "Germán Velázquez",
+      "Sebastian Barrio"
+    ]
+  },
+  "workstreams": [
+    {
+      "id": "WS1",
+      "name": "program_systems_and_requirements",
+      "scope": ["Charter", "ConOps", "PRD_SRS", "acceptance", "traceability", "hazard_FMEA", "schedule_cost_configuration_change_decision_control"]
+    },
+    {
+      "id": "WS2",
+      "name": "legacy_teardown_and_evidence",
+      "scope": ["systematic_disassembly", "damaged_component_records", "logs_dimensions_wiring_PCB_photos", "reuse_reference_unsafe_discard_classification"]
+    },
+    {
+      "id": "WS3",
+      "name": "mechanical_chassis_and_drivetrain",
+      "scope": ["trade_study", "mule", "torque_speed_braking_thermal_encoder", "packaging_CG_tip_serviceability", "drawings_tolerances_materials_DFM_DFA"]
+    },
+    {
+      "id": "WS4",
+      "name": "accumulator_power_and_hot_swap",
+      "scope": ["8S2P_LFP", "BMS_protection_fusing_precharge", "charger", "control_ride_through", "retention_touch_safety_ergonomics", "runtime_thermal_fault_cycle_tests"]
+    },
+    {
+      "id": "WS5",
+      "name": "electronics_and_PCBS",
+      "scope": ["high_low_level_split", "power_tree_grounding_shielding", "Estop_and_inhibit", "PCB1_power_drivetrain", "PCB2_Jetson_interface", "schematic_layout_DFM_DFT_bringup"]
+    },
+    {
+      "id": "WS6",
+      "name": "firmware_and_deterministic_control",
+      "scope": ["encoder_capture", "motor_supervision", "watchdogs_timeouts", "safe_states", "timestamping_protocols", "fault_injection_logging"]
+    },
+    {
+      "id": "WS7",
+      "name": "autonomy_perception_and_simulation",
+      "scope": ["ROS2", "mapping_localization_Nav2", "replanning_coverage", "sensor_calibration_and_timebase", "camera_perception", "Isaac_SIL_MIL_HIL_replay"]
+    },
+    {
+      "id": "WS8",
+      "name": "irrigation_and_cleaning",
+      "scope": ["tank_pump_valve_distribution", "level_flow_leak_sensing", "dry_run_clog_chemical_compatibility", "cleaning_quality_and_mission_integration"]
+    },
+    {
+      "id": "WS9",
+      "name": "backend_frontend_and_fleet_readiness",
+      "scope": ["identity_provisioning", "telemetry_commands_maps_alerts", "reconnect_state_recovery", "offline_autonomy", "OTA_rollback", "fleet_ready_contracts"]
+    },
+    {
+      "id": "WS10",
+      "name": "verification_release_and_delivery",
+      "scope": ["digital_bench_subsystem_integrated_FAT", "regression_fault_injection", "acceptance_evidence", "release_checklist", "technical_package", "handoff"]
+    }
+  ],
+  "schedule": [
+    {"weeks": "1", "outcome": "activation, requirements, legacy evidence, acceptance, hazards, battery data and SRR"},
+    {"weeks": "2", "outcome": "PDR, architecture, interfaces, CAD concept, sourcing and long-lead decisions"},
+    {"weeks": "3-4", "outcome": "detailed design, PCB packages, hot-swap rig, contracts, simulation and CDR"},
+    {"weeks": "5-7", "outcome": "fabrication and parallel subsystem implementation"},
+    {"weeks": "8", "outcome": "incoming inspection, PCB bring-up, fit and subsystem readiness"},
+    {"weeks": "9", "outcome": "protected power, safety chain, low-level control and drivetrain"},
+    {"weeks": "10", "outcome": "sensors, timebase, calibration, frames and localization"},
+    {"weeks": "11", "outcome": "mapping, navigation, replanning, zones, coverage and perception"},
+    {"weeks": "12", "outcome": "irrigation, backend/frontend, mission integration and feature freeze"},
+    {"weeks": "13", "outcome": "runtime, swap, thermal, connector and safety fault campaigns"},
+    {"weeks": "14", "outcome": "autonomy, cleaning, perception, connectivity and verification gate"},
+    {"weeks": "15", "outcome": "root cause, correction, regression and release candidate"},
+    {"weeks": "16", "outcome": "witnessed FAT, package audit, handoff and closure"}
+  ],
+  "technical_decisions": [
+    {"area": "compute", "baseline": "Jetson Orin Nano 8GB Super Dev Kit plus 256GB NVMe", "status": "SELECTED_PENDING_PDR_INTERFACES"},
+    {"area": "low_level_control", "baseline": "ESP32-S3-WROOM-1 N16R8", "status": "SELECTED_PENDING_PDR_SAFETY"},
+    {"area": "architecture", "baseline": "SBC autonomy/perception separated from MCU deterministic control", "status": "CURRENT_REQUIREMENT"},
+    {"area": "SBC_MCU_link", "baseline": "UART/micro-ROS framing with CRC sequence timestamp heartbeat timeout", "status": "PROPOSED_FREEZE_ICD"},
+    {"area": "subsystem_trunk", "baseline": "CAN-class", "status": "PROPOSED"},
+    {"area": "drivetrain", "baseline": "2 x 24V 100W 1:18 270rpm 500ppr gearmotors", "status": "SELECTED_SAMPLE_AND_DIMENSION_PENDING"},
+    {"area": "accumulator", "baseline": "LFP 8S2P 25.6V 40Ah 1.024kWh nominal", "status": "CURRENT_PLANNING_PHYSICAL_EVIDENCE_PENDING"},
+    {"area": "operational_energy", "baseline": "960Wh at 200W equals 4.8h model", "status": "CURRENT_ESTIMATE_ACCEPTANCE_GE_4H"},
+    {"area": "lidar", "baseline": "2 x RPLIDAR S2", "status": "SELECTED_OPTICAL_AND_BLIND_ZONE_TEST_PENDING"},
+    {"area": "cameras", "baseline": "two cameras", "status": "COMMITTED_EXACT_COMBINATION_OPEN"},
+    {"area": "PCBS", "baseline": "two assembled custom boards", "status": "COMMITTED_LANDED_SCOPE_PENDING"},
+    {"area": "irrigation", "baseline": "integrated tank pump level flow leak", "status": "COMMITTED_DESIGN_PENDING"},
+    {"area": "simulation", "baseline": "ROS2 Isaac Sim Isaac ROS", "status": "REQUIRED"},
+    {"area": "homologation", "baseline": "not included this phase", "status": "CURRENT_SCOPE_EXCLUSION"}
+  ],
+  "cad_traceability": {
+    "repository_artifacts": [
+      "cad/BOM_v1.md",
+      "cad/LAYOUT_v2.md",
+      "cad/LAYOUT_v3.md",
+      "cad/concepts/",
+      "cad/renders/",
+      "cad/robomop_layout_v1.png",
+      "cad/robomop_layout_v2.png",
+      "cad/robomop_layout_v3.png"
+    ],
+    "current_state": "prior_chassis_iteration_relative_to_new_public_proposal",
+    "evidence_of_new_design_conformity": false,
+    "approval_gate": "2026-08-04_negotiation",
+    "post_approval_actions": [
+      "identify_approved_proposal_commit",
+      "update_CAD_layout_and_BoM",
+      "reconcile_material_structure_dimensions_mass_and_cost",
+      "perform_mechanical_electrical_thermal_safety_manufacturability_review",
+      "issue_controlled_PDR_decision",
+      "withhold_fabrication_release_until_pass"
+    ]
+  },
+  "energy_and_accumulator": {
+    "current": {
+      "chemistry": "LFP",
+      "configuration": "8S2P",
+      "cells": 16,
+      "nominal_voltage_v": 25.6,
+      "full_voltage_v": 29.2,
+      "capacity_ah": 40,
+      "nominal_energy_wh": 1024,
+      "operational_model_wh": 960,
+      "reference_power_w": 200,
+      "modeled_runtime_h": 4.8,
+      "physical_acceptance_h_min": 4.0,
+      "delivery_accumulators": 1,
+      "delivery_chargers": 1,
+      "swap_minutes_max": 5,
+      "backup_target_minutes_min": 10,
+      "nominal_mass_reference_kg": 7.29,
+      "complete_pack_target_ceiling_kg": 8.0
+    },
+    "physical_evidence_required": [
+      "cell_and_pack_voltages",
+      "current_power_energy",
+      "SoC_initial_and_final",
+      "cell_connector_temperatures",
+      "BMS_events",
+      "mission_profile",
+      "safe_low_energy_behavior",
+      "no_reset_uncontrolled_motion_or_safety_loss"
+    ],
+    "handling_and_safety_work": [
+      "preliminary_NOM_036_1_STPS_2018_review",
+      "validate_posture_frequency_reach_grip_and_insertion_force",
+      "touch_safe_keyed_connector",
+      "precharge_inrush_and_short_circuit_protection",
+      "cell_matching_BMS_fusing_enclosure_guides_handle_labels",
+      "trained_operator_swap_protocol"
+    ]
+  },
+  "acceptance_and_governance": {
+    "acceptance_ids": ["ACC-01", "ACC-02", "ACC-03", "ACC-04", "ACC-05", "ACC-06", "ACC-07", "ACC-08", "ACC-09", "ACC-10", "ACC-11", "ACC-12"],
+    "areas": ["integrated_delivery", "runtime", "swap", "Estop_inhibit", "uncontrolled_motion", "navigation_coverage", "localization", "cleaning_irrigation", "perception", "connectivity", "electrical_thermal_safety", "documentation"],
+    "rules": [
+      "test_execution_is_not_test_pass",
+      "commercial_waiver_cannot_override_safety_closure",
+      "P0_stop_work_root_cause_correction_regression_technical_closure",
+      "P1_close_before_FAT_or_joint_non_safety_disposition",
+      "P2_documented_punch_item_only",
+      "repeat_failed_and_affected_regression_after_fix",
+      "gate_records_evidence_quorum_decision_owner_conditions_due_date_reopening",
+      "highest_activated_change_class_applies",
+      "no_metric_relaxation_after_results_are_observed"
+    ]
+  },
+  "quality_gate_history": {
+    "initial_findings": {
+      "P0": 8,
+      "P1": 18,
+      "signing_questions": 33
+    },
+    "major_closures": [
+      {"issue": "acceptance_TBD", "resolution": "12-row provisional matrix, severity and ratification mechanism"},
+      {"issue": "energy_model_conflict", "resolution": "960Wh current model and >=4h physical acceptance"},
+      {"issue": "TODO_INCLUIDO", "resolution": "removed"},
+      {"issue": "technical_baseline_state", "resolution": "proposal and Charter reconciled; CAD pending approval explicit"},
+      {"issue": "Week_1_start", "resolution": "provisional Charter plus written NTP"},
+      {"issue": "safety_waivers", "resolution": "non-waivable P0/safety and separate technical closure"},
+      {"issue": "PCB_cost", "resolution": "6120 MXN"},
+      {"issue": "second_pack_9_6h", "resolution": "removed from base delivery"},
+      {"issue": "absolute_safety_claims", "resolution": "replaced by verifiable architecture and criteria"},
+      {"issue": "contingency_ownership", "resolution": "Sponsor-owned and authorization-controlled"},
+      {"issue": "professional_services", "resolution": "160000 MXN per professional"},
+      {"issue": "public_proposal", "resolution": "updated and deployed through PR 4"}
+    ],
+    "open_contract_topics": [
+      "legal_parties",
+      "payments",
+      "taxes",
+      "IP",
+      "confidentiality",
+      "warranty",
+      "liability",
+      "change_and_delay_treatment",
+      "termination",
+      "document_precedence"
+    ]
+  },
+  "terminology": {
+    "approved": [
+      "Producto autónomo de limpieza",
+      "Producto final integrado y aceptado",
+      "Un robot RoboMop final, funcional e integrado conforme al alcance aprobado",
+      "No contará con homologación en esta fase"
+    ],
+    "avoid": [
+      "delivery_as_only_an_experiment",
+      "implied_full_certification_or_production_release",
+      "todo_incluido_without_matching_contract",
+      "absolute_impossible_never_no_error_guaranteed_claims",
+      "model_or_requirement_reported_as_physical_pass"
+    ]
+  },
+  "artifact_inventory": {
+    "cloud_controlled": [
+      {"path": "docs/proposal/", "purpose": "public sponsor proposal and self-contained bundle", "state": "CURRENT"},
+      {"path": "docs/project-charter/", "purpose": "Charter v1.1 Markdown HTML PDF", "state": "CURRENT"},
+      {"path": "docs/quality-gate/", "purpose": "quality gate Markdown and JSON", "state": "CURRENT"},
+      {"path": "docs/project-baseline/", "purpose": "development record Markdown and JSON", "state": "CURRENT"},
+      {"path": "cad/BOM_v1.md", "purpose": "prior BoM baseline", "state": "REFERENCE_RECONCILE_AFTER_CHASSIS_APPROVAL"},
+      {"path": "cad/LAYOUT_v3.md", "purpose": "prior chassis layout", "state": "REFERENCE_NOT_NEW_DESIGN_EVIDENCE"},
+      {"path": "cad/concepts/", "purpose": "visual concept alternatives", "state": "REFERENCE"},
+      {"path": "cad/renders/", "purpose": "CAD presentation renders", "state": "REFERENCE"},
+      {"path": "specs/001-the-robomop-project/", "purpose": "product and software specification set", "state": "REVIEW_AGAINST_NEW_BASELINE"},
+      {"path": "robot/", "purpose": "robot implementation", "state": "EVIDENCE_AND_STARTING_MATERIAL"},
+      {"path": "frontend/", "purpose": "frontend implementation", "state": "EVIDENCE_AND_STARTING_MATERIAL"},
+      {"path": "relay/", "purpose": "relay implementation", "state": "EVIDENCE_AND_STARTING_MATERIAL"}
+    ],
+    "local_planning_sources_summarized": [
+      {"name": "2026-07-16_205817-robomop-rebuild-project-plan-review.md", "purpose": "stage-gated industrial rebuild strategy"},
+      {"name": "2026-07-16_210558-robomop-four-hour-battery-roadmap.md", "purpose": "battery and hot-swap roadmap with earlier energy model"},
+      {"name": "2026-07-16_211259-robomop-16-week-delivery-plan.md", "purpose": "week-by-week compressed plan"},
+      {"name": "2026-07-16_212238-robomop-project-charter-proposal.md", "purpose": "early integrated Charter proposal superseded by v1.1"},
+      {"name": "robomop-gantt-semanas-1-16.*", "purpose": "55-row Gantt in HTML PDF PNG and source"},
+      {"name": "robomop-project-charter-v1.0-*", "purpose": "superseded Charter trace"},
+      {"name": "robomop-project-charter-v1.1-*", "purpose": "current Charter source and renders copied to repository"},
+      {"name": "robomop-quality-gate-pre-firma-2026-08-03.*", "purpose": "original pre-signature audit and finding history"}
+    ],
+    "repository_specification_sources": [
+      "README.md",
+      "PRODUCT.md",
+      "DESIGN.md",
+      "specs/001-the-robomop-project/spec.md",
+      "specs/001-the-robomop-project/plan.md",
+      "specs/001-the-robomop-project/research.md",
+      "specs/001-the-robomop-project/data-model.md",
+      "specs/001-the-robomop-project/quickstart.md",
+      "specs/001-the-robomop-project/tasks.md",
+      "specs/001-the-robomop-project/contracts/api-spec.yaml",
+      "specs/001-the-robomop-project/contracts/websocket-events.md"
+    ]
+  },
+  "validation_completed": {
+    "document_and_web": [
+      "public_proposal_HTTP_success",
+      "old_54162_53_and_TODO_INCLUIDO_removed",
+      "377200_83_public_baseline_observed",
+      "separate_PM_and_Senior_Engineer_services_observed",
+      "JavaScript_syntax",
+      "HTML_parsing",
+      "self_contained_bundle_generation",
+      "desktop_and_390x844_mobile_review",
+      "Charter_HTML_PDF_generation_and_visual_review",
+      "git_diff_whitespace_check",
+      "added_line_secret_scan",
+      "quality_gate_JSON_ad_hoc_parse_arithmetic_structure_assertions"
+    ],
+    "repository_and_publication": [
+      "SebBarrio_RoboMop_identified_as_current_repository",
+      "Droid_implementation_confirmed_as_default_base",
+      "PR_4_merged_proposal_and_Charter_reconciliation",
+      "public_GitHub_Pages_reverified",
+      "PR_5_open_for_quality_gate_and_traceability"
+    ],
+    "physical_evidence_not_completed": [
+      "four_hour_runtime",
+      "hot_swap_and_backup",
+      "Estop_and_inhibit",
+      "electrical_thermal_safety",
+      "drivetrain_performance",
+      "new_chassis_integrity",
+      "localization_navigation_coverage",
+      "perception",
+      "cleaning_irrigation",
+      "connectivity_acceptance"
+    ]
+  },
+  "tooling_and_external_systems": {
+    "github": {
+      "cli_configured": true,
+      "repository_write_permission_verified": true,
+      "repository": "SebBarrio/RoboMop",
+      "credentials_documented": false
+    },
+    "clickup": {
+      "official_MCP_configured_and_authenticated": true,
+      "available_toolset_responded_during_verification": true,
+      "contract_search_result": "not_found_in_checked_workspace",
+      "credentials_documented": false
+    },
+    "browser_validation": {
+      "headless_checks_used": true,
+      "responsive_mobile_viewport": "390x844",
+      "public_proposal_checked": true
+    },
+    "security_rule": "Authentication values and credentials are excluded from project documentation."
+  },
+  "decisions_remaining": {
+    "approval_meeting": [
+      "project_scope",
+      "hardware_forecast_and_ceiling",
+      "each_professional_service_budget",
+      "tax_and_payment_path_to_contract",
+      "new_chassis_concept",
+      "replace_prior_CAD",
+      "provisional_Charter_and_NTP",
+      "contract_owner_and_due_date"
+    ],
+    "SRR": [
+      "operating_environment_and_FAT_circuit",
+      "ACC_06_through_ACC_10",
+      "stopping_time_and_distance",
+      "backup_hold_up_target",
+      "mass_and_ergonomic_limits",
+      "test_instrumentation_and_evidence"
+    ],
+    "PDR": [
+      "updated_CAD_layout_BoM",
+      "exact_cameras_IMU_BMS_and_aux_sensors",
+      "motor_dimensions_and_performance",
+      "LiDAR_optical_window_behavior",
+      "PCB_design_review_release_responsibility",
+      "landed_quotes_and_alternatives",
+      "long_lead_purchase_release"
+    ]
+  },
+  "future_contract": {
+    "exists_at_cutoff": false,
+    "reviewed_or_approved": false,
+    "topics_required": [
+      "legal_parties_and_authority",
+      "scope_and_exclusions",
+      "professional_payment_milestones_and_invoicing",
+      "taxes_and_withholdings",
+      "procurement_and_material_ownership",
+      "acceptance_rejection_cure_retest",
+      "IP_source_CAD_data_credentials_reuse",
+      "confidentiality_and_data_handling",
+      "warranty_support_maintenance",
+      "client_supplier_delay_and_force_majeure",
+      "change_control",
+      "liability_and_indemnification",
+      "termination_and_non_cancelable_commitments",
+      "post_week_16_obligations",
+      "document_precedence"
+    ]
+  },
+  "traceability_rules": [
+    "preserve_superseded_values_with_reason",
+    "do_not_convert_estimates_into_evidence",
+    "do_not_treat_prior_CAD_as_new_design_conformity",
+    "do_not_release_CAD_for_fabrication_before_PDR",
+    "do_not_claim_contract_review_before_contract_exists",
+    "do_not_inherit_2025_performance_claims",
+    "link_future_decisions_to_owner_date_evidence_and_gate"
+  ]
+}
