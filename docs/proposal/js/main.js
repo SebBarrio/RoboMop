@@ -11,6 +11,33 @@
     });
   });
 
+  // Botón Exportar PDF → diálogo de impresión con hoja de estilo de documento
+  const pdfBtn = document.querySelector(".pdf-btn");
+  if (pdfBtn) {
+    pdfBtn.addEventListener("click", () => {
+      // Asegura que las entradas animadas ya son visibles antes de imprimir
+      document.querySelectorAll(".pre-in").forEach(el => el.classList.add("in"));
+      window.print();
+    });
+  }
+
+  // Índice para impresión (sólo visible en @media print)
+  const tocList = document.getElementById("print-toc-list");
+  if (tocList) {
+    document.querySelectorAll("main section.band").forEach(sec => {
+      const h2 = sec.querySelector("h2");
+      const secNo = sec.querySelector(".sec-no");
+      if (!h2) return;
+      const li = document.createElement("li");
+      const a = document.createElement("a");
+      a.href = "#" + sec.id;
+      const prefix = secNo ? secNo.textContent.replace(/\s+/g, " ").trim() + " · " : "";
+      a.textContent = prefix + h2.textContent;
+      li.appendChild(a);
+      tocList.appendChild(li);
+    });
+  }
+
   // §0 tira de métricas
   const ms = document.getElementById("ask-metrics");
   if (ms) {

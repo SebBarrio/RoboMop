@@ -145,6 +145,8 @@ a { color: var(--blue); }
 .chip:hover { background: var(--accent); border-color: var(--accent); color: #fff; }
 .chip:active { transform: translateY(1px); }
 .chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.chip.pdf-btn { color: var(--accent); border-color: var(--accent); background: var(--paper); }
+.chip.pdf-btn:hover { background: var(--accent); color: #fff; }
 .cover-anchor { font-size: 12.5px; color: var(--ink-lo); font-family: var(--mono); letter-spacing: .01em; display: block; max-width: 660px; }
 .scroll-hint {
   margin-top: 7vh; font-family: var(--mono); font-size: 11px; color: var(--ink-lo);
@@ -700,3 +702,268 @@ table.kpi td.num { white-space: normal; }
 .cover-title { font-size: clamp(40px, 5.4vw, 66px); max-width: 13em; }
 
 .cover-sub { max-width: 760px; }
+
+/* ═══════════════════════════════════════════════════════════
+   Print stylesheet · professional PDF export
+   A4 page, cover page, running header/footer, page breaks,
+   document index, and sidecar figures suppressed.
+   ═══════════════════════════════════════════════════════════ */
+@media print {
+  @page {
+    size: A4;
+    margin: 18mm 15mm 22mm 15mm;
+    @top-right {
+      content: "RoboMop New Era · Propuesta de proyecto";
+      font-family: var(--mono);
+      font-size: 7.5pt;
+      color: var(--ink-lo);
+    }
+    @bottom-center {
+      content: counter(page);
+      font-family: var(--mono);
+      font-size: 9pt;
+      color: var(--ink-lo);
+    }
+  }
+
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  html { scroll-behavior: auto; }
+
+  body {
+    --railw: 0px;
+    background: #fff;
+    color: #000;
+    font-size: 10.5pt;
+    line-height: 1.55;
+  }
+
+  /* Hide web/interactive chrome */
+  #dash-rail,
+  #drill-card,
+  #era-rail,
+  .scroll-hint,
+  .chip[data-goto],
+  .tip,
+  .rail-note { display: none !important; }
+
+  /* Export button itself must not appear in the PDF */
+  .chip.pdf-btn { display: none !important; }
+
+  /* Remove right rail margin */
+  main, footer#sec-sources { margin-right: 0; }
+
+  /* Cover as standalone title page */
+  #cover {
+    margin-right: 0;
+    height: 257mm;
+    min-height: 257mm;
+    page-break-after: always;
+    position: relative;
+    overflow: hidden;
+  }
+  #cover::before { display: none; }
+  .cover-inner {
+    order: 1;
+    align-self: flex-start;
+    max-width: 100%;
+    width: 100%;
+    padding: 14mm 0 0;
+    text-align: left;
+  }
+  .cover-sheet {
+    position: absolute;
+    right: 0;
+    bottom: 10mm;
+    translate: none;
+    width: 52%;
+    margin: 0;
+    page-break-inside: avoid;
+  }
+  /* The cover plate is introduced with CSS wipes on screen.  A PDF is
+     captured before those animations finish, so print its final geometry. */
+  .cover-sheet,
+  .cover-sheet *,
+  .cover-sheet img {
+    animation: none !important;
+    clip-path: none !important;
+    transform: none !important;
+    opacity: 1 !important;
+  }
+  .cs-tag { position: static; display: block; text-align: right; margin-top: 8px; }
+  .cover-kicker { font-size: 8.5pt; letter-spacing: 0.18em; margin-bottom: 8mm; text-align: left; }
+  .cover-title {
+    font-family: var(--display);
+    font-size: 72pt;
+    max-width: 100%;
+    line-height: 1.0;
+    margin-bottom: 0;
+    text-align: left;
+  }
+  .cover-title .cover-num { font-size: 72pt; }
+  .cover-sub,
+  .cover-lede,
+  .cover-anchor { display: none; }
+
+  /* Print-only document index */
+  #print-toc {
+    display: block !important;
+    page-break-after: always;
+  }
+  #print-toc h2 {
+    font-family: var(--display);
+    font-size: 18pt;
+    margin-bottom: 14pt;
+  }
+  #print-toc ol {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
+  #print-toc li {
+    padding: 7pt 0;
+    border-bottom: 0.5pt solid var(--line);
+    font-size: 10.5pt;
+  }
+  #print-toc a {
+    color: var(--ink);
+    text-decoration: none;
+  }
+
+  /* Major sections start on a new page */
+  .band {
+    padding: 8pt 0 10pt;
+    border-top: none;
+  }
+  #sec-ask,
+  #sec-decisions,
+  #sec-arch,
+  #sec-energy,
+  #sec-plan,
+  #sec-risk,
+  #sec-gov { page-break-before: always; }
+
+  .prose, .wide, .sidecar {
+    max-width: 100%;
+    padding-left: 0;
+    padding-right: 0;
+  }
+  .wide.xl { max-width: 100%; }
+
+  h2 {
+    font-family: var(--display);
+    font-size: 15pt;
+    margin-bottom: 9pt;
+    page-break-after: avoid;
+  }
+  h3 {
+    font-family: var(--display);
+    font-size: 11.5pt;
+    margin-bottom: 7pt;
+    page-break-after: avoid;
+  }
+  .sec-no {
+    font-size: 7.5pt;
+    margin-bottom: 5pt;
+    gap: 7px;
+  }
+  .sec-no::before { flex-basis: 18px; height: 2px; }
+  .dek {
+    font-size: 11pt;
+    margin-bottom: 12pt;
+    max-width: 100%;
+  }
+  .prose p { margin-bottom: 9pt; }
+
+  /* Sidecar: keep prose, suppress figure plates */
+  .sidecar {
+    display: block;
+    margin: 8pt 0;
+    page-break-inside: avoid;
+  }
+  .sidecar figure { display: none; }
+  .sidecar .sc-text p { margin-bottom: 9pt; }
+
+  /* Charts: fit page, avoid breaking */
+  .chart-frame {
+    overflow: visible !important;
+    margin: 8pt 0 10pt;
+    page-break-inside: avoid;
+  }
+  .chart-viewport {
+    overflow: visible !important;
+  }
+  .chart-viewport svg,
+  #arch-chart .chart-viewport svg,
+  #energy-chart .chart-viewport svg,
+  #timeline-chart .chart-viewport svg {
+    min-width: 0 !important;
+    width: 100% !important;
+    height: auto !important;
+    max-width: 100%;
+  }
+  .chart-frame svg {
+    width: 100% !important;
+    height: auto !important;
+    max-width: 100%;
+  }
+  .chart-title { font-size: 11.5pt; }
+  .chart-sub { font-size: 8pt; padding-bottom: 5pt; }
+  .chart-src { font-size: 7.5pt; }
+
+  /* Tables */
+  .table-scroll { overflow: visible; }
+  #sign-table { display: table; overflow: visible; }
+  table.dt { font-size: 8.5pt; }
+  table.dt th { font-size: 7.5pt; padding: 5pt 8pt 5pt 0; }
+  table.dt td { padding: 5pt 8pt 5pt 0; }
+  table, .chart-frame, figure, .metric-strip, .note-box, .laws {
+    page-break-inside: avoid;
+  }
+  tr { page-break-inside: avoid; }
+
+  /* Metric strip */
+  .metric-strip { margin-top: 8pt; }
+  .metric-strip .m { padding: 7pt 8pt; }
+  .metric-strip .m .v { font-size: 12pt; }
+  .metric-strip .m .k { font-size: 7.5pt; }
+
+  /* Lists and notes */
+  .laws { margin: 4pt 0 8pt; }
+  .laws li { padding: 5pt 0; }
+  .note-box {
+    font-size: 8.5pt;
+    line-height: 1.65;
+    margin: 10pt 0;
+    padding: 8pt 0 10pt;
+  }
+
+  /* Source / control section */
+  #sec-sources {
+    padding: 10pt 0;
+    page-break-before: always;
+  }
+  .colophon { margin-top: 18pt; font-size: 8pt; }
+
+  /* Ensure animated entrances are complete */
+  .pre-in { opacity: 1 !important; transform: none !important; transition: none !important; }
+
+  /* Force D3 chart transitions to final state so SVG groups are not blank */
+  .chart-frame, .chart-frame svg, .chart-frame svg * {
+    opacity: 1 !important;
+    transition: none !important;
+    animation: none !important;
+  }
+
+  /* Links */
+  a { text-decoration: none; color: var(--ink); }
+
+  /* Images */
+  img { max-width: 100%; height: auto; }
+}
+
+/* Hide print-only TOC on screen */
+#print-toc { display: none; }

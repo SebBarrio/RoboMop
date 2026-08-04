@@ -92,5 +92,15 @@
       io.disconnect();
     }), { threshold: 0.35 });
     io.observe(host);
+
+    window.addEventListener("beforeprint", () => {
+      animated.forEach(a => {
+        a.r.interrupt().attr("width", a.w);
+        a.pct.interrupt().attr("opacity", 1);
+        a.lab.interrupt().attr("opacity", 1);
+      });
+      runtime.interrupt().attr("width", wRuntime);
+      runtimeLabel.interrupt().attr("opacity", 1);
+    }, { once: false });
   }
 })();

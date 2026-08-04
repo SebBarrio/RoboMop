@@ -286,6 +286,8 @@ a { color: var(--blue); }
 .chip:hover { background: var(--accent); border-color: var(--accent); color: #fff; }
 .chip:active { transform: translateY(1px); }
 .chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.chip.pdf-btn { color: var(--accent); border-color: var(--accent); background: var(--paper); }
+.chip.pdf-btn:hover { background: var(--accent); color: #fff; }
 .cover-anchor { font-size: 12.5px; color: var(--ink-lo); font-family: var(--mono); letter-spacing: .01em; display: block; max-width: 660px; }
 .scroll-hint {
   margin-top: 7vh; font-family: var(--mono); font-size: 11px; color: var(--ink-lo);
@@ -842,6 +844,271 @@ table.kpi td.num { white-space: normal; }
 
 .cover-sub { max-width: 760px; }
 
+/* ═══════════════════════════════════════════════════════════
+   Print stylesheet · professional PDF export
+   A4 page, cover page, running header/footer, page breaks,
+   document index, and sidecar figures suppressed.
+   ═══════════════════════════════════════════════════════════ */
+@media print {
+  @page {
+    size: A4;
+    margin: 18mm 15mm 22mm 15mm;
+    @top-right {
+      content: "RoboMop New Era · Propuesta de proyecto";
+      font-family: var(--mono);
+      font-size: 7.5pt;
+      color: var(--ink-lo);
+    }
+    @bottom-center {
+      content: counter(page);
+      font-family: var(--mono);
+      font-size: 9pt;
+      color: var(--ink-lo);
+    }
+  }
+
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  html { scroll-behavior: auto; }
+
+  body {
+    --railw: 0px;
+    background: #fff;
+    color: #000;
+    font-size: 10.5pt;
+    line-height: 1.55;
+  }
+
+  /* Hide web/interactive chrome */
+  #dash-rail,
+  #drill-card,
+  #era-rail,
+  .scroll-hint,
+  .chip[data-goto],
+  .tip,
+  .rail-note { display: none !important; }
+
+  /* Export button itself must not appear in the PDF */
+  .chip.pdf-btn { display: none !important; }
+
+  /* Remove right rail margin */
+  main, footer#sec-sources { margin-right: 0; }
+
+  /* Cover as standalone title page */
+  #cover {
+    margin-right: 0;
+    height: 257mm;
+    min-height: 257mm;
+    page-break-after: always;
+    position: relative;
+    overflow: hidden;
+  }
+  #cover::before { display: none; }
+  .cover-inner {
+    order: 1;
+    align-self: flex-start;
+    max-width: 100%;
+    width: 100%;
+    padding: 14mm 0 0;
+    text-align: left;
+  }
+  .cover-sheet {
+    position: absolute;
+    right: 0;
+    bottom: 10mm;
+    translate: none;
+    width: 52%;
+    margin: 0;
+    page-break-inside: avoid;
+  }
+  /* The cover plate is introduced with CSS wipes on screen.  A PDF is
+     captured before those animations finish, so print its final geometry. */
+  .cover-sheet,
+  .cover-sheet *,
+  .cover-sheet img {
+    animation: none !important;
+    clip-path: none !important;
+    transform: none !important;
+    opacity: 1 !important;
+  }
+  .cs-tag { position: static; display: block; text-align: right; margin-top: 8px; }
+  .cover-kicker { font-size: 8.5pt; letter-spacing: 0.18em; margin-bottom: 8mm; text-align: left; }
+  .cover-title {
+    font-family: var(--display);
+    font-size: 72pt;
+    max-width: 100%;
+    line-height: 1.0;
+    margin-bottom: 0;
+    text-align: left;
+  }
+  .cover-title .cover-num { font-size: 72pt; }
+  .cover-sub,
+  .cover-lede,
+  .cover-anchor { display: none; }
+
+  /* Print-only document index */
+  #print-toc {
+    display: block !important;
+    page-break-after: always;
+  }
+  #print-toc h2 {
+    font-family: var(--display);
+    font-size: 18pt;
+    margin-bottom: 14pt;
+  }
+  #print-toc ol {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
+  #print-toc li {
+    padding: 7pt 0;
+    border-bottom: 0.5pt solid var(--line);
+    font-size: 10.5pt;
+  }
+  #print-toc a {
+    color: var(--ink);
+    text-decoration: none;
+  }
+
+  /* Major sections start on a new page */
+  .band {
+    padding: 8pt 0 10pt;
+    border-top: none;
+  }
+  #sec-ask,
+  #sec-decisions,
+  #sec-arch,
+  #sec-energy,
+  #sec-plan,
+  #sec-risk,
+  #sec-gov { page-break-before: always; }
+
+  .prose, .wide, .sidecar {
+    max-width: 100%;
+    padding-left: 0;
+    padding-right: 0;
+  }
+  .wide.xl { max-width: 100%; }
+
+  h2 {
+    font-family: var(--display);
+    font-size: 15pt;
+    margin-bottom: 9pt;
+    page-break-after: avoid;
+  }
+  h3 {
+    font-family: var(--display);
+    font-size: 11.5pt;
+    margin-bottom: 7pt;
+    page-break-after: avoid;
+  }
+  .sec-no {
+    font-size: 7.5pt;
+    margin-bottom: 5pt;
+    gap: 7px;
+  }
+  .sec-no::before { flex-basis: 18px; height: 2px; }
+  .dek {
+    font-size: 11pt;
+    margin-bottom: 12pt;
+    max-width: 100%;
+  }
+  .prose p { margin-bottom: 9pt; }
+
+  /* Sidecar: keep prose, suppress figure plates */
+  .sidecar {
+    display: block;
+    margin: 8pt 0;
+    page-break-inside: avoid;
+  }
+  .sidecar figure { display: none; }
+  .sidecar .sc-text p { margin-bottom: 9pt; }
+
+  /* Charts: fit page, avoid breaking */
+  .chart-frame {
+    overflow: visible !important;
+    margin: 8pt 0 10pt;
+    page-break-inside: avoid;
+  }
+  .chart-viewport {
+    overflow: visible !important;
+  }
+  .chart-viewport svg,
+  #arch-chart .chart-viewport svg,
+  #energy-chart .chart-viewport svg,
+  #timeline-chart .chart-viewport svg {
+    min-width: 0 !important;
+    width: 100% !important;
+    height: auto !important;
+    max-width: 100%;
+  }
+  .chart-frame svg {
+    width: 100% !important;
+    height: auto !important;
+    max-width: 100%;
+  }
+  .chart-title { font-size: 11.5pt; }
+  .chart-sub { font-size: 8pt; padding-bottom: 5pt; }
+  .chart-src { font-size: 7.5pt; }
+
+  /* Tables */
+  .table-scroll { overflow: visible; }
+  #sign-table { display: table; overflow: visible; }
+  table.dt { font-size: 8.5pt; }
+  table.dt th { font-size: 7.5pt; padding: 5pt 8pt 5pt 0; }
+  table.dt td { padding: 5pt 8pt 5pt 0; }
+  table, .chart-frame, figure, .metric-strip, .note-box, .laws {
+    page-break-inside: avoid;
+  }
+  tr { page-break-inside: avoid; }
+
+  /* Metric strip */
+  .metric-strip { margin-top: 8pt; }
+  .metric-strip .m { padding: 7pt 8pt; }
+  .metric-strip .m .v { font-size: 12pt; }
+  .metric-strip .m .k { font-size: 7.5pt; }
+
+  /* Lists and notes */
+  .laws { margin: 4pt 0 8pt; }
+  .laws li { padding: 5pt 0; }
+  .note-box {
+    font-size: 8.5pt;
+    line-height: 1.65;
+    margin: 10pt 0;
+    padding: 8pt 0 10pt;
+  }
+
+  /* Source / control section */
+  #sec-sources {
+    padding: 10pt 0;
+    page-break-before: always;
+  }
+  .colophon { margin-top: 18pt; font-size: 8pt; }
+
+  /* Ensure animated entrances are complete */
+  .pre-in { opacity: 1 !important; transform: none !important; transition: none !important; }
+
+  /* Force D3 chart transitions to final state so SVG groups are not blank */
+  .chart-frame, .chart-frame svg, .chart-frame svg * {
+    opacity: 1 !important;
+    transition: none !important;
+    animation: none !important;
+  }
+
+  /* Links */
+  a { text-decoration: none; color: var(--ink); }
+
+  /* Images */
+  img { max-width: 100%; height: auto; }
+}
+
+/* Hide print-only TOC on screen */
+#print-toc { display: none; }
+
 </style>
 </head>
 <body>
@@ -868,11 +1135,17 @@ table.kpi td.num { white-space: normal; }
       <button class="chip" data-goto="#sec-energy">Batería</button>
       <button class="chip" data-goto="#sec-plan">El plan de 16 semanas</button>
       <button class="chip" data-goto="#sec-accept">Cómo sabrá que funciona</button>
+      <button class="chip pdf-btn" type="button">Exportar PDF</button>
     </div>
     <p class="cover-anchor">UN ROBOT + UN ACUMULADOR LFP · 16 SEMANAS DESDE NTP · HARDWARE MXN $57,200.83 CON CONTINGENCIA · PM MXN $160,000 · SENIOR ENGINEER MXN $160,000 · ACEPTACIÓN CONTRA MATRIZ CONGELADA</p>
     <div class="scroll-hint"><span></span>DESLIZA</div>
   </div>
 </header>
+
+<nav id="print-toc" aria-label="Índice del documento">
+  <h2>Índice</h2>
+  <ol id="print-toc-list"></ol>
+</nav>
 
 <main>
 
@@ -1034,7 +1307,7 @@ table.kpi td.num { white-space: normal; }
       <thead><tr><th>Rol</th><th>Nombre</th><th>Decisión</th><th>Fecha / firma</th></tr></thead>
       <tbody>
         <tr><td>Patrocinador</td><td>Luis Vazquez</td><td>Aprobar / Rechazar</td><td></td></tr>
-        <tr><td>Gerente de Proyecto</td><td>Germán Velázquez</td><td>Aceptar la responsabilidad</td><td></td></tr>
+        <tr><td>Project Manager</td><td>Germán Velázquez</td><td>Aceptar la responsabilidad</td><td></td></tr>
         <tr><td>Lead Robotics &amp; Systems Engineer</td><td>Sebastian Barrio</td><td>Refrendar la base técnica y de pruebas</td><td></td></tr>
       </tbody>
     </table>
@@ -1049,7 +1322,7 @@ table.kpi td.num { white-space: normal; }
     <div class="note-box">
       <p><b>Documento para conversación y aprobación provisional.</b> Esta propuesta es autocontenida: cada cifra corresponde a la base de ingeniería, presupuesto y matriz inicial de RoboMop New Era. El contrato aún no existe; sus términos se negociarán por separado y deberán incorporar la precedencia documental, pagos, propiedad intelectual, garantía, cambios y aceptación.</p>
       <p><b>Estimaciones, claramente etiquetadas.</b> Las cifras de autonomía son estimaciones del modelo y solo adquieren carácter contractual mediante la prueba de aceptación presenciada; los precios unitarios para volúmenes de 10 y 100 robots son estimaciones de planeación para la fase posterior, no una cotización.</p>
-      <p><b>Preparado por.</b> El equipo RoboMop New Era: Luis Vazquez (Patrocinador), Germán Velázquez (Gerente de Proyecto) y Sebastian Barrio (Lead Robotics &amp; Systems Engineer).</p>
+      <p><b>Preparado por.</b> El equipo RoboMop New Era: Luis Vazquez (Patrocinador), Germán Velázquez (Project Manager) y Sebastian Barrio (Lead Robotics &amp; Systems Engineer).</p>
     </div>
     <p class="colophon">RoboMop New Era · Propuesta de proyecto · Versión 1.1 para aprobación provisional · Agosto 2026</p>
   </div>
@@ -1093,7 +1366,7 @@ window.RPT = {
     services: 320000,
     projectBudget: 377200.83,
     projectCap: 378000,
-    minDelivery: "1 robot + 1 acumulador LFP",
+    minDelivery: "1 robot + 1 acumulador LFP + 1 cargador + software + paquete técnico",
     startRule: "W1 inicia el primer día hábil posterior a la firma provisional del Charter y el NTP/luz verde escrita del Sponsor",
     hardwarePayment: "El Sponsor paga compras autorizadas directamente o reembolsa contra factura, CFDI, recibo o ticket y evidencia de recepción; no existe anticipo global de hardware",
     taxRule: "IVA, impuestos, retenciones, importación, aranceles, brokerage, envío y variación cambiaria de compras autorizadas son absorbidos por el Sponsor",
@@ -1102,14 +1375,14 @@ window.RPT = {
   // Decisiones de electrónica fijadas (componentes finales)
   decisions: {
     sbc: {
-      pick: "Jetson Orin Nano 8GB", vendor: "NVIDIA",
-      cost: "kit de desarrollo $249 · módulo $249 @1KU",
+      pick: "Jetson Orin Nano 8GB Super Dev Kit", vendor: "NVIDIA",
+      cost: "kit de desarrollo Super $249 · módulo $249 @1KU",
       power: "7–15 W (25 W MAXN Super)", tops: "67 TOPS · 1024 CUDA + 32 Tensor",
       mem: "8 GB LPDDR5 · 102 GB/s", supply: "clase ~5 años (NVIDIA FAQ)",
       verdict: "RECOMENDADO",
     },
     mcu: {
-      pick: "ESP32-S3-WROOM-1", vendor: "Espressif",
+      pick: "ESP32-S3-WROOM-1 N16R8", vendor: "Espressif",
       cost: "$6.76 @1 · $5.11 @100 · $3.90 @650",
       encoder: "Contadores de pulsos PCNT por hardware", bus: "TWAI (CAN 2.0) integrado",
       radio: "WiFi + BT, precertificado", verdict: "RECOMENDADO",
@@ -1202,7 +1475,7 @@ window.RPT = {
   // Objetivos medibles
   objectives: [
     { id: "OBJ-01", obj: "Entregar el producto final en 16 semanas", crit: "Prueba de Aceptación Final y entrega en la Semana 16" },
-    { id: "OBJ-02", obj: "Controlar el costo del proyecto", crit: "Hardware base MXN $49,739.85 · forecast con contingencia MXN $57,200.83 · servicios profesionales MXN $160,000" },
+    { id: "OBJ-02", obj: "Controlar el costo del proyecto", crit: "Hardware base MXN $49,739.85 · contingencia Sponsor MXN $7,460.98 · forecast de hardware MXN $57,200.83 · Project Manager MXN $160,000 · Senior Engineer MXN $160,000 · servicios totales MXN $320,000 · presupuesto total planeado MXN $377,200.83" },
     { id: "OBJ-03", obj: "Demostrar la autonomía energética", crit: "≥4.0 h desde 100% bajo el perfil de aceptación de peor caso de 200 W" },
     { id: "OBJ-04", obj: "Demostrar el cambio de acumulador", crit: "Cambio ≤5 min, sin reinicio de controles; meta de diseño de respaldo ≥10 min, confirmada con usted en la Semana 1" },
     { id: "OBJ-05", obj: "Demostrar movimiento seguro", crit: "Paro de emergencia, watchdog, tiempo límite de comandos, inhibición de motores, respuesta controlada a fallas" },
@@ -1224,7 +1497,7 @@ window.RPT = {
     { id: "R07", risk: "Errores en sellos de tiempo o tramas", lvl: 8, response: "Base de tiempo única, sellos de tiempo en origen, reproducción y calibración", trigger: "Desplazamiento visible del mapa" },
     { id: "R08", risk: "Simulación no correlacionada", lvl: 7, response: "Compuertas de procedencia y correlación", trigger: "Error fuera de tolerancia" },
     { id: "R09", risk: "Fuga de irrigación hacia la electrónica", lvl: 7, response: "Segregación, rutas de goteo, sensor, prueba de fuga en banco", trigger: "Cualquier fuga" },
-    { id: "R10", risk: "El alcance de software excede la capacidad", lvl: 7, response: "Clases y contratos de congelación; priorizar la ruta de aceptación de la Semana 10", trigger: "Integración incompleta" },
+    { id: "R10", risk: "El alcance de software excede la capacidad", lvl: 7, response: "Clases y contratos de congelación; priorizar la ruta de aceptación de la Semana 10", trigger: "Integración incompleta en la Semana 10" },
     { id: "R11", risk: "Forecast de hardware excede la autorización", lvl: 6, response: "Cotizaciones en destino, ledger semanal, contingencia controlada", trigger: "Forecast > MXN $58,000" },
     { id: "R12", risk: "Movimiento no controlado", lvl: 10, response: "Inhibición por hardware, paro de emergencia, watchdog, revisión técnica y pruebas por etapas", trigger: "Un evento: detener todo el trabajo y abrir P0" },
   ],
@@ -1244,8 +1517,8 @@ window.RPT = {
   ],
 
   changeClasses: [
-    { cls: "Clase 1", cond: "Sin costo externo y sin impacto en la ruta crítica, las interfaces o la seguridad", appr: "Gerente de Proyecto" },
-    { cls: "Clase 2", cond: "Costo ≤ MXN $1,000 e impacto ≤ 2 días, sin reducción de seguridad, sin uso de contingencia y sin activar Clase 3", appr: "Gerente de Proyecto + Lead Robotics & Systems Engineer" },
+    { cls: "Clase 1", cond: "Sin costo externo y sin impacto en la ruta crítica, las interfaces o la seguridad", appr: "Project Manager" },
+    { cls: "Clase 2", cond: "Costo ≤ MXN $1,000 e impacto ≤ 2 días, sin reducción de seguridad, sin uso de contingencia y sin activar Clase 3", appr: "Project Manager + Lead Robotics & Systems Engineer" },
     { cls: "Clase 3", cond: "Costo > MXN $1,000, uso de reserva o impacto en arquitectura, interfaces, seguridad o hitos", appr: "Patrocinador" },
   ],
 
@@ -1273,26 +1546,26 @@ window.RPT = {
     { id: "ACC-01", req: "Entrega integrada", target: "1 robot + 1 acumulador LFP + 1 cargador + software + paquete técnico", evidence: "Inspección y acta", rep: "1", waiver: "No" },
     { id: "ACC-02", req: "Autonomía", target: "≥4.0 h @200 W; modelo 960 Wh / 200 W = 4.8 h y 20% sobre 800 Wh", evidence: "Logs de energía/SoC/temperatura + FAT", rep: "Validación interna + 1 FAT", waiver: "No" },
     { id: "ACC-03", req: "Cambio de acumulador", target: "≤5 min, controles activos, sin arco/reinicio/pérdida de estado", evidence: "Cronómetro, video y logs", rep: "3", waiver: "No si inseguro" },
-    { id: "ACC-04", req: "Paro e inhibición", target: "Estado seguro, sin rearranque automático; tiempo/distancia congelados en SRR", evidence: "Osciloscopio, video y fault injection", rep: "Cada modo/falla", waiver: "No" },
+    { id: "ACC-04", req: "Paro e inhibición", target: "E-stop e inhibición llevan las salidas de tracción al estado seguro, impiden rearranque automático y requieren reset deliberado; tiempo/distancia congelados en SRR antes de pruebas móviles", evidence: "Osciloscopio, video y fault injection", rep: "Cada modo/falla", waiver: "No" },
     { id: "ACC-05", req: "Movimiento no controlado", target: "0 eventos", evidence: "Hazard/defect log", rep: "Matriz completa", waiver: "No" },
     { id: "ACC-06", req: "Navegación y cobertura", target: "≥95% área alcanzable, 0 colisiones, ≥9/10 misiones", evidence: "Ground truth, mapa y rosbag", rep: "10", waiver: "Clase 3; nunca colisión insegura" },
     { id: "ACC-07", req: "Localización", target: "RMS ≤0.20 m; relocalización ≤30 s", evidence: "Ground truth + rosbag", rep: "3", waiver: "Clase 3 antes de FAT" },
-    { id: "ACC-08", req: "Limpieza e irrigación", target: "≥90% remoción; flujo ±15%; 0 fugas a electrónica", evidence: "Before/after, flujo y leak test", rep: "3 zonas", waiver: "No para fuga" },
+    { id: "ACC-08", req: "Limpieza e irrigación", target: "≥90% remoción del patrón de suciedad acordado; flujo dentro de ±15% del setpoint; 0 fugas hacia electrónica y sin charcos fuera del límite acordado", evidence: "Before/after, flujo y leak test", rep: "3 zonas", waiver: "No para fuga" },
     { id: "ACC-09", req: "Percepción", target: "≥90% recall y ≤10% falsos positivos para clases congeladas", evidence: "Dataset versionado, replay y prueba física", rep: "Dataset + 3 corridas", waiver: "Clase 3 antes de FAT" },
     { id: "ACC-10", req: "Conectividad", target: "Recuperación ≤60 s; ≥99% telemetría esperada", evidence: "Logs robot/backend", rep: "3 ciclos", waiver: "Clase 3 antes de FAT" },
-    { id: "ACC-11", req: "Seguridad eléctrica/térmica", target: "0 trips inesperados, celdas fuera de límite, sobre-rating o agua en electrónica", evidence: "Logs, inspección y fault/leak tests", rep: "Matriz completa", waiver: "No" },
+    { id: "ACC-11", req: "Seguridad eléctrica/térmica", target: "0 trips inesperados, celdas fuera de límites, conductores/conectores sobre su rating ni acceso de agua a electrónica", evidence: "Logs, inspección y fault/leak tests", rep: "Matriz completa", waiver: "No" },
     { id: "ACC-12", req: "Documentación", target: "100% del paquete técnico versionado", evidence: "Checklist de release", rep: "1", waiver: "P2 editorial" },
   ],
 
   defectClasses: [
     { cls: "P0", meaning: "Crítico / release blocker", rule: "Stop-work, causa raíz, corrección, regresión y cierre técnico; no admite waiver comercial" },
-    { cls: "P1", meaning: "Mayor, sin hazard crítico", rule: "Cierre antes de FAT; excepción Sponsor + Senior Engineer con corrección ≤10 días hábiles" },
+    { cls: "P1", meaning: "Mayor, sin hazard crítico", rule: "Cierre antes de FAT; excepción con decisión escrita Sponsor + Senior Engineer, justificación, impacto, workaround y corrección ≤10 días hábiles" },
     { cls: "P2", meaning: "Menor/cosmético/editorial", rule: "Punch list permitido con corrección ≤20 días hábiles" },
   ],
 
   team: [
     { role: "Patrocinador", name: "Luis Vazquez", resp: "Aprueba la propuesta, el presupuesto, el uso de la contingencia y los cambios mayores; resuelve excepciones de alcance, costo y calendario; participa en cada compuerta y en la aceptación final." },
-    { role: "Gerente de Proyecto", name: "Germán Velázquez", resp: "Responsable del alcance, calendario, costo, partes, compras, riesgos, cambios y documentación; es su único punto de contacto y coordina la línea de trabajo de software." },
+    { role: "Project Manager", name: "Germán Velázquez", resp: "Responsable del alcance, calendario, costo, partes, compras, riesgos, cambios y documentación; es su único punto de contacto y coordina la línea de trabajo de software." },
     { role: "Lead Robotics & Systems Engineer", name: "Sebastian Barrio", resp: "Responsable de la arquitectura del robot y de las decisiones técnicas: mecánica, electrónica, batería, tarjetas, firmware, autonomía, percepción y evidencia de pruebas para cada afirmación." },
   ],
 };
@@ -1835,7 +2108,7 @@ window.U = (() => {
   const steps = document.createElement("div");
   steps.className = "fund-steps";
   const S = [
-    { t: "ESTIMACIÓN BASE", v: "MXN " + mxn(A.base), n: "Diecisiete líneas de BOM; 84.08% comprometible en las Semanas 1–2" },
+    { t: "ESTIMACIÓN BASE", v: "MXN " + mxn(A.base), n: "Diecisiete líneas de BOM; 86.96% del forecast de hardware con contingencia" },
     { t: "+ CONTINGENCIA 15%", v: "MXN " + mxn(A.contingency), n: "Controlada por el Patrocinador; financia solo riesgos materializados, nunca alcance opcional" },
     { t: "BAC · REQUERIMIENTO DE FINANCIAMIENTO", v: "MXN " + mxn(A.bac), n: "Base más contingencia — el monto que esta propuesta pide autorizar" },
     { t: "TECHO DE AUTORIZACIÓN", v: "MXN " + mxn(A.cap), n: "Techo firme; un EAC semanal por encima escala al Patrocinador" },
@@ -1885,7 +2158,7 @@ window.U = (() => {
   const nodes = {
     lidar: {
       x: 126, y: 78, w: 166, h: 56,
-      t: "LiDAR 2D", s: "360° · 10–25 Hz", d: "USB", kind: "sbc",
+      t: "Dos LiDAR 2D", s: "frontal y trasero · 360° · 10–25 Hz", d: "USB", kind: "sbc",
       bug: "Alimenta el mapeo en el nivel SBC; sellos de tiempo reconciliados contra el reloj monotónico de la MCU (M3).",
     },
     cams: {
@@ -1895,7 +2168,7 @@ window.U = (() => {
     },
     jetson: {
       x: 440, y: 111, w: 232, h: 88,
-      t: "Jetson Orin Nano 8GB", s: "ROS 2 · SLAM · Nav2 · fusión", d: "67 TOPS · 7–15 W · SBC fijado", kind: "primary-sbc",
+      t: "Jetson Orin Nano 8GB", s: "ROS 2 · SLAM · Nav2 · fusión", d: "Super Dev Kit · 67 TOPS · 7–15 W · SBC fijado", kind: "primary-sbc",
       bug: "Incidencia D (2025): el SLAM puede saturar el Jetson sin afectar la temporización del lazo, porque el lazo ya no se ejecuta ahí.",
     },
     fleet: {
@@ -1905,7 +2178,7 @@ window.U = (() => {
     },
     esp: {
       x: 440, y: 318, w: 796, h: 72,
-      t: "ESP32-S3-WROOM-1", s: "FreeRTOS · watchdog · seguridad", d: "$5.11 @100u · 0.3 W · MCU fijada", kind: "primary-mcu",
+      t: "ESP32-S3-WROOM-1", s: "FreeRTOS · watchdog · seguridad", d: "N16R8 · $5.11 @100u · 0.3 W · MCU fijada", kind: "primary-mcu",
       bug: "Incidencias A–D (2025): el ESP32 es dueño del lazo de control en FreeRTOS; el watchdog y las entradas de falla MCPWM cortan la potencia si el SBC se bloquea.",
     },
     estop: {
@@ -2349,6 +2622,16 @@ window.U = (() => {
       io.disconnect();
     }), { threshold: 0.35 });
     io.observe(host);
+
+    window.addEventListener("beforeprint", () => {
+      animated.forEach(a => {
+        a.r.interrupt().attr("width", a.w);
+        a.pct.interrupt().attr("opacity", 1);
+        a.lab.interrupt().attr("opacity", 1);
+      });
+      runtime.interrupt().attr("width", wRuntime);
+      runtimeLabel.interrupt().attr("opacity", 1);
+    }, { once: false });
   }
 })();
 
@@ -2589,7 +2872,7 @@ window.U = (() => {
     });
     const mag = document.createElement("div");
     mag.className = "term-mag";
-    const abbr = { "Patrocinador": "SP", "Gerente de Proyecto": "PM", "Lead Robotics & Systems Engineer": "LRSE" };
+    const abbr = { "Patrocinador": "SP", "Project Manager": "PM", "Lead Robotics & Systems Engineer": "LRSE" };
     window.RPT.team.forEach(t => {
       const a = document.createElement("article");
       a.className = "term"; a.tabIndex = 0;
@@ -2659,6 +2942,33 @@ window.U = (() => {
       if (t) t.scrollIntoView({ behavior: REDUCE ? "auto" : "smooth" });
     });
   });
+
+  // Botón Exportar PDF → diálogo de impresión con hoja de estilo de documento
+  const pdfBtn = document.querySelector(".pdf-btn");
+  if (pdfBtn) {
+    pdfBtn.addEventListener("click", () => {
+      // Asegura que las entradas animadas ya son visibles antes de imprimir
+      document.querySelectorAll(".pre-in").forEach(el => el.classList.add("in"));
+      window.print();
+    });
+  }
+
+  // Índice para impresión (sólo visible en @media print)
+  const tocList = document.getElementById("print-toc-list");
+  if (tocList) {
+    document.querySelectorAll("main section.band").forEach(sec => {
+      const h2 = sec.querySelector("h2");
+      const secNo = sec.querySelector(".sec-no");
+      if (!h2) return;
+      const li = document.createElement("li");
+      const a = document.createElement("a");
+      a.href = "#" + sec.id;
+      const prefix = secNo ? secNo.textContent.replace(/\s+/g, " ").trim() + " · " : "";
+      a.textContent = prefix + h2.textContent;
+      li.appendChild(a);
+      tocList.appendChild(li);
+    });
+  }
 
   // §0 tira de métricas
   const ms = document.getElementById("ask-metrics");

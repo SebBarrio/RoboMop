@@ -115,7 +115,7 @@
   const steps = document.createElement("div");
   steps.className = "fund-steps";
   const S = [
-    { t: "ESTIMACIÓN BASE", v: "MXN " + mxn(A.base), n: "Diecisiete líneas de BOM; 84.08% comprometible en las Semanas 1–2" },
+    { t: "ESTIMACIÓN BASE", v: "MXN " + mxn(A.base), n: "Diecisiete líneas de BOM; 86.96% del forecast de hardware con contingencia" },
     { t: "+ CONTINGENCIA 15%", v: "MXN " + mxn(A.contingency), n: "Controlada por el Patrocinador; financia solo riesgos materializados, nunca alcance opcional" },
     { t: "BAC · REQUERIMIENTO DE FINANCIAMIENTO", v: "MXN " + mxn(A.bac), n: "Base más contingencia — el monto que esta propuesta pide autorizar" },
     { t: "TECHO DE AUTORIZACIÓN", v: "MXN " + mxn(A.cap), n: "Techo firme; un EAC semanal por encima escala al Patrocinador" },

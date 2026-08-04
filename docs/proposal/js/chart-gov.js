@@ -78,7 +78,7 @@
     });
     const mag = document.createElement("div");
     mag.className = "term-mag";
-    const abbr = { "Patrocinador": "SP", "Gerente de Proyecto": "PM", "Lead Robotics & Systems Engineer": "LRSE" };
+    const abbr = { "Patrocinador": "SP", "Project Manager": "PM", "Lead Robotics & Systems Engineer": "LRSE" };
     window.RPT.team.forEach(t => {
       const a = document.createElement("article");
       a.className = "term"; a.tabIndex = 0;

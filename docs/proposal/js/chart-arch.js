@@ -25,7 +25,7 @@
   const nodes = {
     lidar: {
       x: 126, y: 78, w: 166, h: 56,
-      t: "LiDAR 2D", s: "360° · 10–25 Hz", d: "USB", kind: "sbc",
+      t: "Dos LiDAR 2D", s: "frontal y trasero · 360° · 10–25 Hz", d: "USB", kind: "sbc",
       bug: "Alimenta el mapeo en el nivel SBC; sellos de tiempo reconciliados contra el reloj monotónico de la MCU (M3).",
     },
     cams: {
@@ -35,7 +35,7 @@
     },
     jetson: {
       x: 440, y: 111, w: 232, h: 88,
-      t: "Jetson Orin Nano 8GB", s: "ROS 2 · SLAM · Nav2 · fusión", d: "67 TOPS · 7–15 W · SBC fijado", kind: "primary-sbc",
+      t: "Jetson Orin Nano 8GB", s: "ROS 2 · SLAM · Nav2 · fusión", d: "Super Dev Kit · 67 TOPS · 7–15 W · SBC fijado", kind: "primary-sbc",
       bug: "Incidencia D (2025): el SLAM puede saturar el Jetson sin afectar la temporización del lazo, porque el lazo ya no se ejecuta ahí.",
     },
     fleet: {
@@ -45,7 +45,7 @@
     },
     esp: {
       x: 440, y: 318, w: 796, h: 72,
-      t: "ESP32-S3-WROOM-1", s: "FreeRTOS · watchdog · seguridad", d: "$5.11 @100u · 0.3 W · MCU fijada", kind: "primary-mcu",
+      t: "ESP32-S3-WROOM-1", s: "FreeRTOS · watchdog · seguridad", d: "N16R8 · $5.11 @100u · 0.3 W · MCU fijada", kind: "primary-mcu",
       bug: "Incidencias A–D (2025): el ESP32 es dueño del lazo de control en FreeRTOS; el watchdog y las entradas de falla MCPWM cortan la potencia si el SBC se bloquea.",
     },
     estop: {
