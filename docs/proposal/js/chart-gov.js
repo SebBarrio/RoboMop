@@ -6,7 +6,7 @@
   if (oh) {
     const body = U.frame(oh, {
       title: "Diez objetivos verificables de la entrega",
-      sub: "LAS TOLERANCIAS NUMÉRICAS SE CONGELAN CON USTED EN LA SEMANA 1",
+      sub: "LA MATRIZ INICIAL SE RATIFICA EN SEMANA 1 · CAMBIOS MATERIALES REQUIEREN CLASE 3",
       src: "Compromisos de aceptación · RoboMop New Era, julio 2026",
     });
     const tbl = document.createElement("table");
@@ -22,6 +22,50 @@
     });
     tbl.appendChild(tb);
     body.appendChild(tbl);
+  }
+
+  // ── Matriz provisional de aceptación ──
+  const ah = document.getElementById("acceptance-chart");
+  if (ah) {
+    const body = U.frame(ah, {
+      title: "Matriz inicial de aceptación y evidencia",
+      sub: "VALORES PROPUESTOS PARA RATIFICACIÓN EN SRR · TODO CAMBIO MATERIAL ES CLASE 3",
+      src: "Charter v1.1 · RoboMop New Era, agosto 2026",
+    });
+    const viewport = document.createElement("div");
+    viewport.className = "table-scroll";
+    const tbl = document.createElement("table");
+    tbl.className = "dt acceptance-table";
+    tbl.innerHTML = `<thead><tr><th>ID</th><th>Requisito</th><th>Umbral</th><th>Evidencia</th><th>Repetición</th><th>Waiver</th></tr></thead>`;
+    const tb = document.createElement("tbody");
+    window.RPT.acceptanceMatrix.forEach(a => {
+      const tr = document.createElement("tr");
+      tr.setAttribute("data-drill-keep", "");
+      tr.innerHTML = `<td class="num"><b>${a.id}</b></td><td>${a.req}</td><td>${a.target}</td><td>${a.evidence}</td><td class="num">${a.rep}</td><td>${a.waiver}</td>`;
+      tb.appendChild(tr);
+    });
+    tbl.appendChild(tb); viewport.appendChild(tbl); body.appendChild(viewport);
+  }
+
+  // ── Severidad y reglas de liberación ──
+  const dh = document.getElementById("defect-chart");
+  if (dh) {
+    const body = U.frame(dh, {
+      title: "Defectos, waiver y liberación",
+      sub: "LA ACEPTACIÓN COMERCIAL NO DISPENSA SEGURIDAD",
+      src: "Charter v1.1 · RoboMop New Era, agosto 2026",
+    });
+    const tbl = document.createElement("table");
+    tbl.className = "dt";
+    tbl.innerHTML = `<thead><tr><th>Clase</th><th>Significado</th><th>Regla</th></tr></thead>`;
+    const tb = document.createElement("tbody");
+    window.RPT.defectClasses.forEach(d => {
+      const tr = document.createElement("tr");
+      if (d.cls === "P0") tr.className = "hl";
+      tr.innerHTML = `<td class="num"><b>${d.cls}</b></td><td>${d.meaning}</td><td>${d.rule}</td>`;
+      tb.appendChild(tr);
+    });
+    tbl.appendChild(tb); body.appendChild(tbl);
   }
 
   // ── Equipo (tres columnas term-mag) ──
@@ -58,7 +102,7 @@
       if (c.cls === "Clase 3") tr.className = "hl";
       tr.setAttribute("data-drill-keep", "");
       tr.innerHTML = `<td><b>${c.cls}</b></td><td style="color:var(--ink-md)">${c.cond}</td><td>${c.appr}</td>`;
-      tr.addEventListener("click", e => U.showDrill({ title: "CONTROL DE CAMBIOS · " + c.cls.toUpperCase(), value: c.appr, sub: c.cond + ". Los cambios de arquitectura después de S2 y las funciones nuevas después de S12 son automáticamente Clase 3.", source: SRC, x: e.clientX, y: e.clientY }));
+      tr.addEventListener("click", e => U.showDrill({ title: "CONTROL DE CAMBIOS · " + c.cls.toUpperCase(), value: c.appr, sub: c.cond + ". Siempre aplica la clase más alta activada; arquitectura después de S2 y funciones nuevas después de S12 son Clase 3.", source: SRC, x: e.clientX, y: e.clientY }));
       tb.appendChild(tr);
     });
     tbl.appendChild(tb);

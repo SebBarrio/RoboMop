@@ -463,6 +463,14 @@ table.dt td { padding: 8px 12px 8px 0; border-bottom: 1px solid var(--line-lo); 
 table.dt td.num { font-family: var(--mono); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 table.dt tr:hover td { background: var(--paper-hi); }
 table.dt tr.hl td { background: rgba(0,87,184,.05); }
+.table-scroll { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.acceptance-table { min-width: 1080px; }
+.acceptance-table th:nth-child(1) { width: 8%; }
+.acceptance-table th:nth-child(2) { width: 14%; }
+.acceptance-table th:nth-child(3) { width: 29%; }
+.acceptance-table th:nth-child(4) { width: 23%; }
+.acceptance-table th:nth-child(5) { width: 12%; }
+.acceptance-table th:nth-child(6) { width: 14%; }
 
 /* ── §0.5 three terms · magazine columns (no cards, hover to unfold) ── */
 .term-mag {
